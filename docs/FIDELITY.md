@@ -1244,7 +1244,7 @@ the two are close: 4.09 and 4.07 dB rms over 1124 band levels, 4.36 and 4.33 ove
 shadow, and within 0.03 dB of each other at the median there. At model scale the buildings are many
 wavelengths long, so their ends matter little, and what is left is not diffraction's form. Read
 with the archive's UE06 and UE07 measurements swapped, as the full-wave runs suggest (below; not
-confirmed), the two models are 3.82 and 3.74 dB rms over all, 4.03 and 3.92 in shadow. The edge
+confirmed), the two models are 3.82 and 3.73 dB rms over all, 4.02 and 3.90 in shadow. The edge
 source's floor-source rows in UE06 and UE07 are 2.15 and 2.53 dB rms, level with the FDTD's 2.19 and
 2.36, since it took the rays that reflect between two edges.
 
@@ -1455,8 +1455,8 @@ receivers each, on the floor). Model − FDTD over every band level, mean and rm
 | UE00 (one row 0.49 m high), floor | rigid, 3 mm | −0.26, 0.36 (−1.0 to 0.0) | −0.20, 0.34 | Over one long row the model is the full-wave field |
 | UE00, drone | | +0.02, 0.05 (−0.1 to +0.1) | +0.01, 0.05 | |
 | UE23 (deep canyon), floor | walls 0.05, 4 mm, 90 ms; line of sight | −0.24, 0.37 (−0.8 to +0.4) | −0.25, 0.38 | With 12 reflections −0.3 to +0.6: a canyon's field is right with orders enough |
-| UE06 (five houses, the middle tall), floor | rigid, 3 mm | +0.77, 2.77 (−2.6 to +8.7) | −0.67, 1.01 (−1.6 to +2.3) | The low roofs' notches reflect between their edges: R2-R4 within 1.6 dB rms; behind the tall house +4.7 dB by UTD, −0.1 with the edge source (below) |
-| UE06, drone | | −0.18, 2.12 (−3.3 to +4.1) | −0.34, 1.47 | |
+| UE06 (five houses, the middle tall), floor | rigid, 3 mm | +0.77, 2.77 (−2.6 to +8.7) | −0.68, 1.02 (−1.7 to +2.4) | The low roofs' notches reflect between their edges: R2-R4 within 1.6 dB rms; behind the tall house +4.7 dB by UTD, −0.1 with the edge source (below) |
+| UE06, drone | | −0.03, 2.03 (−3.3 to +4.1) | −0.09, 1.20 | |
 | UE07 (the middle low), floor | | +1.08, 3.87 (−10.5 to +6.9) | −0.49, 2.52 (−7.2 to +5.0) | |
 | UE07, drone | | −0.16, 2.45 (−4.5 to +6.1) | −0.01, 0.85 (−2.6 to +1.9) | A 1 m roof edge between taller houses: its ends count; the low roof reflects |
 | UE13 (two rows, the first higher), floor | walls 0.05, 4 mm, 90 ms | −0.81, 2.79 (−7.4 to +4.3) | −0.80, 2.72 | Behind the second row, over three roof edges: +1.96, 2.20 |
@@ -1508,7 +1508,7 @@ loudspeaker and band from the line-of-sight pairs, as above). Measured − predi
 | UE00, drone | 32, shadow | −0.14, 0.59 | −0.16, 0.58 | −0.16, 0.59 |
 | UE23, floor | 28, line of sight | +0.36, 0.83 | +0.36, 0.80 | +0.36, 0.80 |
 | UE06 (read swapped), floor | 32, shadow | −1.03, 2.19 | −1.80, 3.68 | −0.43, 2.15 |
-| UE06 (read swapped), drone | 31, shadow | −0.09, 0.74 | +0.20, 1.98 | +0.31, 1.15 |
+| UE06 (read swapped), drone | 31, shadow | −0.07, 0.72 | +0.06, 2.10 | +0.10, 1.31 |
 | UE07 (read swapped), floor | 32, shadow | −1.04, 2.36 | −2.12, 4.13 | −0.59, 2.53 |
 | UE07 (read swapped), drone | 32, shadow | −0.29, 1.11 | −0.12, 2.21 | −0.25, 1.25 |
 | UE06 (as labelled), floor | 32, shadow | −1.79, 4.99 | −2.55, 4.85 | −1.18, 4.62 |
@@ -1659,21 +1659,26 @@ predicted − measured):
 
 | Scene | Measured | FDTD | Random-incidence s(f) | Orders | Lambert at incidence | Hybrid (default) |
 | --- | --- | --- | --- | --- | --- | --- |
-| UE24, sawtooth (64 pairs) | −1.03 | −1.35 (−0.20 / 1.25) | −0.22 (+0.81 / 1.48) | −1.46 (−0.42 / 1.24) | −0.25 (+0.78 / 1.46) | −0.33 (+0.70 / 1.39) |
-| UE25, ribs (64) | −1.11 | −0.92 (+0.24 / 1.60) | −0.02 (+1.09 / 1.85) | −0.50 (+0.61 / 1.59) | −0.05 (+1.05 / 1.80) | −0.10 (+1.01 / 1.76) |
-| UE26, both (64) | −1.62 | −1.16 (−0.29 / 1.60) | −0.10 (+1.52 / 2.25) | −1.94 (−0.32 / 1.63) | −0.16 (+1.46 / 2.16) | −0.43 (+1.19 / 1.98) |
-| UE28, in sight (72) | +0.23 | | +0.03 (−0.20 / 0.77) | +0.02 (−0.22 / 0.70) | +0.02 (−0.21 / 0.76) | +0.05 (−0.18 / 0.69) |
+| UE24, sawtooth (64 pairs) | −1.03 | −1.35 (−0.20 / 1.25) | −0.22 (+0.81 / 1.48) | −1.50 (−0.47 / 1.26) | −0.25 (+0.78 / 1.46) | −0.74 (+0.29 / 1.25) |
+| UE25, ribs (64) | −1.11 | −0.92 (+0.24 / 1.60) | −0.02 (+1.09 / 1.85) | −0.50 (+0.61 / 1.59) | −0.05 (+1.05 / 1.80) | −0.23 (+0.88 / 1.70) |
+| UE26, both (64) | −1.62 | −1.16 (−0.29 / 1.60) | −0.10 (+1.52 / 2.25) | −2.01 (−0.40 / 1.66) | −0.16 (+1.46 / 2.16) | −0.75 (+0.87 / 1.80) |
+| UE28, in sight (72) | +0.23 | | +0.03 (−0.20 / 0.77) | +0.01 (−0.22 / 0.70) | +0.02 (−0.21 / 0.76) | +0.01 (−0.22 / 0.70) |
 | UE28, shadow (22) | +0.40 | | +0.03 (−0.36 / 0.60) | +0.06 (−0.34 / 0.58) | +0.08 (−0.32 / 0.56) | +0.06 (−0.34 / 0.58) |
-| DigiCity microphone 7 | | | −2.33 / 2.93 | −3.36 / 4.27 | | −1.97 / 2.72 |
+| DigiCity microphone 7 | | | −2.33 / 2.93 | −3.26 / 4.15 | −1.76 / 2.46 | −1.91 / 2.64 |
 
 In the canyon the orders carry the relief's redirection, and their error is the FDTD's: what the
 sawtooth sends out along the canyon or back is lost to the microphones, where Lambert's law returns
 most of it. The sawtooth's teeth may face either way along the canyon (the archive does not say);
 turned round, its mean change moves by 0.06 dB. Behind DigiCity's containers the order is reversed:
 microphone 7 is in a shadow, and what the walls scatter onto other walls reaches it, which the
-diffuse field carries and the orders alone do not; Lambert's law at incidence, there, is −1.76 /
-2.46. The hybrid, each wall's first scattering as orders and the rest diffusely, is better than the
-random-incidence s(f) in every case. Two choices were measured on the way: grating rays and their
+diffuse field carries and the orders alone do not. The hybrid, each wall's first scattering as
+orders straight to the microphone and the rest diffusely, is better than the random-incidence s(f)
+in every case, and in the canyon level with the FDTD (UE24 1.25 against its 1.25). It was 1.39,
+1.76 and 1.98 while its grating rays could still reflect in another wall on the way to the
+microphone: the diffuse field re-emits whatever a relief scatters onto other walls, so those
+reached the microphone twice. The orders' shares are now their means over each band's three
+sub-bands, as the specular share is taken, and a floor bounce's coefficient goes with its phase:
+0.0-0.07 dB in the orders' column. Two choices were measured on the way: grating rays and their
 floor partners add with their phases (in energy, the canyon's sawtooth came out −2.29 dB, the
 partners near the floor being one length), and rays that diffract reflect in a relief whole
 (taking its specular share, DigiCity's microphone 7 fell to −5.9 dB mean with the orders; EDGE did
@@ -1750,13 +1755,13 @@ scenes' line-of-sight pairs. Measured − predicted, mean and rms (dB), 1.6-20 k
 | UE03, drone | 48 | +0.74, 2.53 | +0.67, 2.50 | −0.63, 2.73 | +1.66, 3.99 |
 | UE04 mansard, floor | 31 | −2.29, 4.47 | −2.29, 4.48 | +5.00, 6.19 | +7.07, 8.12 |
 | UE04, drone | 48 | +1.31, 2.44 | +1.03, 2.40 | +0.02, 2.71 | +1.52, 3.59 |
-| UE05 shed, floor | 31 | −0.71, 3.09 | −0.69, 3.09 | +3.06, 4.63 | +5.06, 6.41 |
-| UE05, drone | 48 | +0.21, 1.93 | +0.18, 1.93 | −1.39, 2.18 | +0.21, 2.00 |
+| UE05 shed, floor | 31 | −0.47, 3.14 | −0.45, 3.15 | +3.06, 4.63 | +5.06, 6.41 |
+| UE05, drone | 48 | +0.25, 1.86 | +0.23, 1.86 | −1.39, 2.18 | +0.21, 2.00 |
 | UE15 detached gable, floor | 30 | +0.18, 1.79 | +0.24, 1.82 | +0.88, 2.90 | +1.25, 3.44 |
 | UE15, drone | 48 | +0.25, 2.25 | +0.15, 2.19 | −0.18, 2.56 | +0.77, 3.82 |
 | UE17 detached gable (1/5), floor | 31 | +0.61, 2.04 | +0.54, 1.98 | +2.22, 4.21 | +2.30, 4.10 |
 | UE17, drone | 47 | +1.12, 4.73 | +1.05, 4.71 | +0.71, 3.66 | +1.86, 4.92 |
-| All | 554 | +0.70, 3.08 | +0.58, 3.00 | +1.03, 4.51 | +3.11, 5.82 |
+| All | 554 | +0.72, 3.08 | +0.60, 3.00 | +1.03, 4.51 | +3.11, 5.82 |
 
 From the floor, where the roof's shape sets the path, the planes are 1.8-4.5 dB rms where a flat
 block is 2.9-10.7; from the drone, which sees over the roofs, they and the flat block at the mean

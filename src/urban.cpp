@@ -49,7 +49,7 @@ Vec3 crossing(const Vec3& a, const Vec3& b, double da, double db)
 bool within(const Facade& f, const FacadeFrame& frame, const Vec3& q)
 {
     const double s = (q.x - f.x0) * frame.tx + (q.y - f.y0) * frame.ty;
-    return s >= 0.0 && s <= frame.length && q.z >= f.bottom && q.z <= facade_top(f, q);
+    return s >= 0.0 && s <= frame.length && q.z >= facade_bottom(f, q) && q.z <= facade_top(f, q);
 }
 
 bool blocked_by_any(const std::vector<Facade>& facades, std::size_t skip_a, std::size_t skip_b, const Vec3& a,

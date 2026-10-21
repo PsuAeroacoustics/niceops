@@ -363,6 +363,24 @@ old and new results only with them in mind.
 - **The cone's phase interval takes a database's recorded spread and tonal fractions**, as the
   measured model's did; it took the defaults whatever the record said. No shipped database has a
   record, so nothing moved.
+- **Buildings sharing a side are judged along it**, where one or both roofs are pitched: the
+  shared wall stands, and the edge diffracts, only where one roof is above the other, cut wherever
+  either roof breaks or the two cross. They had been compared by their highest points, so a gable
+  against a taller flat roof kept a wall whose bottom was above its top, and the flat roof lost
+  its edge on that side. A mansard's level deck now reflects and scatters, and a ridge is an edge
+  only where its two planes are the roof on either side. The facade prefilter samples a wall
+  between its bottom and its top; it had sampled up to half its top, so a wall raised more than
+  half way by a neighbour never reflected, flat roofs too. UE06's drone against the FDTD went
+  from 2.12 to 2.03 dB rms by UTD and from 1.47 to 1.20 by the edge source, and UE05's floor
+  source against the measurements from −0.71 to −0.47 dB mean (3.09 to 3.14 rms).
+- **The hybrid relief's grating rays reach the microphone straight from the relief**, or off the
+  floor. They could reflect in up to two other walls first, which the diffuse field also
+  re-emits, so that energy arrived twice. The source's image tree now reaches as deep as the
+  grating rays need, so `--no_diffraction` no longer drops them; an order's share is the mean
+  over the band's sub-bands; a floor bounce keeps its phase, and a plate its reflected term.
+  Beyond a microphone's diffuse reach a Lambert relief reflects whole, and a relief building's
+  roof no longer scatters. On EDGE's reliefs the hybrid went from 1.39, 1.76 and 1.98 dB rms
+  (UE24-26) to 1.25, 1.70 and 1.80, and DigiCity's microphone 7 from −1.97 / 2.72 to −1.91 / 2.64.
 - **`--export_sphere` carries `rotor_rpm`**, as it carried the coherence record: a run on an
   exported sphere took the rotor's rate from the vehicle file instead, which also moved the band
   up to which the measured model's rotor delay holds.

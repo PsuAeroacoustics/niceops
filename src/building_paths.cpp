@@ -250,10 +250,17 @@ ImageTree image_tree(const Buildings& buildings, const Vec3& point, double radiu
     {
         const Facade& f = facades[near[a]];
         const Frame& fr = frames[near[a]];
+        // Up the wall from its bottom (a neighbour's roof, where one adjoins
+        // it) and down its image below the floor.
         for (double along : {0.05, 0.3, 0.5, 0.7, 0.95})
+        {
+            const Vec3 base(fr.x0 + along * fr.length * fr.ax + 1e-3 * fr.nx,
+                    fr.y0 + along * fr.length * fr.ay + 1e-3 * fr.ny, 0.0);
+            const double bottom = facade_bottom(f, base), top = facade_top(f, base);
             for (double h : {-0.5, -0.05, 0.05, 0.5})
-                samples[a].emplace_back(fr.x0 + along * fr.length * fr.ax + 1e-3 * fr.nx,
-                        fr.y0 + along * fr.length * fr.ay + 1e-3 * fr.ny, h * f.top);
+                samples[a].emplace_back(base.x, base.y,
+                        (h < 0.0 ? -1.0 : 1.0) * (bottom + std::abs(h) * (top - bottom)));
+        }
     }
     const Vec3 floor_image(point.x, point.y, -point.z);
     auto seen_from = [&](const Vec3& p, std::size_t a) {
@@ -388,9 +395,10 @@ bool folded_path_with(const Buildings& buildings, const Vec3& from, const Vec3& 
             return false;
         const Vec3 hit = cur + (s0 / (s0 - s1)) * (targets[j] - cur);
         const double along = (hit.x - fr.x0) * fr.ax + (hit.y - fr.y0) * fr.ay;
-        const double top = facade_top(all[f], hit);
-        const double bottom = below_floor ? -top : all[f].bottom;
-        if (along < -1e-9 || along > fr.length + 1e-9 || hit.z < bottom - 1e-9 || hit.z > top + 1e-9)
+        // The wall, and below the floor its image too.
+        const double top = facade_top(all[f], hit), bottom = facade_bottom(all[f], hit);
+        const double z = below_floor && hit.z < 0.0 ? -hit.z : hit.z;
+        if (along < -1e-9 || along > fr.length + 1e-9 || z < bottom - 1e-9 || z > top + 1e-9)
             return false;
         if (!leg_open(facades.size() - j, cur, hit))
             return false;
@@ -465,7 +473,8 @@ bool folded_roof_path_open(const Buildings& buildings, const Vec3& from, const V
         const Vec3 hit = cur + (s0 / (s0 - s1)) * (targets[j] - cur);
         const double along = (hit.x - fr.x0) * fr.ax + (hit.y - fr.y0) * fr.ay;
         const double z = real(hit).z;
-        if (along < -1e-9 || along > fr.length + 1e-9 || z < all[f].bottom - 1e-9 || z > facade_top(all[f], hit) + 1e-9)
+        if (along < -1e-9 || along > fr.length + 1e-9 || z < facade_bottom(all[f], hit) - 1e-9
+                || z > facade_top(all[f], hit) + 1e-9)
             return false;
         if (!leg(cur, hit))
             return false;

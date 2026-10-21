@@ -255,9 +255,11 @@ public:
     // none.
     std::size_t inside(double x, double y) const;
 
-    // Whether (x, y) lies on a building's roof: within its footprint, its
-    // sides included to round-off.  A roof's reflection ends where its edge's
-    // reflection boundary is, and must not stop short of it as inside() does.
+    // Whether (x, y) lies on a building's level roof: within its footprint, its
+    // sides included to round-off, and under a pitched roof where its least
+    // plane is level (a mansard's deck).  A roof's reflection ends where its
+    // edge's reflection boundary is, and must not stop short of it as inside()
+    // does.
     bool on_roof(std::size_t building, double x, double y) const;
 
     // Whether `p` lies strictly inside a building's solid: inside a footprint

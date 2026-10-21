@@ -485,6 +485,9 @@ std::shared_ptr<const UrbanDistrict> UrbanDistrict::read(const std::string& file
                 d.facade_reliefs[f] = &d.reliefs[static_cast<std::size_t>(which - 1)];
         }
         d.paths.reliefs = &d.facade_reliefs;
+        // Grating rays' source side reaches as deep as their own orders.
+        if (d.relief_orders)
+            d.paths.grating_reflections = d.grating_reflections;
     }
     return district;
 }
@@ -747,6 +750,22 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     auto reflection_for = [&](std::size_t m) -> const std::vector<double>& {
         return diffuse ? microphone_reflection[m] : reflection;
     };
+    // By Lambert's law alone, a relief beyond a microphone's diffuse reach
+    // reflects whole, as a plain wall there does: nothing would carry what it
+    // scatters.  Each microphone's rays take its own reliefs.
+    std::vector<std::vector<const FacadeRelief*>> microphone_reliefs;
+    std::vector<PointPathOptions> microphone_paths(nm, paths);
+    if (reliefs && d.relief_lambert && !d.relief_orders && diffuse)
+    {
+        microphone_reliefs.assign(nm, d.facade_reliefs);
+        for (std::size_t m = 0; m < nm; m++)
+        {
+            for (std::size_t f = 0; f < d.facade_reliefs.size(); f++)
+                if (!diffuse_fields[m]->scatters(f))
+                    microphone_reliefs[m][f] = nullptr;
+            microphone_paths[m].reliefs = &microphone_reliefs[m];
+        }
+    }
     // A plate on a raised surface takes the specular R its rays' partners do.
     for (std::size_t m = 0; m < nm; m++)
         if (floor_of[m].plate && raised[m] != PointRay::no_surface)
@@ -886,16 +905,33 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         g.reflection = &reflection_for(m);
         g.air = nepers;
         g.max_reflections = d.grating_reflections;
+        // The hybrid's diffuse field carries what a relief scatters onto
+        // other walls: its grating rays reach the microphone directly.
+        if (d.relief_lambert)
+            g.max_microphone_reflections = 0;
         g.source_reflections = paths.source_reflections;
         const FloorModel& floor = floor_of[m];
         if (floor.impedance())
             g.floor = [&](double sin_grazing, double leg, std::size_t b) {
                 const auto q = spherical_reflection_coefficient(sin_grazing, pi * bands[b] * leg / sound_speed,
                         floor.admittance[3 * b + 1], floor.boundary_loss);
-                return q[0] * q[0] + q[1] * q[1];
+                return std::complex<double>(q[0], q[1]);
             };
         else
-            g.floor = [&](double, double, std::size_t) { return floor.reflection; };
+            g.floor = [&](double, double, std::size_t) { return std::complex<double>(std::sqrt(floor.reflection)); };
+        // A plate at the microphone, at each band's middle sub-band.
+        if (floor.plate)
+        {
+            g.plate = [&](double elevation, double azimuth, std::size_t b) {
+                thread_local std::vector<std::complex<double>> direct, image;
+                direct.resize(3 * nb);
+                image.resize(3 * nb);
+                floor.plate(elevation, azimuth, direct.data(), image.data());
+                return std::make_pair(direct[3 * b + 1], image[3 * b + 1]);
+            };
+            for (std::size_t b = 0; b < nb && !floor.surface.empty(); b++)
+                g.plate_surface.push_back(floor.surface[3 * b + 1]);
+        }
         thread_local std::vector<GratingRay> rays;
         thread_local std::vector<double> power;
         rays.clear();
@@ -926,7 +962,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         // Coherent rays have no unknown phase relation, and the diffuse field
         // none either, so neither has variance.
         w.variance.assign(nb, 0.0);
-        const PointSourceField field(city, source, microphone, paths);
+        const PointSourceField field(city, source, microphone, microphone_paths[m]);
         turbulence_energy(state, m, w, out.scattered);
         // The diffuse field and the grating rays carry energy alone.
         out.diffuse.clear();
@@ -1063,7 +1099,8 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
                             evaluate(*source_ends[slot[state]], *microphone, state, m, w, out[work[i]]);
                             continue;
                         }
-                        const PointSourceField field(city, *source_ends[slot[state]], *microphone, paths);
+                        const PointSourceField field(city, *source_ends[slot[state]], *microphone,
+                                microphone_paths[m]);
                         // The diffuse energy before the push: the stream's
                         // callback adds it.
                         Pair& p = out[work[i]];

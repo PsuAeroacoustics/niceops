@@ -23,11 +23,16 @@
 // them), the floor's, the air's over its length, and the spreading of its ray
 // tube, worked out by perturbing its launch: |p|^2 = dOmega / dA, which is
 // 1 / L^2 for order 0.  One ray per band, at the band's centre, since the
-// geometry follows the wavelength.  Paths with two non-specular orders are
-// left out.
+// geometry follows the wavelength, its share the order's mean over the band's
+// three sub-bands, as the specular rays take order 0's in each.  The floor's
+// coefficient goes with its phase, and at a plate the ray takes P_d, or P_r
+// off the floor (P_d + R P_r on a roof).  Paths with two non-specular orders
+// are left out.
 
+#include <complex>
 #include <cstddef>
 #include <functional>
+#include <utility>
 #include <vector>
 
 #include "buildings.hpp"
@@ -41,9 +46,12 @@ class PathEnd;
 struct GratingRay
 {
     // The band it carries energy in, and that energy, |p|^2 for a unit source
-    // (1/r^2 in free field), before the source's own level along `launch`.
+    // (1/r^2 in free field), before the source's own level along `launch`;
+    // and the phase the floor's and a plate's coefficients give it, radians,
+    // besides its length's.
     std::size_t band = 0;
     double energy = 0.0;
+    double phase = 0.0;
     // The direction it leaves the source in (unit; toward the floor's image
     // where its first leg reflects in the floor), its length, the facade it
     // takes its order off, and the order.
@@ -73,14 +81,26 @@ struct GratingInput
     std::vector<double> bands;
     double sound_speed = 343.2;
     const std::vector<double>* reflection = nullptr;
-    // The energy a floor bounce reflects in band b, at the bounce's grazing
-    // sine and the length of its leg; null for a rigid floor.
-    std::function<double(double sin_grazing, double leg, std::size_t band)> floor;
+    // The floor's reflection coefficient for a bounce in band b, at the
+    // bounce's grazing sine and the length of its leg (complex: its phase goes
+    // with the ray's, GratingRay::phase); null for a rigid floor.
+    std::function<std::complex<double>(double sin_grazing, double leg, std::size_t band)> floor;
+    // A plate the microphone is flush on: P_d and P_r in band b for a ray
+    // arriving at `elevation` above it from horizontal `azimuth` (FloorModel::
+    // plate), and on a wall's or a roof's surface that surface's amplitude R
+    // in band b (empty on the floor).  Null for none.
+    std::function<std::pair<std::complex<double>, std::complex<double>>(
+            double elevation, double azimuth, std::size_t band)>
+            plate;
+    std::vector<double> plate_surface;
     // The air's attenuation of amplitude, Np/m per band; empty for none.
     std::vector<double> air;
-    // Facade reflections on a grating ray besides its order, at most, and the
+    // Facade reflections on a grating ray besides its order, at most, and of
+    // those between its relief and the microphone: none in the hybrid, whose
+    // diffuse field carries what a relief scatters onto other walls.  And the
     // least share of an order taken.
     std::size_t max_reflections = 2;
+    std::size_t max_microphone_reflections = static_cast<std::size_t>(-1);
     double least_share = 1e-4;
     // Whether the source's side reflects in the floor (PointPathOptions::
     // source_reflections).

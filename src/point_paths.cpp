@@ -569,11 +569,13 @@ std::size_t edge_order(const PointPathOptions& options)
 // How deep an end's image tree goes: the microphone's to the specular rays'
 // order and the edges'; the source's (with source_reflections) to the edges'
 // order, as the microphone's side, so the ray set is the same with the ends
-// swapped.
+// swapped -- and with reliefs to the grating rays' order and one, whose
+// images the diffracted searches pass over by their own orders.
 std::size_t tree_order(bool source, const PointPathOptions& options)
 {
+    const std::size_t gratings = options.reliefs != nullptr ? options.grating_reflections + 1 : 0;
     if (source)
-        return options.diffraction && options.source_reflections ? edge_order(options) : 0;
+        return std::max(options.diffraction && options.source_reflections ? edge_order(options) : 0, gratings);
     return std::max(options.max_reflections, edge_order(options));
 }
 
@@ -819,7 +821,8 @@ bool same_tracing(const PointPathOptions& a, const PointPathOptions& b)
             && a.max_twice_reflections == b.max_twice_reflections && a.diffraction == b.diffraction
             && a.triple_diffraction == b.triple_diffraction && a.max_thrice_reflections == b.max_thrice_reflections && a.double_diffraction == b.double_diffraction
             && a.source_reflections == b.source_reflections && a.radius == b.radius && a.max_images == b.max_images
-            && a.prune == b.prune;
+            && a.prune == b.prune && (a.reliefs != nullptr) == (b.reliefs != nullptr)
+            && a.grating_reflections == b.grating_reflections;
 }
 
 } // namespace

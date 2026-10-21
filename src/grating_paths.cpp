@@ -170,7 +170,8 @@ void grating_band_energies(const std::vector<GratingRay>& rays, const std::vecto
         length.clear();
         for (std::size_t k : order)
         {
-            amplitude.emplace_back(std::sqrt(rays[k].energy * (power != nullptr ? power[k] : 1.0)));
+            amplitude.push_back(std::polar(std::sqrt(rays[k].energy * (power != nullptr ? power[k] : 1.0)),
+                    rays[k].phase));
             length.push_back(rays[k].length);
         }
         const double k1 = 2.0 * pi * bands[band] / half / sound_speed, k2 = 2.0 * pi * bands[band] * half / sound_speed;
@@ -221,7 +222,8 @@ void grating_rays(const Buildings& buildings, const PathEnd& source, const PathE
         {
             const PointImage& b_image = microphones[j];
             const std::vector<std::size_t> b_chain(b_image.facades.begin(), b_image.facades.end() - 1);
-            if (a_chain.size() + b_chain.size() > input.max_reflections)
+            if (a_chain.size() + b_chain.size() > input.max_reflections
+                    || b_chain.size() > input.max_microphone_reflections)
                 continue;
             const Vec3 b_point = mirror_in(facade, b_image.point);
             for (std::size_t band = 0; band < nb; band++)
@@ -244,7 +246,7 @@ void grating_rays(const Buildings& buildings, const PathEnd& source, const PathE
                             const double kick = order * lambda / relief.period();
                             double x, z;
                             if (!grating_point(facade, pa, pb, kick, x, z) || x < 0.0 || x > fr.length
-                                    || z < std::max(facade.bottom, 0.0)
+                                    || z < std::max(facade_bottom(facade, fr.start + x * fr.along), 0.0)
                                     || z > facade_top(facade, fr.start + x * fr.along))
                                 continue;
                             const Vec3 p(fr.start.x + x * fr.along.x, fr.start.y + x * fr.along.y, z);
@@ -253,12 +255,18 @@ void grating_rays(const Buildings& buildings, const PathEnd& source, const PathE
                             const double horizontal = std::hypot(u1.x, u1.y);
                             if (!(horizontal > 1e-9))
                                 continue;
+                            // The order's share, the mean over the band's
+                            // three sub-bands.
                             const double sin_psi = -fr.along.dot(u1) / horizontal;
-                            relief.orders(sin_psi, f_band * horizontal, input.sound_speed, shares);
                             double share = 0.0;
-                            for (const auto& [mm, v] : shares)
-                                if (mm == order)
-                                    share = v;
+                            for (const SubBand& part : sub_bands(f_band, input.sound_speed))
+                            {
+                                relief.orders(sin_psi, 0.5 * (part.g1 + part.g2) * horizontal, input.sound_speed,
+                                        shares);
+                                for (const auto& [mm, v] : shares)
+                                    if (mm == order)
+                                        share += v / 3.0;
+                            }
                             if (share < input.least_share)
                                 continue;
                             if (!folded_path_open(buildings, p, s, a_chain, fa == 1, &to_source)
@@ -294,12 +302,31 @@ void grating_rays(const Buildings& buildings, const PathEnd& source, const PathE
                                 }
                                 d = mirrored(facades[g], d);
                             }
+                            // The floor's bounces and a plate, with their
+                            // phases; `d` is now the direction it arrives in.
+                            double phase = 0.0;
+                            auto take = [&](std::complex<double> c) {
+                                energy *= std::norm(c);
+                                phase += std::arg(c);
+                            };
                             if (input.floor)
                             {
                                 if (fa)
-                                    energy *= input.floor(std::abs(p.z - pa.z) / r1, r1, band);
+                                    take(input.floor(std::abs(p.z - pa.z) / r1, r1, band));
                                 if (fb)
-                                    energy *= input.floor(std::abs(pb.z - p.z) / r2, r2, band);
+                                    take(input.floor(std::abs(pb.z - p.z) / r2, r2, band));
+                            }
+                            if (input.plate)
+                            {
+                                const auto [direct, image] = input.plate(
+                                        std::atan2(std::abs(d.z), std::hypot(d.x, d.y)), std::atan2(d.y, d.x), band);
+                                if (!input.plate_surface.empty())
+                                {
+                                    const double r = input.plate_surface[band];
+                                    take((direct + r * image) / (1.0 + r));
+                                }
+                                else
+                                    take(fb ? image : direct);
                             }
                             const double length = r1 + r2;
                             if (!input.air.empty())
@@ -318,6 +345,7 @@ void grating_rays(const Buildings& buildings, const PathEnd& source, const PathE
                             GratingRay ray;
                             ray.band = band;
                             ray.energy = energy;
+                            ray.phase = phase;
                             ray.length = length;
                             ray.facade = f;
                             ray.order = order;

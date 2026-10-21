@@ -313,10 +313,25 @@ std::vector<Ridge> roof_ridges(const Footprint& f)
                 }
             });
             std::sort(cuts.begin(), cuts.end());
+            // A ridge has one of its two planes the least on either side: a
+            // third plane through the same line (a level one at the ridge's
+            // height) makes no second ridge there.
+            const auto least_is = [&](std::size_t plane, double x, double y) {
+                const double z = f.roof[plane].at(x, y);
+                for (const RoofPlane& other : f.roof)
+                    if (other.at(x, y) < z - 1e-12)
+                        return false;
+                return true;
+            };
+            const double ex = nx / norm * Buildings::contact, ey = ny / norm * Buildings::contact;
             for (std::size_t i = 0; i + 1 < cuts.size(); i++)
             {
                 const double s0 = cuts[i], s1 = cuts[i + 1], s = 0.5 * (s0 + s1);
                 if (s1 - s0 < Buildings::contact || !in_footprint(f, px + s * dx, py + s * dy))
+                    continue;
+                // pk - pl grows along (nx, ny): l is the lower that way.
+                const double mx = px + s * dx, my = py + s * dy;
+                if (!least_is(l, mx + ex, my + ey) || !least_is(k, mx - ex, my - ey))
                     continue;
                 Ridge r;
                 r.a = Vec3(px + s0 * dx, py + s0 * dy, 0.0);
@@ -641,36 +656,140 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
         if (other == by_ends.end() || sides[other->second].building == side.building)
             continue;
         shared_sides_++;
-        const double top = footprints_[side.building].top;
-        const double neighbour = footprints_[sides[other->second].building].top;
+        // Only what stands above the neighbour's roof is outside, judged along
+        // the side: both roofs' heights over it, t from (x0, y0) to (x1, y1),
+        // straight between the ends of either's stretches and where they cross.
+        const Footprint& mine = footprints_[side.building];
+        const Footprint& theirs = footprints_[sides[other->second].building];
+        const double dx = side.x1 - side.x0, dy = side.y1 - side.y0;
+        const auto height = [&](const Footprint& f, double t) {
+            return roof_height(f, side.x0 + t * dx, side.y0 + t * dy);
+        };
+        const auto above = [&](double t) { return height(mine, t) - height(theirs, t); };
+        const double level_tolerance = 1e-9;
+        std::vector<double> cuts {0.0, 1.0};
+        for (const Footprint* f : {&mine, &theirs})
+            if (!f->roof.empty())
+                for (const auto& [t0, t1, plane] : roof_stretches(*f, side.x0, side.y0, side.x1, side.y1))
+                    cuts.insert(cuts.end(), {t0, t1});
+        std::sort(cuts.begin(), cuts.end());
+        for (std::size_t k = 0, n = cuts.size(); k + 1 < n; k++)
+        {
+            const double d0 = above(cuts[k]), d1 = above(cuts[k + 1]);
+            if ((d0 > level_tolerance && d1 < -level_tolerance) || (d0 < -level_tolerance && d1 > level_tolerance))
+                cuts.push_back(cuts[k] + (cuts[k + 1] - cuts[k]) * d0 / (d0 - d1));
+        }
+        std::sort(cuts.begin(), cuts.end());
+        cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
+        // The stretches where this roof stands above the neighbour's, merged.
+        std::vector<std::pair<double, double>> exposed;
+        bool level = true;
+        for (std::size_t k = 0; k + 1 < cuts.size(); k++)
+        {
+            const double mid = above(0.5 * (cuts[k] + cuts[k + 1]));
+            level = level && std::abs(mid) <= level_tolerance && std::abs(above(cuts[k])) <= level_tolerance;
+            if (!(mid > level_tolerance))
+                continue;
+            if (!exposed.empty() && exposed.back().second == cuts[k])
+                exposed.back().second = cuts[k + 1];
+            else
+                exposed.emplace_back(cuts[k], cuts[k + 1]);
+        }
         // Two roofs level across the side are one roof there: the later
         // building cedes the side to the earlier, so a bounce on it is the
         // earlier's alone (on_roof), and neither keeps a wall or an edge on it.
-        const bool level = std::abs(neighbour - top) <= 1e-9;
         if (level && sides[other->second].building < side.building)
             ceded_[side.building].push_back({side.x0, side.y0, side.x1, side.y1});
-        if (level || neighbour >= top)
-        {
-            for (std::size_t k = side.facade; k < side.facade_end; k++)
-                drop_facade[k] = 1;
-            for (std::size_t k = side.roof; k < side.roof_end; k++)
-                drop_edge[k] = 1;
-            for (std::size_t c : {side.corner0, side.corner1})
-                if (c != none)
-                    drop_edge[c] = 1;
-            continue;
-        }
-        // Only what stands above the neighbour's roof is outside.  (Its highest
-        // point, under a pitched one.)
-        for (std::size_t k = side.facade; k < side.facade_end; k++)
-            facades_[k].bottom = std::max(facades_[k].bottom, neighbour);
-        for (std::size_t c : {side.corner0, side.corner1})
-            if (c != none && edges_[c].start.z < neighbour)
+        // A corner stands only above the neighbour's roof at its vertex.
+        for (const auto& [c, t] : {std::pair {side.corner0, 0.0}, std::pair {side.corner1, 1.0}})
+            if (c != none)
             {
-                const double end = edges_[c].start.z + edges_[c].length;
-                edges_[c].start.z = neighbour;
-                edges_[c].length = end - neighbour;
+                const double floor = height(theirs, t);
+                if (!(above(t) > level_tolerance))
+                    drop_edge[c] = 1;
+                else if (edges_[c].start.z < floor)
+                {
+                    const double end = edges_[c].start.z + edges_[c].length;
+                    edges_[c].start.z = floor;
+                    edges_[c].length = end - floor;
+                }
             }
+        // The side's walls stand down to the neighbour's roof where it is below
+        // theirs, a piece between each two cuts so that both its top and its
+        // bottom run straight; its roof edges stand where its roof stands
+        // above, whole across a point where the roofs only touch.  A side
+        // above all along with no cut inside a wall keeps its walls and edges,
+        // their bottoms raised.
+        const std::size_t walls = side.facade_end - side.facade;
+        const auto along = [&](double x, double y) {
+            return ((x - side.x0) * dx + (y - side.y0) * dy) / (dx * dx + dy * dy);
+        };
+        bool whole = exposed.size() == 1 && exposed[0].first == 0.0 && exposed[0].second == 1.0;
+        for (std::size_t k = side.facade; k < side.facade_end && whole; k++)
+        {
+            const double t0 = along(facades_[k].x1, facades_[k].y1), t1 = along(facades_[k].x0, facades_[k].y0);
+            for (double c : cuts)
+                whole = whole && !(c > t0 + 1e-12 && c < t1 - 1e-12);
+        }
+        for (std::size_t k = side.facade; k < side.facade_end; k++)
+            drop_facade[k] = !whole;
+        for (std::size_t k = side.roof; k < side.roof_end; k++)
+            drop_edge[k] = !whole;
+        for (std::size_t w = 0; w < walls; w++)
+        {
+            // Walls run against the side, so the side's first stretch is its
+            // last wall; and each has its stretch of the side.
+            const std::size_t k = side.facade + walls - 1 - w;
+            const Facade original = facades_[k];
+            const double t0 = along(original.x1, original.y1), t1 = along(original.x0, original.y0);
+            if (!whole)
+            {
+                const Edge edge = edges_[side.roof + w];
+                for (const auto& [u0, u1] : exposed)
+                {
+                    const double a = std::max(u0, t0), b = std::min(u1, t1);
+                    if (!(b > a))
+                        continue;
+                    const Vec3 from(side.x0 + a * dx, side.y0 + a * dy, height(mine, a));
+                    const Vec3 to(side.x0 + b * dx, side.y0 + b * dy, height(mine, b));
+                    Edge part = edge;
+                    part.start = from;
+                    part.length = (to - from).norm();
+                    edges_.push_back(part);
+                    drop_edge.push_back(0);
+                }
+            }
+            for (std::size_t m = 0; m + 1 < cuts.size(); m++)
+            {
+                const double a = std::max(cuts[m], t0), b = std::min(cuts[m + 1], t1);
+                if (!(b > a) || !(above(0.5 * (a + b)) > level_tolerance))
+                    continue;
+                Facade piece = original;
+                piece.x0 = side.x0 + b * dx;
+                piece.y0 = side.y0 + b * dy;
+                piece.x1 = side.x0 + a * dx;
+                piece.y1 = side.y0 + a * dy;
+                if (original.top_start == original.top_start)
+                {
+                    piece.top_start = height(mine, b);
+                    piece.top_end = height(mine, a);
+                    piece.top = std::max(piece.top_start, piece.top_end);
+                }
+                piece.bottom_start = height(theirs, b);
+                piece.bottom_end = height(theirs, a);
+                piece.bottom = std::min(piece.bottom_start, piece.bottom_end);
+                if (piece.bottom_start == piece.bottom_end)
+                    piece.bottom_start = piece.bottom_end = std::numeric_limits<double>::quiet_NaN();
+                if (whole)
+                {
+                    facades_[k] = piece;
+                    continue;
+                }
+                facades_.push_back(piece);
+                facade_building_.push_back(side.building);
+                drop_facade.push_back(0);
+            }
+        }
     }
     if (shared_sides_ > 0)
     {
@@ -755,9 +874,15 @@ bool Buildings::strictly_inside(std::size_t building, double x, double y) const
 
 bool Buildings::on_roof(std::size_t building, double x, double y) const
 {
-    // A pitched roof is no level plane to bounce on.
-    if (!footprints_[building].roof.empty())
-        return false;
+    // A pitched roof is a level plane to bounce on only where its least plane
+    // is level: a mansard's deck, at its top.
+    const Footprint& pitched = footprints_[building];
+    if (!pitched.roof.empty())
+    {
+        const RoofPlane& p = pitched.roof[active_plane(pitched, x, y)];
+        if (p.a != 0.0 || p.b != 0.0)
+            return false;
+    }
     for (const auto& s : ceded_[building])
         if (distance_to_side(x, y, s[0], s[1], s[2], s[3]) < 1e-9)
             return false;
@@ -808,7 +933,7 @@ Buildings::Support Buildings::support(const Vec3& p) const
         const double dx = w.x1 - w.x0, dy = w.y1 - w.y0, length = std::hypot(dx, dy);
         const double along = ((p.x - w.x0) * dx + (p.y - w.y0) * dy) / length;
         if (std::abs(facade_side(w, p)) <= contact && along >= -contact && along <= length + contact
-                && p.z >= w.bottom - contact && p.z <= facade_top(w, p) + contact)
+                && p.z >= facade_bottom(w, p) - contact && p.z <= facade_top(w, p) + contact)
         {
             out = {Support::Kind::facade, f};
             surfaces++;
@@ -1093,9 +1218,10 @@ std::size_t Buildings::first_hit(const Vec3& pos, const Vec3& dir, bool below_fl
                         continue;
                     const Vec3 p = pos + t * dir;
                     const double along = (p.x - fr.x0) * fr.ax + (p.y - fr.y0) * fr.ay;
-                    const double top = facade_top(facades_[i], p);
-                    const double bottom = below_floor ? -top : facades_[i].bottom;
-                    if (along >= -1e-9 && along <= fr.length + 1e-9 && p.z >= bottom - 1e-9 && p.z <= top + 1e-9)
+                    // The wall, and below the floor its image too.
+                    const double top = facade_top(facades_[i], p), bottom = facade_bottom(facades_[i], p);
+                    const double z = below_floor && p.z < 0.0 ? -p.z : p.z;
+                    if (along >= -1e-9 && along <= fr.length + 1e-9 && z >= bottom - 1e-9 && z <= top + 1e-9)
                     {
                         best = i;
                         best_t = t;

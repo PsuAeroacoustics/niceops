@@ -904,8 +904,10 @@ each carries the part of its last facade through which the microphone can be rea
 facade counts only where it lies in that beam, and an edge only where it crosses it. Every
 candidate is then tested exactly in three dimensions: within each facade it reflects in, from in
 front, with no leg through a building. Buildings that share a side stand against each other
-there: of the shared wall only what rises above the lower roof is a facade, and the lower roof's
-edge and both corners below it are no edges. A side shared in part -- one building's wall against
+there: of the shared wall only what rises above the other's roof is a facade, and an edge or a
+corner that does not stand above it is none -- judged along the side, the two roofs' heights over
+it compared stretch by stretch (straight between either's breaks and where they cross), so that
+over a neighbour's pitched roof a wall's bottom slopes with it. A side shared in part -- one building's wall against
 part of another's, at a T-junction -- is first split at the other's vertices on it, so that the
 part they share is shared exactly; a vertex within $10^{-6}$ m of the line through its neighbours
 is no corner. Two roofs level across a shared side are one roof there, the side the earlier
@@ -1492,7 +1494,9 @@ scattering into every elevation. Three things follow:
   walls and the floor, $x$ along $F$ -- convex, so Newton's method from the specular point finds it.
   It carries $e_m$ times the other walls' coefficients (a relief's $e_0$ among them), the floor's,
   the air's, and its tube's spreading $d\Omega/dA$, found by perturbing its launch ($1/L^2$ for
-  $m = 0$). It is solved at each band's centre, since its path follows the wavelength. A grating ray
+  $m = 0$). It is solved at each band's centre, since its path follows the wavelength, its share
+  the mean of $e_m$ over the band's three sub-bands as $e_0$ is taken in each. The source's image
+  tree goes as deep as the grating rays' reflections need, whatever the edges' orders. A grating ray
   and its floor partner are one length near the floor, as a specular ray and its partner are, so the
   floor variants of one order add with their phases over the band; the orders add in energy.
 - **What a relief scatters further.** With `orders` that is all; a path with two non-specular
@@ -1500,9 +1504,14 @@ scattering into every elevation. Three things follow:
   by Lambert's law, each lighting path depositing $s(\psi) = 1 - e_0(\psi)$ at the incidence it
   meets the wall at (and reflecting $\rho\,e_0$ at the walls it crosses), scaled from the patch's
   random-incidence $s$. The `hybrid`, the default, does both and counts nothing twice: the grating
-  rays carry a relief's first scattering to the microphone, and the diffuse field only what the
-  relief scatters onto other walls, its own direct share left out ($\mathbf w = S(\mathbf y -
-  \mathbf g)$ on its patches).
+  rays carry a relief's first scattering straight to the microphone (or off the floor), and the
+  diffuse field only what the relief scatters onto other walls, its own direct share left out
+  ($\mathbf w = S(\mathbf y - \mathbf g)$ on its patches); a grating ray that reflected in another
+  wall on its way to the microphone would be counted again by the diffuse field, which re-emits
+  what reaches that wall. A relief's scattering is its walls': the roof, which takes a wall's
+  coefficients, does not scatter by it. Beyond a microphone's diffuse reach, by Lambert's law alone,
+  a relief reflects whole, as a plain wall there does. A grating ray's floor bounce takes the
+  floor's coefficient with its phase, and at a plate microphone $P_d$, or $P_r$ off the floor.
 
 Against EDGE's measured reliefs (FIDELITY, Scattering walls) the orders match the FDTD's own error in
 a canyon, where Lambert's law returns what the relief sends out of it; behind DigiCity's containers
@@ -1531,8 +1540,11 @@ sharing sides. Its geometry follows:
   between pitches $\phi_1$ and $\phi_2$). Each edge's air is above its plane. A corner's vertical
   edge is as tall as the roof at its vertex. Every path search, reflection order and UTD or
   edge-source coefficient of the flat-roofed model then applies unchanged.
-- **What a slope does not do.** A pitched roof reflects no specular ray: §6.5's roof reflection is
-  a level plane's. It scatters no diffuse energy, and a wall's patches stop at its top. The
+- **What a slope does not do.** A pitched roof's slopes reflect no specular ray: §6.5's roof
+  reflection is a level plane's, which a mansard's deck is, and the deck reflects and scatters as
+  a flat roof does. The slopes scatter no diffuse energy, and a wall's patches stop at its top.
+  A ridge is a line with one of its two planes least on either side, so a level plane through a
+  ridge makes no second one. The
   turbulence screen's height is the roof's over the crossing. The pruning's visibility proof takes
   a convex pitched building as its prism cut by each roof plane, mirrored in a facade and in the
   floor as the footprint is, and finds the rays the unpruned search does.

@@ -196,13 +196,17 @@ TEST_CASE("grating rays leave on the incident cone in their orders' shares", "[f
         REQUIRE(ray.length == Catch::Approx((p - pa).norm() + (pb - p).norm()).epsilon(1e-12));
         const Vec3 launch = ray.source_floor ? Vec3(u1.x, u1.y, -u1.z) : u1;
         REQUIRE((ray.launch - launch).norm() < 1e-12);
+        // The order's share, its mean over the band's three sub-bands.
         std::vector<std::pair<int, double>> shares;
         const double horizontal = std::hypot(u1.x, u1.y);
-        relief.orders(-along.dot(u1) / horizontal, 1000.0 * horizontal, 343.2, shares);
         double share = 0.0;
-        for (const auto& [order, v] : shares)
-            if (order == ray.order)
-                share = v;
+        for (const SubBand& part : sub_bands(1000.0, 343.2))
+        {
+            relief.orders(-along.dot(u1) / horizontal, 0.5 * (part.g1 + part.g2) * horizontal, 343.2, shares);
+            for (const auto& [order, v] : shares)
+                if (order == ray.order)
+                    share += v / 3.0;
+        }
         REQUIRE(ray.energy == Catch::Approx(share * grating_spreading(f, pa, p, pb, kick)).epsilon(1e-12));
         if (!ray.source_floor && !ray.microphone_floor)
             direct[ray.order]++;
@@ -272,4 +276,68 @@ TEST_CASE("the diffuse field takes s at each path's incidence and can leave the 
     DiffuseFacades(city, m, rho, scatter, 1.0, bands, 343.2, elsewhere).point_energy(s, 2, {}, b.data());
     for (std::size_t i = 0; i < bands.size(); i++)
         REQUIRE(b[i] == Catch::Approx(0.0).margin(1e-15));
+}
+
+// In a canyon whose one wall carries a relief: grating rays reach every order
+// whatever the diffraction options -- the source's image tree goes as deep as
+// the grating rays' orders (PointPathOptions::grating_reflections) where it
+// once went only as deep as the edges' and nowhere without diffraction; in
+// the hybrid they reach the microphone straight from the relief or off the
+// floor (the diffuse field carries what it scatters onto other walls); and a
+// floor bounce's coefficient goes with its phase.
+TEST_CASE("grating rays: their reach, the hybrid's, and the floor's phase", "[facade_relief]")
+{
+    const Buildings city({box(-50.0, 0.0, 50.0, 1.0, 12.0), box(-50.0, 13.0, 50.0, 14.0, 12.0)});
+    const Vec3 s(-6.0, 4.0, 2.0), m(7.0, 9.0, 1.5);
+    const FacadeRelief relief = FacadeRelief::read(write_relief("niceops_relief_d.csv", 1.0,
+            {{-2, 0.1}, {-1, 0.2}, {0, 0.4}, {1, 0.2}, {2, 0.1}}));
+    std::vector<const FacadeRelief*> reliefs(city.facades().size(), nullptr);
+    for (std::size_t f = 0; f < city.facades().size(); f++)
+        if (std::abs(city.facades()[f].y0 - 1.0) < 1e-9 && std::abs(city.facades()[f].y1 - 1.0) < 1e-9)
+            reliefs[f] = &relief;
+    const std::vector<double> rho(city.facades().size(), 1.0);
+    auto rays = [&](const PointPathOptions& o, const GratingInput& in) {
+        const PathEnd source(city, s, true, o, edges_near(city, {m}, o.radius));
+        const PathEnd microphone(city, m, false, o, edges_near(city, {s}, o.radius));
+        std::vector<GratingRay> out;
+        grating_rays(city, source, microphone, in, out);
+        return out;
+    };
+    GratingInput input;
+    input.reliefs = &reliefs;
+    input.bands = {1000.0};
+    input.reflection = &rho;
+    input.max_reflections = 2;
+    PointPathOptions plain;
+    plain.reliefs = &reliefs;
+    plain.grating_reflections = 2;
+    PointPathOptions bare = plain;
+    bare.diffraction = false;
+    PointPathOptions shallow = plain;
+    shallow.max_edge_reflections = 0;
+    shallow.max_twice_reflections = 0;
+    const std::size_t all = rays(plain, input).size();
+    REQUIRE(all > 0);
+    REQUIRE(rays(bare, input).size() == all);
+    REQUIRE(rays(shallow, input).size() == all);
+    // The hybrid's: nothing between the relief and the microphone.
+    GratingInput hybrid = input;
+    hybrid.max_microphone_reflections = 0;
+    const auto direct = rays(plain, hybrid);
+    REQUIRE(!direct.empty());
+    REQUIRE(direct.size() < all);
+    for (const GratingRay& ray : direct)
+        REQUIRE(std::abs(ray.path[ray.path.size() - 2].y - 1.0) < 1e-9);
+    // A floor of pure phase: every bounce adds a quarter turn, the energies
+    // as over a rigid floor.
+    GratingInput turned = input;
+    turned.floor = [](double, double, std::size_t) { return std::complex<double>(0.0, 1.0); };
+    const auto rigid = rays(plain, input), phased = rays(plain, turned);
+    REQUIRE(rigid.size() == phased.size());
+    for (std::size_t i = 0; i < rigid.size(); i++)
+    {
+        REQUIRE(phased[i].energy == Catch::Approx(rigid[i].energy).epsilon(1e-12));
+        const int bounces = (phased[i].source_floor ? 1 : 0) + (phased[i].microphone_floor ? 1 : 0);
+        REQUIRE(phased[i].phase == Catch::Approx(0.5 * pi * bounces).margin(1e-12));
+    }
 }

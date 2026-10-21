@@ -445,7 +445,12 @@ int main(int argc, char** argv)
         options.prune = !no_prune;
         options.edge_source = edge_source;
         if (relief)
+        {
             options.reliefs = &reliefs;
+            // Grating rays' source side reaches as deep as their own orders.
+            if (relief_scattering != "lambert")
+                options.grating_reflections = grating_reflections;
+        }
         options.edge_source_reach = 100.0 / (2.0 * pi * *std::min_element(bands.begin(), bands.end()) / sound_speed);
         // The GPU wherever there is one and the run is one it takes; asked
         // for (--gpu), it must be.  The flag's count takes --no-gpu too, so
@@ -505,7 +510,7 @@ int main(int argc, char** argv)
         const std::size_t block = std::max<std::size_t>(64, 4 * std::size_t {workers});
         // A ray of --rays: its row of the file.
         auto ray_text = [&](const PointSourceField& field, std::size_t source_row, std::size_t row,
-                                const std::vector<double>& facade_reflection) {
+                                const std::vector<double>& facade_reflection, const std::vector<GratingRay>& gratings) {
             // Each band's reflections, [band][facade].
             std::vector<std::vector<double>> band_reflection(nb);
             for (std::size_t b = 0; b < nb; b++)
@@ -535,6 +540,9 @@ int main(int argc, char** argv)
                     centres[b] = 2.0 * pi * bands[b] / sound_speed;
                 std::vector<std::complex<double>> at_floor(nb);
                 floor_factors(ray, centre_floor, centres, nullptr, at_floor.data());
+                // A relief's specular share where the ray takes one.
+                if (meets_relief(ray, field.reliefs()))
+                    relief_factors(ray, *field.reliefs(), bands, sound_speed, at_floor.data());
                 std::vector<std::complex<double>> factors;
                 if (options.edge_source)
                     factors = edge_source_factors(city, ray, centres);
@@ -549,6 +557,23 @@ int main(int argc, char** argv)
                             * std::abs(at_floor[b]) * std::exp(-band_air[b] * ray.length);
                     text << "," << 20.0 * std::log10(std::max(a, 1e-15));
                 }
+                text << ",";
+                for (std::size_t v = 0; v < ray.path.size(); v++)
+                    text << (v ? ";" : "") << ray.path[v].x * from_meters << " " << ray.path[v].y * from_meters << " "
+                         << ray.path[v].z * from_meters;
+                text << "\n";
+            }
+            // The grating rays: each carries energy in its own band alone.
+            for (std::size_t i = 0; i < gratings.size(); i++)
+            {
+                const GratingRay& ray = gratings[i];
+                if (!sources_file.empty())
+                    text << source_row + 1 << ",";
+                text << row + 1 << "," << field.rays().size() + i + 1 << ",grating order " << ray.order << ","
+                     << ray.path.size() - 2 << "," << (ray.source_floor ? 1 : 0) + (ray.microphone_floor ? 1 : 0)
+                     << "," << ray.length * from_meters;
+                for (std::size_t b = 0; b < nb; b++)
+                    text << "," << (b == ray.band ? 10.0 * std::log10(std::max(ray.energy, 1e-30)) : -300.0);
                 text << ",";
                 for (std::size_t v = 0; v < ray.path.size(); v++)
                     text << (v ? ";" : "") << ray.path[v].x * from_meters << " " << ray.path[v].y * from_meters << " "
@@ -615,6 +640,21 @@ int main(int argc, char** argv)
         auto reflection_for = [&](std::size_t row) -> const std::vector<double>& {
             return diffuse ? microphone_reflection[row] : reflection;
         };
+        // By Lambert's law alone, a relief beyond a microphone's diffuse reach
+        // reflects whole, as a plain wall there does.
+        std::vector<std::vector<const FacadeRelief*>> microphone_reliefs;
+        std::vector<PointPathOptions> microphone_options(nm, options);
+        if (relief && relief_scattering == "lambert" && diffuse)
+        {
+            microphone_reliefs.assign(nm, reliefs);
+            for (std::size_t row = 0; row < nm; row++)
+            {
+                for (std::size_t f = 0; f < reliefs.size(); f++)
+                    if (!diffuse_fields[row]->scatters(f))
+                        microphone_reliefs[row][f] = nullptr;
+                microphone_options[row].reliefs = &microphone_reliefs[row];
+            }
+        }
         std::size_t total = 0;
         // With a relief's orders as rays, each pair's energy from them per
         // band, and how many.
@@ -626,15 +666,21 @@ int main(int argc, char** argv)
         if (!no_air_absorption)
             grating_input.air = band_air;
         grating_input.max_reflections = grating_reflections;
+        // The hybrid's diffuse field carries what a relief scatters onto
+        // other walls: its grating rays reach the microphone directly.
+        if (relief_scattering == "hybrid")
+            grating_input.max_microphone_reflections = 0;
         grating_input.source_reflections = options.source_reflections;
         if (centre_floor.impedance())
             grating_input.floor = [&](double sin_grazing, double leg, std::size_t b) {
                 const auto q = spherical_reflection_coefficient(sin_grazing, pi * bands[b] * leg / sound_speed,
                         centre_floor.admittance[b]);
-                return q[0] * q[0] + q[1] * q[1];
+                return std::complex<double>(q[0], q[1]);
             };
         else
-            grating_input.floor = [&](double, double, std::size_t) { return centre_floor.reflection; };
+            grating_input.floor = [&](double, double, std::size_t) {
+                return std::complex<double>(std::sqrt(centre_floor.reflection));
+            };
         std::vector<double> grating;
         std::vector<std::size_t> grating_count;
         std::size_t gratings_total = 0;
@@ -672,19 +718,19 @@ int main(int argc, char** argv)
                             microphone_row = row;
                         }
                         const std::size_t pair = k * nm + row;
-                        const PointSourceField field(city, *source_ends[k], *microphone, options);
+                        const PointSourceField field(city, *source_ends[k], *microphone, microphone_options[row]);
                         counts[pair] = field.rays().size();
+                        std::vector<GratingRay> found;
                         if (gratings)
                         {
                             GratingInput g = grating_input;
                             g.reflection = &reflection_for(row);
-                            std::vector<GratingRay> found;
                             grating_rays(city, *source_ends[k], *microphone, g, found);
                             grating_band_energies(found, bands, sound_speed, nullptr, &grating[pair * nb]);
                             grating_count[index - begin] = found.size();
                         }
                         if (!rays_file.empty())
-                            ray_rows[pair] = ray_text(field, first + k, row, reflection_for(row));
+                            ray_rows[pair] = ray_text(field, first + k, row, reflection_for(row), found);
                         use(index - begin, pair, field);
                     }
                 });

@@ -169,6 +169,11 @@ struct PointPathOptions
     // grating_paths.hpp's.  One that diffracts reflects whole, since what it
     // would scatter reaches nothing in the model.  It must outlive the field.
     const std::vector<const FacadeRelief*>* reliefs = nullptr;
+    // With reliefs, the facade reflections a grating ray takes on the
+    // source's side at most (GratingInput::max_reflections): the source's
+    // image tree goes that deep and one more, the relief, whatever the edges'
+    // orders and source_reflections.  0 without grating rays.
+    std::size_t grating_reflections = 0;
 };
 
 // The diffracted ray the model does not trace at a boundary, made from the

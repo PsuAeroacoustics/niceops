@@ -33,8 +33,9 @@ ranks what the literature says would improve the predictions most, for rotorcraf
    gather: `--relief`/`--facade_relief` takes a relief's grating orders from the BEM (`profile_scattering.py
    --orders`), its specular share at each ray's incidence, the other orders as grating rays, and by default what it
    scatters onto other walls diffusely at each path's incidence. Against EDGE's reliefs the orders match the FDTD
-   (UE24-26 rms 1.24, 1.59, 1.63 against its 1.25, 1.60, 1.60; Lambert's s(f) 1.48, 1.85, 2.25); the default
-   hybrid beats s(f) everywhere, DigiCity's microphone 7 included (−2.0 / 2.7 against −2.3 / 2.9).
+   (UE24-26 rms 1.26, 1.59, 1.66 against its 1.25, 1.60, 1.60; Lambert's s(f) 1.48, 1.85, 2.25); the default
+   hybrid, 1.25, 1.70, 1.80, beats s(f) everywhere, DigiCity's microphone 7 included (−1.9 / 2.6 against
+   −2.3 / 2.9).
 4. **Pitched roofs (LoD2)**, validated on EDGE's measured pitched-roof scenes (UE01-05, 15, 17, 19). Done (Oct
    20): `--roofs` gives a CSV district's buildings roof planes (the least of them, capped at the top), with walls
    up to the roof, eaves, rakes, ridges and hips as wedges of their own angles, and rays over four roof edges or

@@ -728,8 +728,11 @@ TEST_CASE("a roof reflects as the floor does", "[point_paths]")
         CHECK(ray.roof_facades.empty());
     // Below the roof's height either end leaves it out.
     for (const Vec3& low : {Vec3(8.0, 5.0, 5.0), Vec3(14.0, 5.0, 3.0)})
-        for (const PointRay& ray : PointSourceField(city, s, low).rays())
+    {
+        const PointSourceField field(city, s, low);
+        for (const PointRay& ray : field.rays())
             CHECK((ray.roof_facades.empty() || ray.wedges > 0));
+    }
 }
 
 TEST_CASE("the field is continuous where a roof's edge hides its reflection", "[point_paths]")

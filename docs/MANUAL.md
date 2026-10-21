@@ -1138,8 +1138,10 @@ over a pass as it does in an exposure.
   run's `--units` and frame) and `slope_x` and `slope_y` (its rise per unit run along x and along
   y). A building's roof is the least of its planes, capped at its `top`: a top below the planes'
   highest point is a level deck there (a mansard's), and one at or above it changes nothing. A
-  least of planes is convex, so a roof with a valley or a step is several buildings sharing sides.
-  Its walls stand up to the roof, its eaves, rakes, ridges and hips diffract as wedges of their own
+  least of planes is convex, so a roof with a valley or a step is several buildings sharing sides;
+  along a shared side the wall stands, and the edge diffracts, only where one roof is above the
+  other, judged along the side wherever the two roofs' profiles cross or break. A level deck
+  reflects and scatters as a flat roof does. Its walls stand up to the roof, its eaves, rakes, ridges and hips diffract as wedges of their own
   angles, and every path the flat roofs take applies; a slope reflects no specular ray and scatters
   nothing diffusely ([THEORY §6.5](THEORY.md#65-urban-receivers)). A building given no plane keeps
   its flat roof. On EDGE's measured pitched scenes the planes are 3.1 dB rms where the same houses
@@ -1184,13 +1186,16 @@ over a pass as it does in an exposure.
   direction, which matters only for a relief that is not symmetric. Its specular rays take the
   relief's specular order at the incidence they meet it at; rays that diffract reflect in it whole.
   `--relief_scattering` sets where the rest goes: `hybrid` (the default), each wall's first
-  scattering as grating rays and what it scatters onto other walls diffusely; `orders`, the grating
+  scattering as grating rays straight to the microphone and what it scatters onto other walls
+  diffusely; `orders`, the grating
   rays alone; `lambert`, all of it diffusely, by Lambert's law at each lighting path's incidence. A
   grating ray reflects in `--grating_reflections` walls besides its relief (default 2). Against
   EDGE's measured reliefs and DigiCity the hybrid beats a relief's random-incidence s(f) everywhere,
   the orders alone match the FDTD in a canyon and fall short in a shadow, and Lambert's law at
   incidence the reverse ([FIDELITY](FIDELITY.md#scattering-walls-point-source)). Not with
-  `--facade_scattering_spectrum`.
+  `--facade_scattering_spectrum`. With a relief in the run, a wall that carries none reflects
+  specularly whatever its scattering coefficient: the coefficient then only says which buildings
+  carry the relief.
 - **The floor** is rigid by default, or absorbs `--floor_absorption` of the energy at every angle
   and frequency. With `--ground_effect` (or `--ground_classes` or `--plate_table`, which name a
   ground) it is the ground model's instead: each ray's every bounce on the floor -- the floor's
@@ -2069,7 +2074,7 @@ not cover is refused. The patches cost time and memory as the square of their nu
 | `--humidity` | Relative humidity, percent, for the air's absorption. Required, unless `--no_air_absorption`. |
 | `--temperature`, `--pressure` | For the absorption: K, default 293.15; kPa, default 101.325. |
 | `--no_air_absorption` | Leave the air's absorption out. Not with the three above. |
-| `--rays` | Also write every ray: its source's row (with `--sources`), its microphone, kind, reflections, length, its level at each band center (no band averaging; absorbed at the band center's coefficient), and its path from the source as `x y z;x y z;...`, for drawing. A leg off the floor is drawn unfolded below it, so only its `x` and `y` are the ray's. |
+| `--rays` | Also write every ray: its source's row (with `--sources`), its microphone, kind, reflections, length, its level at each band center (no band averaging; absorbed at the band center's coefficient), and its path from the source as `x y z;x y z;...`, for drawing. A leg off the floor is drawn unfolded below it, so only its `x` and `y` are the ray's. A relief's grating rays follow, of kind `grating order m`, each with its level in its own band and −300 in the others; a ray meeting a relief carries its specular share. |
 | `--gpu`, `--no-gpu` | Form the rays' amplitudes and sum the bands on the GPU, as above: the default wherever there is one. `--gpu` asks for it; `--no-gpu` keeps the CPU. |
 | `-j`, `--threads` | Pairs of source and microphone evaluated at once. Default the environment's `NICEOPS_THREADS`, else one per hardware thread. |
 | `--units`, `-o` | `ft` (default) or `m`, for every length in and out; the file to write. |

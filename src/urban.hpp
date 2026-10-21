@@ -44,10 +44,12 @@
 namespace niceops {
 
 // A vertical facade: the wall standing on the segment from (x0, y0) to
-// (x1, y1) in the run's local frame, from height `bottom` to its top (m, the
-// run's z).  Its two faces both reflect.  The top is `top` all along, or
-// under a pitched roof (buildings.hpp, RoofPlane) a straight line from
-// `top_start` over (x0, y0) to `top_end` over (x1, y1), `top` their larger.
+// (x1, y1) in the run's local frame, from its bottom to its top (m, the run's
+// z).  Its two faces both reflect.  The top is `top` all along, or under a
+// pitched roof (buildings.hpp, RoofPlane) a straight line from `top_start`
+// over (x0, y0) to `top_end` over (x1, y1), `top` their larger.  The bottom
+// likewise: `bottom` all along, or above a neighbour's pitched roof a line
+// from `bottom_start` to `bottom_end`, `bottom` their smaller.
 struct Facade
 {
     double x0 = 0.0;
@@ -58,17 +60,32 @@ struct Facade
     double top = 0.0;
     double top_start = std::numeric_limits<double>::quiet_NaN();
     double top_end = std::numeric_limits<double>::quiet_NaN();
+    double bottom_start = std::numeric_limits<double>::quiet_NaN();
+    double bottom_end = std::numeric_limits<double>::quiet_NaN();
 };
+
+// Where along a facade's base p's plan is nearest, 0 at (x0, y0) to 1.
+inline double facade_fraction(const Facade& f, const Vec3& p)
+{
+    const double dx = f.x1 - f.x0, dy = f.y1 - f.y0, length2 = dx * dx + dy * dy;
+    const double t = length2 > 0.0 ? ((p.x - f.x0) * dx + (p.y - f.y0) * dy) / length2 : 0.0;
+    return t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t);
+}
 
 // A facade's top over the point of its base nearest p's plan.
 inline double facade_top(const Facade& f, const Vec3& p)
 {
     if (!(f.top_start == f.top_start))
         return f.top;
-    const double dx = f.x1 - f.x0, dy = f.y1 - f.y0, length2 = dx * dx + dy * dy;
-    double t = length2 > 0.0 ? ((p.x - f.x0) * dx + (p.y - f.y0) * dy) / length2 : 0.0;
-    t = t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t);
-    return f.top_start + t * (f.top_end - f.top_start);
+    return f.top_start + facade_fraction(f, p) * (f.top_end - f.top_start);
+}
+
+// Its bottom there.
+inline double facade_bottom(const Facade& f, const Vec3& p)
+{
+    if (!(f.bottom_start == f.bottom_start))
+        return f.bottom;
+    return f.bottom_start + facade_fraction(f, p) * (f.bottom_end - f.bottom_start);
 }
 
 // The signed horizontal distance of `p` from the facade's plane, positive on

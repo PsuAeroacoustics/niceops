@@ -366,12 +366,26 @@ checks. What to keep:
   along the base (`first_hit`, `building_paths`, `urban.cpp`, `grating_paths`, the diffuse
   patches). A new one that compares with `Footprint::top` lets rays through a gable's end wall.
 - **Edges come from `roof_edge`**: the first face in the plane normal to the edge, the air the
-  plane's upward normal, n from the second face. A shared side drops or raises whole ranges of
-  facades and roof edges, and a corner's edge is as tall as the roof at its vertex less the
-  neighbour's.
+  plane's upward normal, n from the second face.
+- **A shared side is judged along it**, never by the two buildings' `top`s (their ridges): both
+  roofs' heights over the side, cut where either breaks and where they cross. A wall keeps a piece
+  between each two cuts where its roof stands above the neighbour's, its bottom the neighbour's
+  roof (`bottom_start`/`bottom_end`, read through `facade_bottom`), so both its top and its bottom
+  run straight; its roof edge keeps the stretches where its roof stands above, whole across a point
+  where the roofs only touch (cutting an edge there would make false ends); a corner stands above
+  the neighbour's roof at its vertex or not at all. Comparing ridges once inverted a gable's wall
+  under a taller flat roof, kept its eave in the inside corner, gave corners negative lengths and
+  dropped the flat roof's own side (`a gable's eave against a taller flat roof`). Two flat roofs
+  come out as before, to the bit.
+- **Every reader of a wall's bottom goes through `facade_bottom`**, as of its top. The image
+  tree's prefilter samples each wall between them: sampled at fixed fractions of its top, a wall
+  raised above half its top by a neighbour was sampled where the neighbour stands and never
+  reflected.
 - **`blocked_by` breaks a segment at the roof planes' crossings** as at the footprint's sides, and
-  below the floor tests against the mirrored roof. `on_roof` is false for a pitched building: no
-  level reflection on a slope. Slope reflections and diffuse roof patches are not done.
+  below the floor tests against the mirrored roof. `on_roof` is true on a pitched building only
+  where its least plane is level (a deck), which gives the deck the roof reflection and the
+  diffuse patches; the slopes reflect and scatter nothing. `roof_ridges` keeps a line only where
+  its two planes are each the least on one side.
 - **The pruning proof takes the roof planes** (`prism_planes`): the prism cut by each, mirrored in
   a facade and in the floor as the footprint is. Proving with the prism to the top hides real rays,
   and `pruning finds every ray among pitched houses` fails then (checked by making that change).

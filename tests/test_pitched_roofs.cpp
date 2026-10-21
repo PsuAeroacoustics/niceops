@@ -627,3 +627,179 @@ TEST_CASE("pruning finds every ray among pitched houses", "[pitched_roofs]")
     }
     REQUIRE(diffracted > 100);
 }
+
+namespace {
+
+// Every wall stands below its top, every edge has a length, and no edge lies
+// where two buildings' surfaces meet in an inside corner.
+void require_sound(const Buildings& city)
+{
+    for (const Facade& f : city.facades())
+        for (double t : {0.0, 0.5, 1.0})
+        {
+            const Vec3 p(f.x0 + t * (f.x1 - f.x0), f.y0 + t * (f.y1 - f.y0), 0.0);
+            REQUIRE(facade_bottom(f, p) < facade_top(f, p) + 1e-9);
+        }
+    for (const Edge& e : city.edges())
+        REQUIRE(e.length > 0.0);
+}
+
+bool has_edge_through(const Buildings& city, const Vec3& p)
+{
+    for (const Edge& e : city.edges())
+    {
+        const double t = (p - e.start).dot(e.direction);
+        if (t > 1e-6 && t < e.length - 1e-6 && (e.start + t * e.direction - p).norm() < 1e-6)
+            return true;
+    }
+    return false;
+}
+
+} // namespace
+
+// A side two buildings share is judged along it, not by their highest points:
+// a gable's eave side against a taller flat building loses its wall, eave and
+// corners there, and the flat building keeps its wall from the gable's eave to
+// its roof, its roof edge and its corners -- where comparing the ridge (9 m)
+// with the flat roof (7 m) once inverted the gable's wall, kept its eave in the
+// inside corner and dropped the flat building's side.
+TEST_CASE("a gable's eave against a taller flat roof", "[pitched_roofs]")
+{
+    Footprint gable;
+    gable.x = {0.0, 10.0, 10.0, 0.0};
+    gable.y = {0.0, 0.0, 8.0, 8.0};
+    gable.roof = {{0.0, 1.0, 5.0}, {0.0, -1.0, 13.0}};
+    Footprint block;
+    block.x = {0.0, 10.0, 10.0, 0.0};
+    block.y = {8.0, 8.0, 14.0, 14.0};
+    block.top = 7.0;
+    const Buildings city({gable, block});
+    require_sound(city);
+    // The flat building's wall over the gable's eave, 5 m to 7 m.
+    bool wall = false;
+    for (const Facade& f : city.facades())
+        if (std::abs(f.y0 - 8.0) < 1e-9 && std::abs(f.y1 - 8.0) < 1e-9)
+        {
+            REQUIRE(f.bottom == Catch::Approx(5.0));
+            REQUIRE(f.top == Catch::Approx(7.0));
+            wall = true;
+        }
+    REQUIRE(wall);
+    REQUIRE(!has_edge_through(city, Vec3(5.0, 8.0, 5.0)));
+    REQUIRE(has_edge_through(city, Vec3(5.0, 8.0, 7.0)));
+    // No ray diffracts in the inside corner, on the eave's line there (rays
+    // reflect in the flat building's wall just above it); one diffracts over
+    // the flat building's roof edge, past the gable's slope.
+    const PointSourceField along(city, Vec3(-2.0, 7.5, 5.6), Vec3(12.0, 7.5, 5.6));
+    for (const PointRay& ray : along.rays())
+        for (const Vec3& p : ray.path)
+            REQUIRE((std::abs(p.y - 8.0) > 1e-6 || std::abs(p.z - 5.0) > 1e-6));
+    const PointSourceField over(city, Vec3(-0.5, 6.0, 6.2), Vec3(6.0, 22.0, 1.5));
+    bool crossed = false;
+    for (const PointRay& ray : over.rays())
+        for (const Vec3& p : ray.path)
+            crossed = crossed || (std::abs(p.y - 8.0) < 1e-6 && std::abs(p.z - 7.0) < 1e-6);
+    REQUIRE(crossed);
+}
+
+// Two gables sharing a gable wall, their eaves level (5 m) and their ridges
+// not (9 m and 8 m): the higher one's wall stands over the lower roof's
+// profile, its bottom sloping with it, and nothing is left of the lower's
+// wall, nor of the corners where the eaves meet in one straight wall.  And a
+// wing's gable end against a main roof's eave side, their tops level (9 m):
+// the eave side's wall stands over the gable's profile on either side of its
+// ridge.
+TEST_CASE("pitched roofs that share a side", "[pitched_roofs]")
+{
+    auto house = [](double x0, double x1, double ridge) {
+        Footprint f;
+        f.x = {x0, x1, x1, x0};
+        f.y = {0.0, 0.0, 8.0, 8.0};
+        const double s = (ridge - 5.0) / 4.0;
+        f.roof = {{0.0, s, 5.0}, {0.0, -s, 5.0 + 8.0 * s}};
+        return f;
+    };
+    const Buildings pair({house(0.0, 10.0, 9.0), house(10.0, 20.0, 8.0)});
+    require_sound(pair);
+    std::size_t sloped = 0;
+    for (const Facade& f : pair.facades())
+    {
+        if (!(std::abs(f.x0 - 10.0) < 1e-9 && std::abs(f.x1 - 10.0) < 1e-9))
+            continue;
+        // At y = 2 the lower roof is 6.5 m and the higher 7 m.
+        const Vec3 p(10.0, 2.0, 0.0);
+        if (std::min(f.y0, f.y1) < 2.0 && std::max(f.y0, f.y1) > 2.0)
+        {
+            REQUIRE(facade_bottom(f, p) == Catch::Approx(6.5));
+            REQUIRE(facade_top(f, p) == Catch::Approx(7.0));
+        }
+        sloped += f.bottom_start == f.bottom_start;
+    }
+    REQUIRE(sloped == 2);
+    for (const Edge& e : pair.edges())
+        if (e.vertical)
+            REQUIRE((std::abs(e.start.x - 10.0) > 1e-9 || e.start.z > 4.0));
+    REQUIRE(pair.support(Vec3(10.0, 2.0, 6.8)).kind == Buildings::Support::Kind::facade);
+    REQUIRE(pair.support(Vec3(10.0, 2.0, 6.0)).kind == Buildings::Support::Kind::none);
+
+    Footprint wing;
+    wing.x = {0.0, 10.0, 10.0, 0.0};
+    wing.y = {0.0, 0.0, 8.0, 8.0};
+    wing.roof = {{0.8, 0.0, 5.0}, {-0.8, 0.0, 13.0}};
+    Footprint main;
+    main.x = {0.0, 10.0, 10.0, 0.0};
+    main.y = {8.0, 8.0, 16.0, 16.0};
+    main.top = 9.0;
+    const Buildings tee({wing, main});
+    require_sound(tee);
+    std::size_t pieces = 0;
+    for (const Facade& f : tee.facades())
+        if (std::abs(f.y0 - 8.0) < 1e-9 && std::abs(f.y1 - 8.0) < 1e-9)
+        {
+            pieces++;
+            REQUIRE(f.top == Catch::Approx(9.0));
+            // Over x = 2 the wing's roof is 6.6 m.
+            if (std::min(f.x0, f.x1) < 2.0 && std::max(f.x0, f.x1) > 2.0)
+                REQUIRE(facade_bottom(f, Vec3(2.0, 8.0, 0.0)) == Catch::Approx(6.6));
+        }
+    REQUIRE(pieces == 2);
+}
+
+// A level plane through a ridge (a cap at the ridge's height) makes no second
+// and third ridge along it: a ridge has one of its planes the least on either
+// side.  And a cap below the ridge is a deck that reflects as a flat roof
+// does: a source and a microphone above it hear its reflection, as over the
+// same building flat at the deck's height.
+TEST_CASE("a cap at the ridge, and a deck below it", "[pitched_roofs]")
+{
+    Footprint gable;
+    gable.x = {0.0, 10.0, 10.0, 0.0};
+    gable.y = {0.0, 0.0, 8.0, 8.0};
+    gable.roof = {{0.0, 1.0, 5.0}, {0.0, -1.0, 13.0}, {0.0, 0.0, 9.0}};
+    const Buildings capped({gable});
+    std::size_t at_ridge = 0;
+    for (const Edge& e : capped.edges())
+        at_ridge += !e.vertical && std::abs(e.start.z - 9.0) < 1e-9 && std::abs(e.direction.z) < 1e-12;
+    REQUIRE(at_ridge == 1);
+
+    Footprint deck;
+    deck.x = {0.0, 12.0, 12.0, 0.0};
+    deck.y = {0.0, 0.0, 20.0, 20.0};
+    deck.top = 8.0;
+    deck.roof = {{0.5, 0.0, 6.0}, {-0.5, 0.0, 12.0}, {0.0, 0.0, 8.0}};
+    Footprint flat = deck;
+    flat.roof.clear();
+    const Vec3 source(6.0, 5.0, 10.0), microphone(6.0, 15.0, 10.0);
+    auto roof_rays = [&](const Buildings& city) {
+        std::size_t n = 0;
+        const PointSourceField field(city, source, microphone);
+        for (const PointRay& ray : field.rays())
+            n += ray.wedges == 0 && !ray.roof_facades.empty();
+        return n;
+    };
+    const Buildings decked({deck}), level({flat});
+    REQUIRE(decked.on_roof(0, 6.0, 10.0));
+    REQUIRE(!decked.on_roof(0, 1.0, 10.0));
+    REQUIRE(roof_rays(decked) == 1);
+    REQUIRE(roof_rays(level) == 1);
+}

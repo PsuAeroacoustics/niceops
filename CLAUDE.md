@@ -194,14 +194,22 @@ Commands and options are in `README.md`; rationale is in
   THEORY 6.5). Specular rays that diffract nowhere take its order 0 at the incidence recorded in
   `PointRay::hits`; rays that diffract reflect whole (measured: the other way DigiCity's mic 7 fell
   2.4 dB). Grating rays' floor variants add with their phases. The default `hybrid` hands what a
-  relief scatters onto other walls to the diffuse field (`first_scattering_elsewhere`). Against EDGE
+  relief scatters onto other walls to the diffuse field (`first_scattering_elsewhere`), so its
+  grating rays reach the microphone straight or off the floor only (`max_microphone_reflections`
+  0; more counts that energy twice). The source tree goes `grating_reflections + 1` deep
+  whatever `max_order`. Shares are sub-band means; beyond the diffuse reach a relief reflects
+  whole; a relief building's roof does not scatter. Against EDGE
   the orders match the FDTD; behind DigiCity's containers the diffuse field matters; FIDELITY has
   the table.
 - **Pitched roofs are the least of planes** (`--roofs`, `Footprint::roof`; ground.md "Pitched
   roofs"). Convex by construction, so a valley or a step is several buildings sharing sides. A
   wall's top is `facade_top`, never `Footprint::top`; the input's top caps the roof (a level plane
   added within 1 mm); the pruning proof cuts the prism by the roof planes (the full prism hides real
-  rays; `pruning finds every ray among pitched houses`). Slopes reflect no specular ray. The FDTD's
+  rays; `pruning finds every ray among pitched houses`). Slopes reflect no specular ray; a level
+  deck reflects and scatters (`on_roof`). A shared side is judged along its profile: cut where
+  either roof breaks or the two cross, each wall piece straight-topped and straight-bottomed
+  (`Facade::bottom_start/bottom_end`, `facade_bottom`; the prefilter samples between them), each
+  edge where one roof is above the other. A ridge needs its two planes least either side. The FDTD's
   slope is a staircase, 5 dB loud at 6.3 kHz with EDGE's 3 mm cells, so pitched scenes are scored
   against the measurements and the BEM, not it.
 - **An end may lie on a wall or a level roof** (`Buildings::support`, within `contact`; ground.md

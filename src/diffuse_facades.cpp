@@ -118,8 +118,10 @@ DiffuseFacades::DiffuseFacades(const Buildings& buildings, const Vec3& microphon
                 p.center = Vec3(facade.x0, facade.y0, facade.bottom) + ((i + 0.5) * p.width) * along
                         + Vec3(0.0, 0.0, (j + 0.5) * p.height) + 1e-3 * normal;
                 // A patch inside a neighbour is not a wall anyone sees, and
-                // one above a gable's sloping top is no wall.
-                if (!buildings.buried(p.center) && p.center.z < facade_top(facade, p.center))
+                // one above a gable's sloping top, or below a sloping bottom
+                // over a neighbour's pitched roof, is no wall.
+                if (!buildings.buried(p.center) && p.center.z < facade_top(facade, p.center)
+                        && p.center.z > facade_bottom(facade, p.center))
                     patches_.push_back(p);
             }
     }
@@ -137,6 +139,10 @@ DiffuseFacades::DiffuseFacades(const Buildings& buildings, const Vec3& microphon
             const std::size_t f = patches_[p].facade;
             rho_[p * nb + b] = reflection[f * nb + b];
             rho_s_[p * nb + b] = reflection[f * nb + b] * scattering[f * nb + b];
+            // A relief is its walls': the roof, which takes a wall's
+            // coefficients, does not scatter by it.
+            if (patches_[p].roof && options.scattering_at && options.scattering_at(f, 0.0, 1.0, b) >= 0.0)
+                rho_s_[p * nb + b] = 0.0;
         }
 
     // The form factors, through the air and off the floor (in energy), and
@@ -265,10 +271,9 @@ void DiffuseFacades::add_roof_patches()
         const std::size_t f = buildings.roof_facade(b);
         if (f == Buildings::no_facade || !in_reach_[f])
             continue;
+        // A pitched roof's slopes do not scatter, their rays not reflecting in
+        // them; its level deck does (on_roof decides each cell).
         const Footprint& footprint = buildings.footprints()[b];
-        // A pitched roof does not scatter: its rays do not reflect in it.
-        if (!footprint.roof.empty())
-            continue;
         const std::size_t m = footprint.x.size();
         // The patches run along the outline's longest side, so that a
         // rectangle's fit it; a cell the outline crosses keeps the part on
