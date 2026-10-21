@@ -18,6 +18,10 @@ buildings, judged against what EDGE, DigiCity and the FDTD have shown. Recommend
 
 The rest follow as data and need decide.
 
+**The remaining gaps** after the review rounds of 2026-10-20/21 (no vertex term in UTD, missing slope and roof paths,
+roofs not lighting the diffuse field, no roofs in the plane-wave tables, EDGE's pitched drone rows reading low) have
+their own plan: [NICEOPS urban model gaps plan 2026-10-21](NICEOPS%20urban%20model%20gaps%20plan%202026-10-21.md).
+
 **The research review** ([Urban propagation research review 2026-10-20](Urban%20propagation%20research%20review%202026-10-20.md))
 ranks what the literature says would improve the predictions most, for rotorcraft and drones among buildings:
 
