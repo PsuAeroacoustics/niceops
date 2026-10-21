@@ -41,7 +41,9 @@ ranks what the literature says would improve the predictions most, for rotorcraf
    up to the roof, eaves, rakes, ridges and hips as wedges of their own angles, and rays over four roof edges or
    more traced as chains (`max_chain`). Against EDGE's pitched scenes the planes are 3.1 dB rms where the same
    houses flat are 4.5 at the mean height and 5.8 at the ridge (the mansard's floor source 14.3 → 4.5 with
-   chains); against boundary elements a gable is 0.17 dB rms. Open: slopes reflect no specular ray; over a
+   chains); against boundary elements a gable is 0.17 dB rms. Slopes reflect since (Oct 20), as mirrors with the
+   floor at either end, and an end may lie on one; still open there: a slope's reflection with a wall's, or after
+   an edge, and plates on slopes. Open: over a
    mansard's nearly flat wedges the cascade is 3.9 dB rms off the BEM, which a cascade of transitions (Tzaras and
    Saunders) or the edge source's higher orders would address; the FDTD's staircase is 5 dB loud on a slope at
    EDGE's 3 mm cells, so it is no reference there; GeoJSON districts take no roofs yet (OSM's `roof:shape`).
@@ -94,8 +96,10 @@ The continuity sweep (20 lines, 3771 positions): 31 → 23 steps over 1 dB, the 
   zone is a few centimetres there: −0.4 dB at 8 kHz). Making it the default needs the edge source on the GPU
   and cheaper, or a vertex term in UTD (Albani et al. 2009). Cheaper since (Oct 20): looser tolerances, the
   cascade times the edges' end ratios out of both transitions, and a pair's integrals over threads take
-  DigiCity's four microphones from 145 to 10.5 s and the demo district's 266 pairs from 497 to 19 s, within 0.012
-  dB A-weighted; EDGE's 13 runs take 3.6 s. `niceops --buildings --edge_source` runs it in a trajectory. Still
+  DigiCity's four microphones from 145 to 17 s and the demo district's 266 pairs from 497 to 20 s, within 0.012
+  dB A-weighted (the review's round made the choice per wavenumber and took the integral where both edges'
+  ends are near, which costs DigiCity 6 s over the first version's 10.5 and removes up to 3 dB of error with
+  one end near); EDGE's 13 runs take 3.6 s. `niceops --buildings --edge_source` runs it in a trajectory. Still
   0.8 s of CPU a pair over the demo district (UTD 4 ms): what is left is near-transition rays at low frequency and
   shared faces, for which a uniform asymptotic form (Capolino and Albani's generalized Fresnel integral) is the
   step; and its largest departures from UTD, +20 dB deep in a building's shadow by a corner's waves, are

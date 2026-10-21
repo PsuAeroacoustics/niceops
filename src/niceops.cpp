@@ -3115,10 +3115,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             if (!why.empty())
                 input_error("--buildings ", options.buildings_path, ": observer ", i + 1, "'s microphone ", why,
                         on_floor(floor_height[i]), ".");
-            if (on_plate[i] && district.on_wall(at))
+            if (on_plate[i] && district.tilted(at))
                 input_error("--buildings ", options.buildings_path, ": observer ", i + 1,
-                        "'s microphone is flush on a wall, and --plate_table puts it on a plate, which lies level: "
-                        "on the floor or a roof. Give it a height off the wall, or no plate.");
+                        "'s microphone is flush on a wall or a sloping roof, and --plate_table puts it on a plate, "
+                        "which lies level: on the floor or a level roof. Give it a height off the surface, or no "
+                        "plate.");
         }
         for (const double floor : floors_at)
             for (std::size_t it = 0; it < nt; it++)

@@ -384,8 +384,12 @@ checks. What to keep:
 - **`blocked_by` breaks a segment at the roof planes' crossings** as at the footprint's sides, and
   below the floor tests against the mirrored roof. `on_roof` is true on a pitched building only
   where its least plane is level (a deck), which gives the deck the roof reflection and the
-  diffuse patches; the slopes reflect and scatter nothing. `roof_ridges` keeps a line only where
-  its two planes are each the least on one side.
+  diffuse patches. A slope reflects specular rays of its own (`on_plane`, the slope rays after the
+  flat roofs' in `PointSourceField`): the source's image in the plane, the reflection point where
+  that plane is the roof, the floor at either end or not, no facades; the floor's bounce on such a
+  ray records the whole unfolded length as its leg (`add_floor_bounce` by sine and leg). Slopes
+  scatter nothing. `roof_ridges` keeps a line only where its two planes are each the least on one
+  side.
 - **The pruning proof takes the roof planes** (`prism_planes`): the prism cut by each, mirrored in
   a facade and in the floor as the footprint is. Proving with the prism to the top hides real rays,
   and `pruning finds every ray among pitched houses` fails then (checked by making that change).
@@ -420,8 +424,9 @@ on the floor or in the air; THEORY §6.5 ("Ends on a surface") has the rule. Wha
   `(P_d + R P_r) / (1 + R)` (`FloorModel::surface`, set from the rays' own `reflection_for`). A
   grating ray takes `(1 + R)^2` in energy, the diffuse gathering the same, the turbulent fill the
   surface's energy at the receiver.
-- **Refused:** an end on a slope or an edge (`PathEnd` throws; `misplaced_point` says why first),
-  and a plate on a wall (`niceops` refuses it; `levels` throws as a backstop).
+- **Refused:** an end on an edge (`PathEnd` throws; `misplaced_point` says why first), and a plate
+  on a wall or a slope (`niceops` refuses it, `UrbanDistrict::tilted`; `levels` throws as a
+  backstop). An end on a slope takes the roof's coefficient, as on a deck.
 - **Each microphone's floor** (`UrbanDistrict::floor_height`): z = 0 where its observer stands
   there or on any surface of the district, else the observer's z. `niceops` evaluates each floor's
   microphones together with the source states and microphones lowered by it, and scatters the

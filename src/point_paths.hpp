@@ -114,7 +114,9 @@ struct PointPathOptions
     // floor's place: on a specular ray, and on either side of a once-
     // diffracted one, where it counts as one of max_edge_reflections and the
     // edge must stand above it (the roof's own edges carry its reflection in
-    // their coefficients already).  Off, for comparison.
+    // their coefficients already).  A pitched roof's slope reflects too, as a
+    // mirror in its plane, between the source and the microphone with the
+    // floor at either end or not, and no facade.  Off, for comparison.
     bool roofs = true;
     // Facades and edges within this horizontal distance of the source or the
     // microphone (m).

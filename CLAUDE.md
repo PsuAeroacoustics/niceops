@@ -208,7 +208,9 @@ Commands and options are in `README.md`; rationale is in
   roofs"). Convex by construction, so a valley or a step is several buildings sharing sides. A
   wall's top is `facade_top`, never `Footprint::top`; the input's top caps the roof (a level plane
   added within 1 mm); the pruning proof cuts the prism by the roof planes (the full prism hides real
-  rays; `pruning finds every ray among pitched houses`). Slopes reflect no specular ray; a level
+  rays; `pruning finds every ray among pitched houses`). A slope reflects as a mirror in its plane
+  (`on_plane`; floor at either end, no facades, no diffraction), so the field is continuous across
+  its edges' reflection boundaries, where it stepped without; a level
   deck reflects and scatters (`on_roof`). A shared side is judged along its profile: cut where
   either roof breaks or the two cross, each wall piece straight-topped and straight-bottomed
   (`Facade::bottom_start/bottom_end`, `facade_bottom`; the prefilter samples between them), each
@@ -219,7 +221,8 @@ Commands and options are in `README.md`; rationale is in
   "Ends on a surface"). The floor's partners are traced; a wall's or a roof's are a factor
   `1 + R` in `reflected_amplitude`, halved where the end wedge has that surface as a face (judged
   geometrically, `edge_face`, never by an angular slack). A plate on a roof takes `P_d + R P_r`.
-  Slopes and edges are refused. In a run each microphone's floor is at its observer's z unless it
+  An end on a slope takes the roof's coefficient; edges are refused, and plates on walls and slopes.
+  In a run each microphone's floor is at its observer's z unless it
   stands on z = 0 or a surface of the district (`floor_height`); each floor is evaluated with the
   source lowered by it. The plane-wave tables take a microphone on a wall the same way
   (`BuildingReceiver::surface_factor`): the table then holds its first-order reflections (no run

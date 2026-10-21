@@ -1129,9 +1129,9 @@ over a pass as it does in an exposure.
   its own `z`, as in the open-ground run: the buildings stand on that floor for it, and the source
   is taken as high above it as the track says above z = 0. With `--plate_table` a flush
   microphone sits on its plate on the floor or a flat roof, the roof's reflection in place of the
-  ground's. Refused, naming the observer: a microphone inside a building, on a pitched roof's
-  slope (slopes reflect nothing in the model), on a building's edge, or flush on a wall with a
-  plate (a plate lies level); and a source state below a microphone's floor
+  ground's; one on a pitched roof's slope takes the slope's reflection, as on a flat roof.
+  Refused, naming the observer: a microphone inside a building, on a building's edge, or flush on
+  a wall or a slope with a plate (a plate lies level); and a source state below a microphone's floor
   ([THEORY §6.5](THEORY.md#65-urban-receivers)).
 - **Pitched roofs** (`--roofs roofs.csv`, LoD2, with a CSV district). One row per roof plane:
   `building` (an id of the district's), `x`, `y` and `z` (a point the plane passes through, in the
@@ -1142,8 +1142,9 @@ over a pass as it does in an exposure.
   along a shared side the wall stands, and the edge diffracts, only where one roof is above the
   other, judged along the side wherever the two roofs' profiles cross or break. A level deck
   reflects and scatters as a flat roof does. Its walls stand up to the roof, its eaves, rakes, ridges and hips diffract as wedges of their own
-  angles, and every path the flat roofs take applies; a slope reflects no specular ray and scatters
-  nothing diffusely ([THEORY §6.5](THEORY.md#65-urban-receivers)). A building given no plane keeps
+  angles, and every path the flat roofs take applies; a slope reflects specularly, as a mirror in its
+  plane with the floor at either end, though not with a wall's reflection nor after an edge, and
+  scatters nothing diffusely ([THEORY §6.5](THEORY.md#65-urban-receivers)). A building given no plane keeps
   its flat roof. On EDGE's measured pitched scenes the planes are 3.1 dB rms where the same houses
   as flat blocks are 4.5 at the mean height and 5.8 at the ridge
   ([FIDELITY](FIDELITY.md#pitched-roofs)).
@@ -1982,7 +1983,7 @@ absorption: a ray reflects in one of them or in the floor at most, and from a ro
 a microphone above that roof, directly or by an edge that stands higher still. `--microphones` is a CSV with `x`, `y` and `height`
 columns, the height above the floor: a microphone (or a source) at a flat roof's height over it, or
 on a wall, lies on that surface and takes its reflection there, as one on the floor takes the
-floor's; one on a pitched roof's slope or a building's edge is refused. Each output row is a microphone's `x`, `y` and `height`, then one level per band, dB, the
+floor's, and one on a pitched roof's slope the slope's; one on a building's edge is refused. Each output row is a microphone's `x`, `y` and `height`, then one level per band, dB, the
 rays summed coherently and averaged over the band, each absorbed by the air along its length
 (ISO 9613-1, as the spectral path's). A free-field level at the microphone would be −20 lg r for
 its distance r in metres, less that absorption.

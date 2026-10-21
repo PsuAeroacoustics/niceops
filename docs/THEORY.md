@@ -1044,10 +1044,12 @@ within `contact` of its plane, as the surface itself is; an end whose wedge's ot
 the same face (an edge's grazing backscatter along its own roof) is no ray. A grating ray takes
 $(1 + R)^2$ in energy, the diffuse field's gathering at the microphone the same, and the
 turbulent fill's doubling at the receiver is the surface's. A plate on a roof takes
-$P_d + R\,P_r$ on each ray where the floor's takes $P_d$ and its partner $Q\,P_r$. An end on a
-pitched roof's slope, which reflects nothing in the model, or on an edge, where no one surface
-stands for it, is refused, as is a plate on a wall: a plate lies level. A point a hair off the
-surface, whose partners are traced, hears the same within 0.06 dB.
+$P_d + R\,P_r$ on each ray where the floor's takes $P_d$ and its partner $Q\,P_r$. A pitched
+roof's slope is such a surface too, with the roof's reflection. An end on an edge, where no one
+surface stands for it, is refused, as is a plate on a wall or a slope: a plate lies level. A point
+a hair off the surface, whose partners are traced, hears the same within 0.06 dB on a wall or a
+level roof and 0.16 on a slope, the residue in each the edge's backscatter along the face, which
+the point on the face leaves out.
 
 **Each microphone's floor.** In a run, a microphone's floor is the plane the buildings stand on for
 it: the district's own, $z = 0$, where its observer stands there or on a surface of the district;
@@ -1557,9 +1559,18 @@ sharing sides. Its geometry follows:
   between pitches $\phi_1$ and $\phi_2$). Each edge's air is above its plane. A corner's vertical
   edge is as tall as the roof at its vertex. Every path search, reflection order and UTD or
   edge-source coefficient of the flat-roofed model then applies unchanged.
-- **What a slope does not do.** A pitched roof's slopes reflect no specular ray: §6.5's roof
-  reflection is a level plane's, which a mansard's deck is, and the deck reflects and scatters as
-  a flat roof does. The slopes scatter no diffuse energy, and a wall's patches stop at its top.
+- **What a slope reflects.** A slope is a mirror in its plane, with the roof's reflection
+  coefficient: the source mirrored in the plane, the line from the image to the microphone crossing
+  the plane where that plane is the roof, both ends on its air side and every leg open, with the
+  floor or without at either end. The floor's spherical-wave coefficient takes the whole unfolded
+  path as its image's, the slope being a mirror and not a new source. No facade reflection goes with
+  it: a slope turns a ray up or down, so the walls' images, vertical, no longer unfold the path,
+  and no diffracted ray reflects in a slope. Where the reflection point reaches the slope's edge --
+  the eave, the ridge, a hip -- the edge's reflection boundary is, and the field is continuous
+  across it to 0.02 dB; with no slope reflection it stepped there by the reflection's level, since
+  each edge's coefficient carries half of it either side. §6.5's level roof reflection is a
+  mansard's deck's, which reflects and scatters as a flat roof does. The slopes scatter no diffuse
+  energy, and a wall's patches stop at its top.
   A ridge is a line with one of its two planes least on either side, so a level plane through a
   ridge makes no second one. The
   turbulence screen's height is the roof's over the crossing. The pruning's visibility proof takes

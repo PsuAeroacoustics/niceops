@@ -1328,6 +1328,12 @@ add_test(NAME buildings_two_floors_run COMMAND ${URBAN_SHORT} -t tests/data/urba
 # Pitched roofs (--roofs): the demo district's two terraces given gables runs through, and --roofs
 # alone is refused.
 add_test(NAME buildings_pitched_runs COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --roofs tests/data/urban_roofs.csv -o integrated/urban_pitched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# A microphone flush on a slope of a gable (building 1's, 15 ft up the side from its eave) takes the slope's
+# reflection and runs; with a plate, which lies level, it is refused.
+set(URBAN_SLOPE niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tests/data/urban_track_short.csv --frame_bearing 210 -b tests/data/urban_on_slope.csv -L warn --buildings tests/data/urban_buildings.csv --roofs tests/data/urban_roofs.csv)
+add_test(NAME buildings_slope_microphone_runs COMMAND ${URBAN_SLOPE} -o integrated/urban_on_slope.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_refuses_plate_on_slope COMMAND ${URBAN_SLOPE} ${URBAN_PLATE} -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_refuses_plate_on_slope PROPERTIES PASS_REGULAR_EXPRESSION "observer 1's microphone is flush on a wall or a sloping roof")
 add_test(NAME buildings_refuses_lone_roofs COMMAND ${URBAN_RUN} --roofs tests/data/urban_roofs.csv -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_lone_roofs PROPERTIES PASS_REGULAR_EXPRESSION "--roofs goes with --buildings")
 add_test(NAME buildings_refuses_negative_state_tolerance COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --state_tolerance -1 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

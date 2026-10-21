@@ -33,11 +33,15 @@ Vec3 below(const Vec3& p)
 // from `from` to `to`, one of them the floor's image of its real point: its
 // grazing angle's sine and the leg's length.  So no bounce is counted
 // without the geometry floor_factors reads.
+void add_floor_bounce(PointRay& ray, double sin_grazing, double leg, bool microphone)
+{
+    ray.floor_bounce.at(static_cast<std::size_t>(ray.floor++)) = {sin_grazing, leg, microphone};
+}
+
 void add_floor_bounce(PointRay& ray, const Vec3& from, const Vec3& to, bool microphone)
 {
     const double leg = (to - from).norm();
-    ray.floor_bounce.at(static_cast<std::size_t>(ray.floor++))
-            = {leg > 0.0 ? std::abs(to.z - from.z) / leg : 1.0, leg, microphone};
+    add_floor_bounce(ray, leg > 0.0 ? std::abs(to.z - from.z) / leg : 1.0, leg, microphone);
 }
 
 // How a ray meets a chain of facades (an image's, the point's side first)
@@ -768,16 +772,15 @@ PathEnd::PathEnd(const Buildings& buildings, const Vec3& point, bool source, con
     , tree_(image_tree(buildings, point, options.radius, tree_order(source, options), options.max_images, true,
               candidates_, edge_order(options)))
 {
-    // A wall or a level roof the point lies on gives every ray its reflection
-    // at the point; a slope or an edge would need what the model does not hold.
+    // A wall, a level roof or a slope the point lies on gives every ray its
+    // reflection at the point; an edge would need what the model does not
+    // hold.
     const Buildings::Support on = buildings.support(point);
-    if (on.kind == Buildings::Support::Kind::slope)
-        throw std::invalid_argument("a point lies on a pitched roof's slope, which reflects nothing in the model");
     if (on.kind == Buildings::Support::Kind::edge)
         throw std::invalid_argument("a point lies on a building's edge, or where two of its surfaces meet");
     if (on.kind == Buildings::Support::Kind::facade)
         surface_ = on.index;
-    else if (on.kind == Buildings::Support::Kind::roof)
+    else if (on.kind == Buildings::Support::Kind::roof || on.kind == Buildings::Support::Kind::slope)
         surface_ = buildings.roof_facade(on.index);
     // Each image's places about its edges, and the stretch of each edge an
     // image to one reflection can see, once for every partner: among
@@ -1010,6 +1013,76 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                     meeting_toward(buildings, image.facades,
                             Vec3(image.point.x, image.point.y, 2.0 * h - image.point.z) - source, ray.hits);
                 rays_.push_back(std::move(ray));
+            }
+        }
+    // Specular rays off a pitched roof's slope: the source mirrored in the
+    // slope's plane, the line from there to the microphone crossing it where
+    // that plane is the roof, both ends on its air side, each with the floor
+    // or without; no facade, since a slope turns a ray up or down and the
+    // walls' images, vertical, then no longer hold.  An end on the slope
+    // takes its reflection at the end itself (PathEnd::surface).
+    if (options.roofs && options.max_reflections > 0)
+        for (std::size_t b = 0; b < buildings.size(); b++)
+        {
+            const Footprint& f = buildings.footprints()[b];
+            const double* box = buildings.bounds(b);
+            const auto off = [&](const Vec3& p) {
+                return std::hypot(std::max({box[0] - p.x, p.x - box[1], 0.0}), std::max({box[2] - p.y, p.y - box[3], 0.0}));
+            };
+            if (f.roof.empty() || std::min(off(source), off(microphone)) > options.radius)
+                continue;
+            for (std::size_t i = 0; i < f.roof.size(); i++)
+            {
+                const RoofPlane& plane = f.roof[i];
+                if (plane.a == 0.0 && plane.b == 0.0)
+                    continue;
+                const double scale = std::sqrt(1.0 + plane.a * plane.a + plane.b * plane.b);
+                const Vec3 n(-plane.a / scale, -plane.b / scale, 1.0 / scale);
+                const auto above = [&](const Vec3& p) { return (p.z - plane.at(p.x, p.y)) / scale; };
+                for (int fa = 0; fa < source_floors; fa++)
+                    for (int fb = 0; fb < 2; fb++)
+                    {
+                        const Vec3 pa = fa ? below(source) : source, pb = fb ? below(microphone) : microphone;
+                        const double da = above(pa), db = above(pb);
+                        if (!(da > Buildings::contact && db > Buildings::contact))
+                            continue;
+                        const Vec3 image = pa - (2.0 * da) * n;
+                        const Vec3 p = image + (da / (da + db)) * (pb - image);
+                        if (!buildings.on_plane(b, i, p.x, p.y))
+                            continue;
+                        // The floor's bounce on either side, where the
+                        // unfolded leg crosses it.
+                        const Vec3 qa = fa ? pa + (-pa.z / (p.z - pa.z)) * (p - pa) : source;
+                        const Vec3 qb = fb ? p + (p.z / (p.z - pb.z)) * (pb - p) : microphone;
+                        if ((fa && (buildings.inside(qa.x, qa.y) < buildings.size() || buildings.blocked(source, qa)))
+                                || (fb
+                                        && (buildings.inside(qb.x, qb.y) < buildings.size()
+                                                || buildings.blocked(qb, microphone)))
+                                || buildings.blocked(qa, p) || buildings.blocked(p, qb))
+                            continue;
+                        PointRay ray;
+                        ray.path.push_back(source);
+                        if (fa)
+                            ray.path.push_back(qa);
+                        ray.path.push_back(p);
+                        if (fb)
+                            ray.path.push_back(qb);
+                        ray.path.push_back(microphone);
+                        ray.length = (pb - image).norm();
+                        ray.spreading = 1.0 / ray.length;
+                        ray.roof_facades = {buildings.roof_facade(b)};
+                        // The floor's spherical-wave coefficient takes the
+                        // whole unfolded path as its image's: the slope is a
+                        // mirror, not a new source.
+                        if (fa)
+                        {
+                            ray.source_plane = 0.0;
+                            add_floor_bounce(ray, std::abs(p.z - pa.z) / (p - pa).norm(), ray.length, false);
+                        }
+                        if (fb)
+                            add_floor_bounce(ray, std::abs(pb.z - p.z) / (pb - p).norm(), ray.length, true);
+                        rays_.push_back(std::move(ray));
+                    }
             }
         }
 

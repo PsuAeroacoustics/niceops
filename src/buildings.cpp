@@ -883,6 +883,17 @@ bool Buildings::on_roof(std::size_t building, double x, double y) const
         if (p.a != 0.0 || p.b != 0.0)
             return false;
     }
+    return over(building, x, y);
+}
+
+bool Buildings::on_plane(std::size_t building, std::size_t plane, double x, double y) const
+{
+    const Footprint& f = footprints_[building];
+    return plane < f.roof.size() && f.roof[plane].at(x, y) <= roof_height(f, x, y) + 1e-9 && over(building, x, y);
+}
+
+bool Buildings::over(std::size_t building, double x, double y) const
+{
     for (const auto& s : ceded_[building])
         if (distance_to_side(x, y, s[0], s[1], s[2], s[3]) < 1e-9)
             return false;

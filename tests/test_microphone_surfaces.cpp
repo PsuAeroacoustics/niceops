@@ -165,23 +165,126 @@ TEST_CASE("a plate on a roof takes the roof's reflection", "[microphone_surfaces
         REQUIRE(plated[b] - bare[b] == Catch::Approx(expected).margin(1e-9));
 }
 
-// Where no one surface's reflection stands for it -- a pitched roof's slope,
-// which reflects nothing in the model, or an edge -- an end is refused, by
-// the field and by the tools' placement check; above the slope, below the
-// ridge, it is in the air and fine.
-TEST_CASE("an end on a slope or an edge is refused", "[microphone_surfaces]")
+// On a slope a point takes the slope's reflection there, as on a level roof:
+// it hears what a point a hair above the slope hears, the slope's rays
+// traced -- in front of it, overhead, from below the eave, beyond the ridge
+// -- and so does a source on it.  Rigid surfaces, as above.  Within 0.2 dB
+// (0.155 measured, at 125 Hz behind the ridge: the ridge's wave down the
+// slope, off the eave and back up along it, which a hair off the face carries
+// and the end on the face leaves out, as on a wall).
+TEST_CASE("an end on a slope is one a hair above it", "[microphone_surfaces]")
+{
+    Footprint gable = box(0.0, 0.0, 10.0, 20.0, 9.0);
+    gable.roof = {{0.6, 0.0, 6.0}, {-0.6, 0.0, 12.0}};
+    const Buildings city({gable});
+    const double scale = std::sqrt(1.36), hair = 1e-5;
+    const Vec3 n(-0.6 / scale, 0.0, 1.0 / scale);
+    const Vec3 on(2.0, 10.0, 7.2), off = on + hair * n;
+    REQUIRE(city.support(on).kind == Buildings::Support::Kind::slope);
+    double worst = 0.0;
+    for (const Vec3& source : {Vec3(2.0, 10.0, 40.0), Vec3(-30.0, 10.0, 20.0), Vec3(-30.0, 10.0, 4.0),
+                 Vec3(30.0, 10.0, 12.0), Vec3(2.0, -30.0, 15.0)})
+    {
+        INFO("source " << source.x << ", " << source.y << ", " << source.z);
+        const auto a = levels(city, source, on), b = levels(city, source, off);
+        for (std::size_t i = 0; i < bands.size(); i++)
+        {
+            REQUIRE(std::isfinite(a[i]));
+            worst = std::max(worst, std::abs(a[i] - b[i]));
+        }
+        // And the source on the slope.
+        const auto c = levels(city, on, source), d = levels(city, off, source);
+        for (std::size_t i = 0; i < bands.size(); i++)
+            worst = std::max(worst, std::abs(c[i] - d[i]));
+    }
+    INFO("worst " << worst << " dB");
+    REQUIRE(worst < 0.2);
+}
+
+// Where no one surface's reflection stands for it -- an edge: an eave, a
+// ridge, a corner -- an end is refused, by the field and by the tools'
+// placement check; on a slope it is fine, and below the roof it is inside.
+TEST_CASE("an end on an edge is refused", "[microphone_surfaces]")
 {
     Footprint gable = box(0.0, 0.0, 10.0, 20.0, 9.0);
     gable.roof = {{0.6, 0.0, 6.0}, {-0.6, 0.0, 12.0}};
     const Buildings city({gable});
     const std::vector<std::string> ids {"1"};
     const Vec3 source(-20.0, 10.0, 2.0);
-    const Vec3 slope(2.0, 10.0, 7.2), edge(0.0, 10.0, 6.0), above(2.0, 10.0, 7.7);
-    REQUIRE_THROWS_AS(PointSourceField(city, source, slope), std::invalid_argument);
+    const Vec3 slope(2.0, 10.0, 7.2), edge(0.0, 10.0, 6.0), ridge(5.0, 10.0, 9.0), above(2.0, 10.0, 7.7);
+    REQUIRE_NOTHROW(PointSourceField(city, source, slope));
     REQUIRE_THROWS_AS(PointSourceField(city, source, edge), std::invalid_argument);
+    REQUIRE_THROWS_AS(PointSourceField(city, source, ridge), std::invalid_argument);
     REQUIRE_NOTHROW(PointSourceField(city, source, above));
-    REQUIRE_THAT(misplaced_point(city, ids, slope), Catch::Matchers::ContainsSubstring("sloping roof"));
+    REQUIRE(misplaced_point(city, ids, slope).empty());
     REQUIRE_THAT(misplaced_point(city, ids, edge), Catch::Matchers::ContainsSubstring("edge"));
     REQUIRE(misplaced_point(city, ids, above).empty());
     REQUIRE_THAT(misplaced_point(city, ids, Vec3(2.0, 10.0, 5.0)), Catch::Matchers::ContainsSubstring("inside"));
+}
+
+// A pitched roof's slope reflects as a mirror in its plane: the ray off it
+// meets the plane where that plane is the roof, at equal angles, and is as
+// long as the line from the source's image to the microphone.
+TEST_CASE("a slope reflects a specular ray", "[microphone_surfaces]")
+{
+    Footprint shed = box(0.0, 0.0, 200.0, 200.0, 60.0);
+    shed.roof = {{0.2, 0.0, 10.0}};
+    const Buildings city({shed});
+    const Vec3 s(60.0, 100.0, 40.0), m(120.0, 110.0, 45.0);
+    const PointSourceField field(city, s, m);
+    const double scale = std::sqrt(1.04);
+    const Vec3 n(-0.2 / scale, 0.0, 1.0 / scale);
+    const double ds = (s.z - (0.2 * s.x + 10.0)) / scale;
+    const Vec3 image = s - (2.0 * ds) * n;
+    std::size_t found = 0;
+    for (const PointRay& ray : field.rays())
+    {
+        if (ray.roof_facades.empty() || ray.wedges > 0)
+            continue;
+        found++;
+        REQUIRE(ray.path.size() == 3);
+        const Vec3& p = ray.path[1];
+        REQUIRE(p.z == Catch::Approx(0.2 * p.x + 10.0).margin(1e-9));
+        REQUIRE(ray.length == Catch::Approx((m - image).norm()).epsilon(1e-12));
+        REQUIRE(ray.length == Catch::Approx((p - s).norm() + (m - p).norm()).epsilon(1e-12));
+        const Vec3 in = (p - s) / (p - s).norm(), out = (m - p) / (m - p).norm();
+        REQUIRE(-in.dot(n) == Catch::Approx(out.dot(n)).epsilon(1e-12));
+    }
+    REQUIRE(found == 1);
+}
+
+// Where a slope's reflection meets its edge -- the eave below it, the ridge
+// above -- the field is continuous: the edge's coefficient carries half the
+// reflection either side of its boundary, which needs the reflection there.
+// Before slopes reflected it stepped by the reflection's whole level.
+TEST_CASE("a slope's reflection ends where its edges' boundaries are", "[microphone_surfaces]")
+{
+    Footprint gable = box(0.0, 0.0, 10.0, 20.0, 9.0);
+    gable.roof = {{0.6, 0.0, 6.0}, {-0.6, 0.0, 12.0}};
+    const Buildings city({gable});
+    const Vec3 s(-20.0, 10.0, 20.0);
+    const double scale = std::sqrt(1.36);
+    const Vec3 n(-0.6 / scale, 0.0, 1.0 / scale);
+    const std::vector<double> bands {250.0, 1000.0, 4000.0};
+    for (const Vec3& at : {Vec3(0.0, 10.0, 6.0), Vec3(5.0, 10.0, 9.0)})
+    {
+        const Vec3 d = (at - s) / (at - s).norm();
+        const Vec3 r = d - (2.0 * d.dot(n)) * n;
+        // Across the boundary: normal to the edge's line (along y) and to r.
+        const Vec3 across = Vec3(0.0, 1.0, 0.0).cross(r);
+        const Vec3 m = at + 15.0 * r;
+        const auto here = [&](double side) {
+            const PointSourceField field(city, s, m + side * across);
+            std::vector<double> out(bands.size());
+            field.band_levels(std::vector<double>(city.facades().size() * bands.size(), 1.0), FloorModel(1.0), bands,
+                    343.2, out.data());
+            return out;
+        };
+        const auto a = here(1e-6), b = here(-1e-6);
+        for (std::size_t i = 0; i < bands.size(); i++)
+        {
+            INFO("edge at x = " << at.x << ", " << bands[i] << " Hz");
+            REQUIRE(a[i] == Catch::Approx(b[i]).margin(0.02));
+        }
+    }
 }

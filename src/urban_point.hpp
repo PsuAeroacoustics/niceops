@@ -181,8 +181,9 @@ public:
     // wall, a roof, a slope or an edge); its own z otherwise, as open ground and
     // the urban tables take an observer's ground.
     double floor_height(const Vec3& ground) const;
-    // Whether a point lies on a wall of the district (Buildings::support).
-    bool on_wall(const Vec3& point) const;
+    // Whether a point lies on a wall or a sloping roof of the district
+    // (Buildings::support), where a plate, which lies level, cannot.
+    bool tilted(const Vec3& point) const;
 
     // Each state's level at every microphone, from the states' sources (their
     // positions, sphere frames and blends) and the run's absorption (dB/m per

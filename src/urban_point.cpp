@@ -541,9 +541,10 @@ std::string UrbanDistrict::misplaced(const Vec3& p) const
     return misplaced_point(impl_->city, impl_->input.ids, p);
 }
 
-bool UrbanDistrict::on_wall(const Vec3& p) const
+bool UrbanDistrict::tilted(const Vec3& p) const
 {
-    return impl_->city.support(p).kind == Buildings::Support::Kind::facade;
+    const Buildings::Support::Kind kind = impl_->city.support(p).kind;
+    return kind == Buildings::Support::Kind::facade || kind == Buildings::Support::Kind::slope;
 }
 
 double UrbanDistrict::floor_height(const Vec3& ground) const
@@ -672,11 +673,13 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     for (std::size_t m = 0; m < nm; m++)
     {
         const Buildings::Support on = city.support(microphones[m]);
-        if (on.kind != Buildings::Support::Kind::facade && on.kind != Buildings::Support::Kind::roof)
+        if (on.kind != Buildings::Support::Kind::facade && on.kind != Buildings::Support::Kind::roof
+                && on.kind != Buildings::Support::Kind::slope)
             continue;
-        if (floor_of[m].plate && on.kind == Buildings::Support::Kind::facade)
+        if (floor_of[m].plate && on.kind != Buildings::Support::Kind::roof)
             throw std::invalid_argument("microphone " + std::to_string(m + 1)
-                    + " is flush on a wall with a plate; a plate lies level, on the floor or a roof");
+                    + " is flush on a wall or a sloping roof with a plate; a plate lies level, on the floor or a "
+                      "level roof");
         raised[m] = on.kind == Buildings::Support::Kind::facade ? on.index : city.roof_facade(on.index);
         std::fill(receiver_energy[m].begin(), receiver_energy[m].end(),
                 raised[m] == Buildings::no_facade ? 1.0 : d.reflection[raised[m]]);

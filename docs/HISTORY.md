@@ -381,6 +381,13 @@ old and new results only with them in mind.
   Beyond a microphone's diffuse reach a Lambert relief reflects whole, and a relief building's
   roof no longer scatters. On EDGE's reliefs the hybrid went from 1.39, 1.76 and 1.98 dB rms
   (UE24-26) to 1.25, 1.70 and 1.80, and DigiCity's microphone 7 from −1.97 / 2.72 to −1.91 / 2.64.
+- **A pitched roof's slopes reflect** (`--roofs`), as mirrors in their planes, with the floor at
+  either end; and a source or microphone may lie on a slope, taking its reflection there (a plate
+  on a slope is refused, as on a wall). They reflected nothing, so the field stepped across each
+  slope edge's reflection boundary, and a point on a slope was refused. EDGE's pitched scenes do not
+  move: every microphone there is low in a house's shadow, which no slope reflection reaches. In a
+  suburb of 64 gable houses heard from a drone 60 m up, 2 of 162 garden microphones moved, by up
+  to 5.2 dB in a band, where a neighbour's slope reflects into the gap near its ridge.
 - **`--edge_source`'s twice-diffracted rays decide each wavenumber alone**, and its end ratios let
   the other edge's point slide. The choice between the cascade-times-ratios and the integral was
   made at a run's least wavenumber, so a 1-2 kHz band moved 0.7-1.8 dB with whether 125 Hz was in

@@ -1781,6 +1781,16 @@ cost 2.2 times the same houses flat (1408 against 637 s of CPU from 60 m up), mo
 eleven edges against eight; before the pruning took their roof planes it was 3.2 times (2051 s),
 with the same levels to the bit.
 
+**Slopes reflect.** A slope is a mirror in its plane (THEORY §6.5), with the floor at either end.
+EDGE's pitched rows above do not move with it: every microphone there is low in a house's shadow,
+where no slope reflects, and the drone is below the plane of the slope that faces them. In the
+suburb above, from 60 m up, 2 of the 162 garden microphones take a slope's reflection -- a
+neighbour's slope reflecting into the gap between two houses, the reflection point 0.6 m from its
+ridge -- and move by up to 5.2 dB in a band (10 of 810 band levels by more than 0.1 dB), at no cost
+measurable (110 s either way on the GPU). Without it the field stepped across the ridge's
+reflection boundary, by the reflection's level; with it the field is continuous there to 0.02 dB
+(`a slope's reflection ends where its edges' boundaries are`).
+
 ### Microphones on roofs and walls
 
 A source or a microphone lying on a wall or a flat roof (THEORY §6.5, "Ends on a surface"), against

@@ -269,6 +269,10 @@ public:
     // edge's reflection boundary is, and must not stop short of it as inside()
     // does.
     bool on_roof(std::size_t building, double x, double y) const;
+    // Whether (x, y) lies on the given plane of a building's pitched roof,
+    // where that plane is the roof: within the footprint as on_roof, and the
+    // plane the least there.
+    bool on_plane(std::size_t building, std::size_t plane, double x, double y) const;
 
     // Whether `p` lies strictly inside a building's solid: inside a footprint
     // and between the floor and its roof, by `contact` or more.
@@ -369,6 +373,9 @@ private:
     // one.
     std::vector<std::vector<std::array<double, 4>>> ceded_;
     double x_min_ = 0.0, x_max_ = 0.0, y_min_ = 0.0, y_max_ = 0.0;
+    // Within a building's footprint, its sides included to round-off, and
+    // off the sides it cedes to a neighbour.
+    bool over(std::size_t building, double x, double y) const;
 };
 
 // The face of the edge's wedge that p lies on, within Buildings::contact of
