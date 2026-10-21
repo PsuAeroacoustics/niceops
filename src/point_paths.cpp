@@ -757,7 +757,7 @@ bool same_tracing(const PointPathOptions& a, const PointPathOptions& b)
             && a.triple_diffraction == b.triple_diffraction && a.max_thrice_reflections == b.max_thrice_reflections && a.double_diffraction == b.double_diffraction
             && a.source_reflections == b.source_reflections && a.radius == b.radius && a.max_images == b.max_images
             && a.prune == b.prune && (a.reliefs != nullptr) == (b.reliefs != nullptr)
-            && a.grating_reflections == b.grating_reflections;
+            && a.grating_reflections == b.grating_reflections && a.roofs == b.roofs;
 }
 
 } // namespace

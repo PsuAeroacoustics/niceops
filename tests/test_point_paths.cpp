@@ -1426,6 +1426,10 @@ TEST_CASE("a field from ends traced once is the pair's own", "[point_paths]")
     PointPathOptions other = options;
     other.max_edge_reflections = 1;
     REQUIRE_THROWS_AS(PointSourceField(blocks, source, microphone, other), std::invalid_argument);
+    // Without roofs an end finds no slopes (PathEnd::slopes).
+    PointPathOptions flat = options;
+    flat.roofs = false;
+    REQUIRE_THROWS_AS(PointSourceField(blocks, source, microphone, flat), std::invalid_argument);
     std::vector<std::size_t> reversed(near_sources.rbegin(), near_sources.rend());
     REQUIRE_THROWS_AS(PathEnd(blocks, microphones[0], false, options, reversed), std::invalid_argument);
 }
