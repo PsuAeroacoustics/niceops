@@ -4,6 +4,13 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## Roofs light the scattering walls (October 2026)
+
+With scattering, a point source now lights the walls' and roofs' patches off a level roof or a
+slope as well as off the walls and the floor; those paths used to light nothing. Diffuse levels
+can only rise: on the gable suburb by 0.04 dB on average, at most 0.16 dB at s = 0.3.
+`--no_roof_lighting` in point_field leaves them out, for comparison.
+
 ## A shared face with an end at its line (October 2026)
 
 Where one end of a ray over a shared face lay within about 1e-5 rad of the line between the edges

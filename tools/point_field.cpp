@@ -124,6 +124,7 @@ int main(int argc, char** argv)
     bool no_roofs = false;
     bool no_slope_facades = false;
     bool no_twice_roofs = false;
+    bool no_roof_lighting = false;
     bool unending_edges = false;
     bool exact_shared_faces = false;
     bool cascade = false;
@@ -204,6 +205,8 @@ int main(int argc, char** argv)
     app.add_flag("--no_slope_facades", no_slope_facades,
             "No ray off both a slope and a wall, for comparison: no specular ray off walls and a slope, and no "
             "once-diffracted ray with walls and a slope on one side.");
+    app.add_flag("--no_roof_lighting", no_roof_lighting,
+            "With scattering, no lighting path off a level roof or a slope onto the patches, for comparison.");
     app.add_flag("--no_twice_roofs", no_twice_roofs,
             "No level roof's or slope's reflection on a twice-diffracted ray, for comparison.");
     app.add_flag("--unending_edges", unending_edges,
@@ -625,6 +628,7 @@ int main(int argc, char** argv)
             diffuse_options.patch_size = patch_size;
             // The rays reflect in the roofs, so the roofs scatter too.
             diffuse_options.roofs = !no_roofs;
+            diffuse_options.roof_lighting = !no_roof_lighting;
             if (relief && relief_scattering != "orders")
                 diffuse_options.scattering_at = [&](std::size_t f, double sin_psi, double cos_elevation, std::size_t b) {
                     return reliefs[f] != nullptr ? 1.0 - reliefs[f]->specular(sin_psi, bands[b] * cos_elevation, sound_speed)

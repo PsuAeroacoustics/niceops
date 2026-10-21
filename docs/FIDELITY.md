@@ -1335,7 +1335,7 @@ the two are close: 4.01 and 4.04 dB rms over 1124 band levels, 4.25 and 4.29 ove
 shadow. At model scale the buildings are many wavelengths long, so their ends matter little, and
 what is left is not diffraction's form. Read with the archive's UE06 and UE07 measurements swapped,
 as the full-wave runs suggest (below; not confirmed), the two models are 3.74 and 3.72 dB rms over
-all, 3.91 and 3.89 in shadow. The floor-source rows in UE06 and UE07 are 2.88 and 2.66 dB rms by
+all, 3.91 and 3.90 in shadow. The floor-source rows in UE06 and UE07 are 2.88 and 2.66 dB rms by
 UTD and 2.12 and 2.53 by the edge source, against the FDTD's 2.30 and 2.32.
 
 **Continuity.** On 20 of the sweep's lines (3771 positions, the loudspeaker at hover spot 5 only),
@@ -1553,7 +1553,7 @@ receivers each, on the floor). Model − FDTD over every band level, mean and rm
 | UE06 (five houses, the middle tall), floor | rigid, 3 mm | −0.02, 1.33 (−2.8 to +2.6) | −0.67, 1.00 (−1.6 to +2.3) | The low roofs' notches reflect between their edges: R2-R4 within 1.3 dB rms; behind the tall house −1.1 dB by UTD, −0.1 with the edge source (below) |
 | UE06, drone | | +0.48, 2.07 (−3.9 to +5.1) | −0.10, 1.21 | |
 | UE07 (the middle low), floor | | −0.21, 2.91 (−8.6 to +4.2) | −0.48, 2.55 (−7.5 to +4.9) | |
-| UE07, drone | | −0.19, 2.27 (−9.1 to +3.3) | −0.02, 0.67 (−1.5 to +1.7) | A 1 m roof edge between taller houses: its ends count; the low roof reflects |
+| UE07, drone | | −0.20, 2.31 (−9.4 to +3.3) | −0.01, 0.75 (−1.6 to +1.9) | A 1 m roof edge between taller houses: its ends count; the low roof reflects |
 | UE13 (two rows, the first higher), floor | walls 0.05, 4 mm, 90 ms | −0.82, 2.73 (−7.6 to +3.1) | −0.79, 2.72 | Behind the second row, over three roof edges: +1.96, 2.20 |
 | | | between the rows: −1.74, 2.97 (−7.4 to +0.8) | −1.68, 2.94 | The reflections between the rows after the roof, two each side; the floor's null at 5 kHz |
 | UE12 (two rows of one height), floor | walls 0.05, 4 mm, 90 ms | +0.46, 2.30 (−3.4 to +4.7) | +0.47, 2.31 | Behind the second row 2.2-4.7 dB high: two roofs of one height taken for one |
@@ -1603,9 +1603,9 @@ loudspeaker and band from the line-of-sight pairs, as above). Measured − predi
 | UE00, drone | 32, shadow | −0.07, 0.62 | −0.09, 0.62 | −0.10, 0.62 |
 | UE23, floor | 28, line of sight | +0.39, 0.86 | +0.39, 0.84 | +0.39, 0.84 |
 | UE06 (read swapped), floor | 32, shadow | −1.26, 2.30 | −1.23, 2.88 | −0.39, 2.12 |
-| UE06 (read swapped), drone | 31, shadow | −0.05, 0.75 | −0.51, 2.35 | +0.17, 1.35 |
+| UE06 (read swapped), drone | 31, shadow | −0.05, 0.75 | −0.50, 2.35 | +0.17, 1.35 |
 | UE07 (read swapped), floor | 32, shadow | −0.98, 2.32 | −0.77, 2.66 | −0.56, 2.53 |
-| UE07 (read swapped), drone | 32, shadow | −0.22, 1.18 | −0.03, 2.30 | −0.19, 1.11 |
+| UE07 (read swapped), drone | 32, shadow | −0.22, 1.18 | −0.03, 2.35 | −0.20, 1.18 |
 | UE06 (as labelled), floor | 32, shadow | −2.01, 5.04 | −1.99, 5.31 | −1.15, 4.61 |
 | UE06 (as labelled), drone | 32, shadow | +2.45, 3.86 | +1.97, 3.63 | +2.63, 4.00 |
 | UE07 (as labelled), floor | 32, shadow | −0.23, 4.25 | −0.02, 4.04 | +0.19, 4.18 |
@@ -1912,6 +1912,13 @@ there without the reflection it is half of. 115 s on the GPU, 110 without either
 reflection leaves the field continuous`.) A slope's diffuse field is Lambert's law over the tilted
 surface to 0.5% (`a point source lights a slope's diffuse field as Lambert's law says`).
 
+**Roofs light the walls.** A scattering wall over a low roof, flat or sloped, is lit straight from
+the source and by the source's mirror in the roof, cos(incidence) / L² each, the second times the
+roof's ρ(1 − s), to 1e-9 over every patch the mirror reaches through the roof (`a point source
+lights a wall off a roof, by its mirror in the roof`). On the gable suburb, with every building's
+s = 0.3, these paths raise 21 street microphones' band levels by 0.04 dB on average and at most
+0.16, for 1.6% more time (158 to 161 s).
+
 **Walls with a slope.** Composite-image checks for a wall perpendicular to a slope and for
 oblique mirrors hold the specular length to round-off, including the reciprocal path and the
 same paths with diffraction disabled. Specular and once-diffracted floor partners have real
@@ -1938,7 +1945,10 @@ microphones, source at 60 m) they move 236 of 810 band levels by more than 0.1 d
 2.4 dB (125 Hz, at a microphone in a near-null), mean +0.07 dB, with 7.5% more rays and no
 measurable cost. Over DigiCity's flat containers (20 drone positions, 5632 points, 17 bands) they
 move 1.6% of the band levels by more than 0.1 dB, at most 3.1 dB, mean +0.0004 dB, for 6% more
-time (122 to 130 s).
+time (122 to 130 s). On EDGE they move only UE07's drone rows, the drone over a low roof between
+taller ones, and those the wrong way by a little: against the FDTD 2.27 to 2.31 dB rms by UTD and
+0.67 to 0.75 by the edge source (where they take UTD), against the measurements 2.30 to 2.35 and
+1.11 to 1.18. Without them the rows are as before to the hundredth.
 
 **An end in a slope's plane.** Two of the suburb's microphones, 1.5 m up, lie exactly in a slope's
 extended plane, so a ray over that slope's two rakes has one end on the line between them, where

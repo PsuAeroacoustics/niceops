@@ -1168,8 +1168,8 @@ over a pass as it does in an exposure.
   law, as `niceops_point_field --scattering` takes it
   ([THEORY §6.5](THEORY.md#65-urban-receivers)). Each microphone has its own diffuse field over the
   buildings with a wall within `--diffuse_radius` of it, walls and roofs cut into patches of at most
-  `--patch_size`. The source lights each patch by its specular paths there, every path reading the
-  sphere along its own launch as a ray does, and the field adds to the rays in energy, band by
+  `--patch_size`. The source lights each patch by its specular paths there, off the walls, the floor
+  and one roof or slope, every path reading the sphere along its own launch as a ray does, and the field adds to the rays in energy, band by
   band. A building beyond the radius reflects its whole ρ. `--facade_scattering_spectrum` gives s
   band by band, as `tools/profile_scattering.py` writes it, times each building's coefficient; it
   must reach every band the metric sums (`--band_limits`). Each microphone's field is built once
@@ -1985,8 +1985,9 @@ or more -- a mansard heard from low beside it, several rows of roofs -- is trace
 absorption: a level roof replaces the floor, and reaches an end or an edge above it. A slope
 may reflect with walls and the floor on either side, or next to the edge of a once-diffracted
 ray. A twice-diffracted ray may reflect in a level roof or a slope between one end and its edge.
-`--no_slope_facades` omits paths combining slopes and walls for comparison, and
-`--no_twice_roofs` the twice-diffracted rays off a roof;
+`--no_slope_facades` omits paths combining slopes and walls for comparison,
+`--no_twice_roofs` the twice-diffracted rays off a roof, and `--no_roof_lighting` the scattering
+patches' lighting off a roof;
 `--unending_edges` omits UTD's finite-edge correction. `--microphones` is a CSV with `x`, `y` and `height`
 columns, the height above the floor: a microphone (or a source) at a flat roof's height over it, or
 on a wall, lies on that surface and takes its reflection there, as one on the floor takes the

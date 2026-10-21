@@ -225,6 +225,12 @@ is the budget to watch.
 
 ## Step 3: roofs and slopes light the diffuse field
 
+**Done (2026-10-21).** A point source's lighting paths take one level roof (anywhere along the
+patch's chain) or slope (next to the source), carrying its rho (1 - s) and counted among the path's
+reflections (`DiffuseOptions::roof_lighting`, `--no_roof_lighting`). Image theory holds to 1e-9 for
+a wall over a flat roof and over a slope. Suburb, s = 0.3: +0.04 dB mean, +0.16 at most, +1.6% time.
+The plane wave's lighting (`irradiance`) waits for step 4's roof traces.
+
 **What is wrong.** A wall or roof patch is lit only by paths through facade reflections and the floor
 (`point_irradiance`, `irradiance`). A wave that reflects in a roof or a slope on its way to a patch lights nothing, so
 a drone above a district under-lights the walls its roofs reflect onto. That applies to level roofs as much as to

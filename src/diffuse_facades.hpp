@@ -72,6 +72,9 @@ struct DiffuseOptions
     // roof, where any of its walls is within the radius.  For a model whose
     // rays reflect in the roofs.
     bool roofs = false;
+    // With the roofs, whether a point source's lighting paths may reflect in
+    // one level roof or slope (point_irradiance).  Off, for comparison.
+    bool roof_lighting = true;
     // A facade's scattering coefficient at the incidence a wave meets it at
     // (a relief's, facade_relief.hpp: 1 less its specular share), in band b:
     // the sine of the incidence in the facade's horizontal plane (positive

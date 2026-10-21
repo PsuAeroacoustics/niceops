@@ -299,6 +299,16 @@ long buildings reproduce `canyon_ratio` to 1e-9 dB (FIDELITY, Buildings). What t
     specular walls, where tracing the images afresh for each source took 20 s. The lighting paths
     and the gathering take the air's absorption (`DiffuseOptions::air`); the patches' exchange
     does not.
+  - **With the roofs, a lighting path may reflect in one roof** (`DiffuseOptions::roof_lighting`,
+    `--no_roof_lighting` for comparison): per source, the level roofs below it and the slopes it
+    stands over near the patches, each with its mirror of the source. A level roof goes anywhere
+    along the patch's chain (`folded_roof_path_open`, the patch above it); a slope next to the
+    source, the line from the source's mirror to the patch's image crossing it on the slope, the
+    leg from the source open and the chain from there (`folded_path_open` from the bounce), the
+    floor on the patch's side or not. The roof counts among the path's `max_order` reflections
+    and carries its building's rho (1 - s); a patch is not lit off its own building's roof. Its
+    launch is the leg to the bounce, for a directional source. `a point source lights a wall off
+    a roof, by its mirror in the roof` holds both to image theory at 1e-9.
   - **Only walls in reach scatter.** A wall beyond `--diffuse_radius` of a microphone has no
     patches to return its share, so for that microphone it keeps its whole rho: the rays' reflections
     are per microphone (`reflection_for`), and `point_field_scattering_out_of_reach_is_specular`

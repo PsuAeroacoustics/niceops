@@ -469,3 +469,62 @@ TEST_CASE("a roof's patches cover a ridge once", "[diffuse]")
             area += p.area;
     REQUIRE(area == Catch::Approx(16.0 * std::sqrt(2.0)).epsilon(1e-12));
 }
+
+// A wall lit off a roof (DiffuseOptions::roofs): a low block, flat or with a
+// slope rising toward a tall one, and the source over the low roof.  Each of
+// the tall block's wall patches over the roof is lit straight from the source
+// and by the source's mirror in the roof's plane where the line from the
+// mirror to the patch crosses the roof: cos(incidence) / L^2 each, the second
+// times the roof's rho (1 - s).  Nothing else reaches the wall, and the floor
+// reflects nothing.  The roof counts among the path's reflections: at order
+// 0 the wall is lit straight alone.
+TEST_CASE("a point source lights a wall off a roof, by its mirror in the roof", "[diffuse]")
+{
+    for (const bool slope : {false, true})
+    {
+        Footprint low = box(-100.0, -100.0, 0.0, 100.0, slope ? 30.0 : 10.0);
+        if (slope)
+            low.roof = {{0.1, 0.0, 15.0}};
+        const Buildings city({low, box(0.0, -100.0, 10.0, 100.0, 60.0)});
+        const Vec3 source(-50.0, 0.0, slope ? 40.0 : 30.0);
+        const std::vector<double> bands {1000.0};
+        const std::vector<double> rho(city.facades().size(), 0.8), s(city.facades().size(), 0.3);
+        DiffuseOptions options;
+        options.radius = 200.0;
+        options.patch_size = 4.0;
+        options.roofs = true;
+        const DiffuseFacades diffuse(city, source, rho, s, 0.0, bands, 343.2, options, 4);
+        // The source's mirror in the roof's plane, and that plane's height
+        // above a point.
+        const RoofPlane plane = slope ? low.roof.front() : RoofPlane {0.0, 0.0, 10.0};
+        const Vec3 mirror = source - (2.0 * plane.above(source)) * plane.normal();
+        std::vector<double> e, straight;
+        diffuse.point_irradiance(source, 2, {}, e, 4);
+        diffuse.point_irradiance(source, 0, {}, straight, 4);
+        std::size_t checked = 0, off_roof = 0;
+        for (std::size_t p = 0; p < diffuse.patches().size(); p++)
+        {
+            const auto& patch = diffuse.patches()[p];
+            if (patch.roof || !(patch.normal.x < -0.99) || std::abs(patch.center.x) > 0.01 || e[p] == 0.0)
+                continue;
+            const Vec3 n = patch.normal;
+            const Vec3 to_source = source - patch.center, to_mirror = mirror - patch.center;
+            double expected = n.dot(to_source) / std::pow(to_source.norm(), 3);
+            // Where the line to the mirror crosses the roof's plane: on the
+            // low block's roof, and the patch above the plane.
+            const double d = plane.above(patch.center), dm = -plane.above(mirror);
+            const Vec3 bounce = mirror + (dm / (dm + d)) * (patch.center - mirror);
+            if (d > 0.0 && bounce.x > -100.0 && bounce.x < 0.0 && std::abs(bounce.y) < 100.0)
+            {
+                expected += 0.8 * (1.0 - 0.3) * n.dot(to_mirror) / std::pow(to_mirror.norm(), 3);
+                off_roof++;
+            }
+            INFO("slope " << slope << ", patch at " << patch.center.y << ", " << patch.center.z);
+            CHECK(e[p] == Catch::Approx(expected).epsilon(1e-9));
+            CHECK(straight[p] == Catch::Approx(n.dot(to_source) / std::pow(to_source.norm(), 3)).epsilon(1e-9));
+            checked++;
+        }
+        CHECK(checked > 100);
+        CHECK(off_roof > 100);
+    }
+}

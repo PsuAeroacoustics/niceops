@@ -462,6 +462,51 @@ void DiffuseFacades::point_irradiance(const Vec3& source, std::size_t max_order,
     e.assign(patches_.size() * bands_, 0.0);
     const auto& at = options_.scattering_at;
     const auto& facades = buildings_->facades();
+    // With the roofs, the level roofs below the source and the slopes it
+    // stands over, between it and the patches, each the source's mirror in
+    // it: a path may reflect in one, as a ray does, counted among its
+    // reflections and carrying the roof's rho (1 - s).  A level roof commutes
+    // with the walls, so it may come anywhere along the patch's chain
+    // (folded_roof_path_open); a slope does not, and comes first, next to
+    // the source, as from a drone over the roofs onto the walls.
+    constexpr std::size_t level_roof = static_cast<std::size_t>(-1);
+    struct RoofMirror
+    {
+        std::size_t building = 0;
+        std::size_t plane = level_roof; // the slope's, or a level roof at the top
+        Vec3 image;
+        std::size_t facade = Buildings::no_facade;
+    };
+    std::vector<RoofMirror> roofs;
+    if (options_.roofs && options_.roof_lighting && max_order > 0 && !active_.empty())
+    {
+        double x0 = source.x, x1 = source.x, y0 = source.y, y1 = source.y;
+        for (std::size_t p : active_)
+        {
+            x0 = std::min(x0, patches_[p].center.x);
+            x1 = std::max(x1, patches_[p].center.x);
+            y0 = std::min(y0, patches_[p].center.y);
+            y1 = std::max(y1, patches_[p].center.y);
+        }
+        std::vector<std::uint32_t> near;
+        buildings_->near_box(x0, x1, y0, y1, near);
+        std::sort(near.begin(), near.end());
+        for (const std::uint32_t b : near)
+        {
+            const Footprint& f = buildings_->footprints()[b];
+            const std::size_t facade = buildings_->roof_facade(b);
+            const bool deck = f.roof.empty()
+                    || std::any_of(f.roof.begin(), f.roof.end(), [](const RoofPlane& q) { return q.level(); });
+            if (deck && source.z > f.top + Buildings::contact)
+                roofs.push_back({b, level_roof, Vec3(source.x, source.y, 2.0 * f.top - source.z), facade});
+            for (std::size_t i = 0; i < f.roof.size(); i++)
+            {
+                const double d = f.roof[i].above(source);
+                if (!f.roof[i].level() && d > Buildings::contact)
+                    roofs.push_back({b, i, source - (2.0 * d) * f.roof[i].normal(), facade});
+            }
+        }
+    }
     parallel_chunks(active_.size(), threads, [&](std::size_t begin, std::size_t end) {
         std::vector<Vec3> hits;
         std::vector<PatchImage> scratch;
@@ -473,6 +518,64 @@ void DiffuseFacades::point_irradiance(const Vec3& source, std::size_t max_order,
         {
             const std::size_t p = active_[a];
             const Patch& patch = patches_[p];
+            // One path's deposit: `length` from the source to the patch's
+            // image, arriving at the cosine `c`, launched along `launch`,
+            // travelling along `d` toward the patch's image through `chain`,
+            // with the floor's factor and the roof's facade (`roof`, or none).
+            auto deposit = [&](double length, double c, const Vec3& launch, Vec3 d,
+                                   const std::vector<std::size_t>& chain, double floor, const RoofMirror* roof) {
+                if (power != nullptr)
+                    (*power)(launch, length, sent.data());
+                if (at)
+                {
+                    std::fill(by_incidence.begin(), by_incidence.end(), 1.0);
+                    for (std::size_t k = chain.size(); k-- > 0;)
+                    {
+                        const std::size_t f = chain[k];
+                        const FacadeHit hit = facade_hit(facades[f], d);
+                        for (std::size_t b = 0; b < bands_; b++)
+                        {
+                            const double s = at(f, hit.sin_psi, hit.cos_elevation, b);
+                            if (s >= 0.0 && specular_[f * bands_ + b] > 0.0)
+                                by_incidence[b] *= rho_of(f, b) * (1.0 - s) / specular_[f * bands_ + b];
+                        }
+                        d = mirror_direction(facades[f], d);
+                    }
+                    if (!patch.roof)
+                    {
+                        const FacadeHit hit = facade_hit(facades[patch.facade], d);
+                        for (std::size_t b = 0; b < bands_; b++)
+                        {
+                            const double s = at(patch.facade, hit.sin_psi, hit.cos_elevation, b);
+                            const double nominal = rho_s_[p * bands_ + b] / rho_[p * bands_ + b];
+                            if (s >= 0.0 && nominal > 0.0)
+                                by_incidence[b] *= s / nominal;
+                        }
+                    }
+                }
+                for (std::size_t b = 0; b < bands_; b++)
+                {
+                    double carried = c / (length * length) * floor;
+                    if (power != nullptr)
+                        carried *= sent[b];
+                    if (at)
+                        carried *= by_incidence[b];
+                    for (std::size_t f : chain)
+                        carried *= specular_[f * bands_ + b];
+                    if (roof != nullptr && roof->facade != Buildings::no_facade)
+                        carried *= specular_[roof->facade * bands_ + b];
+                    if (!air.empty())
+                        carried *= std::exp(-2.0 * air[b] * length);
+                    e[p * bands_ + b] += carried;
+                }
+            };
+            // The cosine at the patch of the last leg, from `last` toward the
+            // patch's point `end_point` (both unfolded alike), on the face
+            // whose normal is `normal`.
+            auto arriving = [](const Vec3& last, const Vec3& end_point, const Vec3& normal) {
+                const Vec3 back = last - end_point;
+                return normal.dot(back) / back.norm();
+            };
             for (const PatchImage& image : patch_images(a, max_order, scratch))
             {
                 for (int floor = 0; floor < 2; floor++)
@@ -485,55 +588,67 @@ void DiffuseFacades::point_irradiance(const Vec3& source, std::size_t max_order,
                     const Vec3 target = floor ? Vec3(image.point.x, image.point.y, -image.point.z) : image.point;
                     const double length = (target - source).norm();
                     // The last leg, toward the patch: arriving from in front.
-                    const Vec3 last = hits.empty() ? source : hits.back();
                     const Vec3 end_point = floor ? Vec3(patch.center.x, patch.center.y, -patch.center.z) : patch.center;
-                    const Vec3 back = last - end_point;
                     const Vec3 normal(patch.normal.x, patch.normal.y, floor ? -patch.normal.z : patch.normal.z);
-                    const double c = normal.dot(back) / back.norm();
+                    const double c = arriving(hits.empty() ? source : hits.back(), end_point, normal);
                     if (!(c > 0.0) || !(length > 0.0))
                         continue;
-                    if (power != nullptr)
-                        (*power)((target - source) / length, length, sent.data());
-                    if (at)
+                    deposit(length, c, (target - source) / length, (target - source) / length, image.facades,
+                            floor ? floor_reflection_ : 1.0, nullptr);
+                }
+                if (image.facades.size() + 1 > max_order)
+                    continue;
+                for (const RoofMirror& roof : roofs)
+                {
+                    // Not the roof the patch lies on.
+                    if (patch.roof && buildings_->facade_building(patch.facade) == roof.building)
+                        continue;
+                    const Footprint& f = buildings_->footprints()[roof.building];
+                    if (roof.plane == level_roof)
                     {
-                        std::fill(by_incidence.begin(), by_incidence.end(), 1.0);
-                        Vec3 d = (target - source) / length;
-                        for (std::size_t k = image.facades.size(); k-- > 0;)
-                        {
-                            const std::size_t f = image.facades[k];
-                            const FacadeHit hit = facade_hit(facades[f], d);
-                            for (std::size_t b = 0; b < bands_; b++)
-                            {
-                                const double s = at(f, hit.sin_psi, hit.cos_elevation, b);
-                                if (s >= 0.0 && specular_[f * bands_ + b] > 0.0)
-                                    by_incidence[b] *= rho_of(f, b) * (1.0 - s) / specular_[f * bands_ + b];
-                            }
-                            d = mirror_direction(facades[f], d);
-                        }
-                        if (!patch.roof)
-                        {
-                            const FacadeHit hit = facade_hit(facades[patch.facade], d);
-                            for (std::size_t b = 0; b < bands_; b++)
-                            {
-                                const double s = at(patch.facade, hit.sin_psi, hit.cos_elevation, b);
-                                const double nominal = rho_s_[p * bands_ + b] / rho_[p * bands_ + b];
-                                if (s >= 0.0 && nominal > 0.0)
-                                    by_incidence[b] *= s / nominal;
-                            }
-                        }
+                        const double h = f.top;
+                        if (!(patch.center.z > h + Buildings::contact)
+                                || !folded_roof_path_open(*buildings_, source, patch.center, image.facades,
+                                        roof.building, &hits))
+                            continue;
+                        const Vec3 target(image.point.x, image.point.y, 2.0 * h - image.point.z);
+                        const double length = (target - source).norm();
+                        const double c = arriving(hits.empty() ? source : hits.back(),
+                                Vec3(patch.center.x, patch.center.y, 2.0 * h - patch.center.z),
+                                Vec3(patch.normal.x, patch.normal.y, -patch.normal.z));
+                        if (!(c > 0.0) || !(length > 0.0))
+                            continue;
+                        deposit(length, c, (target - source) / length, (target - source) / length, image.facades, 1.0,
+                                &roof);
+                        continue;
                     }
-                    for (std::size_t b = 0; b < bands_; b++)
+                    const RoofPlane& plane = f.roof[roof.plane];
+                    for (int floor = 0; floor < 2; floor++)
                     {
-                        double carried = c / (length * length) * (floor ? floor_reflection_ : 1.0);
-                        if (power != nullptr)
-                            carried *= sent[b];
-                        if (at)
-                            carried *= by_incidence[b];
-                        for (std::size_t f : image.facades)
-                            carried *= specular_[f * bands_ + b];
-                        if (!air.empty())
-                            carried *= std::exp(-2.0 * air[b] * length);
-                        e[p * bands_ + b] += carried;
+                        if (floor == 1 && (floor_reflection_ == 0.0 || patch.normal.z == 1.0))
+                            continue;
+                        // The slope between the source's mirror and the
+                        // patch's image (off the floor or not): where the line
+                        // between them crosses its plane, on the slope, the
+                        // leg from the source open and the chain from there.
+                        const Vec3 target = floor ? Vec3(image.point.x, image.point.y, -image.point.z) : image.point;
+                        const double d_target = plane.above(target), d_image = -plane.above(roof.image);
+                        if (!(d_target > Buildings::contact) || !(d_image > 0.0))
+                            continue;
+                        const Vec3 bounce = roof.image + (d_image / (d_image + d_target)) * (target - roof.image);
+                        if (!buildings_->on_plane(roof.building, roof.plane, bounce.x, bounce.y)
+                                || buildings_->blocked(source, bounce)
+                                || !folded_path_open(*buildings_, bounce, patch.center, image.facades, floor == 1, &hits))
+                            continue;
+                        const double length = (target - roof.image).norm();
+                        const Vec3 end_point = floor ? Vec3(patch.center.x, patch.center.y, -patch.center.z) : patch.center;
+                        const Vec3 normal(patch.normal.x, patch.normal.y, floor ? -patch.normal.z : patch.normal.z);
+                        const double c = arriving(hits.empty() ? bounce : hits.back(), end_point, normal);
+                        const Vec3 launch = bounce - source;
+                        if (!(c > 0.0) || !(length > 0.0) || !(launch.norm() > 0.0))
+                            continue;
+                        deposit(length, c, launch / launch.norm(), (target - roof.image) / length, image.facades,
+                                floor ? floor_reflection_ : 1.0, &roof);
                     }
                 }
             }

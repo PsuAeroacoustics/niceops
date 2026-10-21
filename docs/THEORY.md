@@ -1555,7 +1555,11 @@ $$
 
 the sum over the specular paths from the source to the patch's centre, to `--max_reflections`
 facades and the floor or not -- the patch's images, traced as the microphone's are, less those whose
-first reflection is the patch's own wall -- with $L$ each path's length, $\theta_p$ its incidence on
+first reflection is the patch's own wall -- and, where the roofs reflect, those with one level roof
+or slope among their reflections, which carries its building's $\rho(1-s)$ as a wall does: a level
+roof below the source and the patch anywhere along the chain, since it commutes with the walls, and
+a slope the source stands over next to the source, the source's mirror in its plane standing in
+for it -- with $L$ each path's length, $\theta_p$ its incidence on
 the patch and $a$ the air's attenuation at the band's centre, which the gathering $g_q$ takes too,
 as $e^{-2ad}$ along each of its two paths. $\mathbf w\cdot\mathbf E$ is then energy in $|p|^2$ and
 adds to each band's energy of the rays, which carry $\rho(1 - s)$ per reflection at the walls
