@@ -1260,6 +1260,13 @@ wall facing the source is within 0.107 dB of one a hair off it (0.007 with the e
 backscatter off the far corner along the face, which only the one off the face has, is stronger
 with the corners' ends.
 
+On DigiCity's 3-D render (a loudspeaker flown along the central street 8.5 m up, 177 positions,
+11,250 cells of floor, walls and roofs 0.5 m across, 160 Hz to 5 kHz summed), 0.17% of cell-frames
+sit 3 dB or more off the median of their neighbours on the same surface, and 0.010% dip or peak
+3 dB against both the frames either side; 0.17% of roof cells ever do so in the flight. With the
+edges unending (and the model of the day before step 1a, which moved microphone 7 by under 0.1 dB)
+those were 0.33%, 0.025% and 14.4%: the one-frame dips where two roof edges meet at a corner.
+
 **The edge-source integral** (`--edge_source`; `src/edge_source`, `tests/test_edge_source.cpp`).
 First order, against exact solutions:
 

@@ -156,7 +156,13 @@ which is why it is measured before it is built.
 - EDGE against the FDTD: UTD 1.95 -> 1.61 dB rms over the 13 runs; UE14 floor 1.22 -> 0.84, drone 0.68 -> 0.45 (the
   plan's check); UE06 floor 2.77 -> 1.33. Against the measurements UTD 3.82 -> 3.74.
 - **Part 2, the double transition, measured:** within 0.5 m of a face's plane through the vertex the ends are no
-  better than none (worst 3.68 dB against 3.13 at 125 Hz on the box).
+  better than none (worst 3.68 dB against 3.13 at 125 Hz on the box). It is a strip a fraction of a metre wide, and
+  the render below no longer shows it; left as a known limitation (FIDELITY) until a measurement says it matters.
+- **The DigiCity render** (177 frames, 11,250 surface cells), against its run of 2026-10-20: cells 3 dB or more off
+  their neighbours' median 0.33% -> 0.17% of cell-frames; one-frame dips of 3 dB 0.025% -> 0.010%, and the roof
+  cells ever showing one 14.4% -> 0.17% (the corner dips). The plan's "about 1%" was a different count, which could
+  not be reconstructed; these are the harness's own (job script, both fields scored the same way). Microphone 7 is
+  unchanged (-4.1 dB mean, 5.3 rms).
 - Cost: DigiCity's 22 microphones from 14 source positions, 17 bands, one thread: 6.0 -> 9.0 s, 30% more rays.
 
 ## Step 2: the slope and roof paths that are missing
