@@ -984,6 +984,60 @@ $$
 u = \frac{D(\theta, \theta_0;\ k\sin\beta,\ L/\sin\beta)}{\sqrt{\sin\beta}}\,\frac{e^{ik(s + s')}}{\sqrt{s s'(s + s')}}.
 $$
 
+**An edge's ends.** $D$ is the stationary-phase limit of the integral along an infinite edge; a
+building's edge stops at its ends, and each end takes away the integral's tail beyond it. With
+$\Delta$ the excess of the path through an end over the ray's own, the tail's share is
+
+$$
+T(x) = \frac{1}{\sqrt\pi\,e^{i\pi/4}}\int_{\sqrt x}^{\infty} e^{it^2}\,dt
+= \frac{F(x)\,e^{i(x + \pi/4)}}{2\sqrt{\pi x}}, \qquad x = k\Delta,
+$$
+
+$\tfrac12$ at the end and falling as $1/\sqrt x$ with the end's own phase. Each of $D$'s four terms,
+of transition parameter $X_i$, is multiplied by
+
+$$
+1 - w_\mathrm{lo}\,T(k\Delta_\mathrm{lo}) - w_\mathrm{hi}\,T(k\Delta_\mathrm{hi}), \qquad
+w = \frac{1}{\sqrt{1 + k\Delta/X_i}}.
+$$
+
+Far from the term's boundary $w = 1$ and this is the integral cut at the ends; at the boundary
+$w = 0$, the term there being the geometrical-optics wave's jump, which the ends do not touch, so a
+ray's own boundary stays continuous. Past an end the Keller point is off the edge, and the end's
+wave is kept within a reach (the run's: 30 radians at its lowest band): a ray through the end, its
+length and launch the end's, with the Keller point's $\sin\beta$ and distance -- so that it is
+reciprocal -- each term multiplied by
+$(w_\mathrm{near}T_\mathrm{near} - w_\mathrm{far}T_\mathrm{far})\,e^{-ik\Delta_\mathrm{near}}$ and
+the Keller ray's spreading over the end ray's, and faded out between 15 and 30 radians of
+$k\Delta_\mathrm{near}$. At the end both forms are half of each term, so the field does not step as
+the Keller point leaves the edge. There the end is a vertex, and its wave reaches wherever the end
+sees, which the wedge's infinite faces do not decide: a microphone or source beyond a face's plane
+takes that face's coefficient, its angle put onto the face, weighed by
+
+$$
+\frac{1}{\sqrt{1 + L\,2\sin^2(\delta/2)/\Delta_\mathrm{near}}},
+$$
+
+$\delta$ its angle into the wedge's solid side and $L$ the ray's distance parameter: 1 at the
+face's plane, where the air side's coefficient takes over, and 0 at the end, where the ray inside
+the edge on its far side is no ray. On a twice-diffracted ray each edge's excesses take the other
+edge's point free on its line (the least path through it), and on a chain every other edge's, so
+that the two edges' coupling is in them ($A - C^2/B$, as the edge source's end ratios have it) and a
+chain's ends are its pair's where an edge leaves the path. A shared face's aperture takes the ratio
+of its cascade's two coefficients with their ends to without. The plane-wave tables take the same
+at their edges, the source's distance infinite.
+
+**Where an edge goes on.** An end is no end where the edge's line goes on as the same wedge. A side
+a junction cut in two goes on as the next piece; an edge ending square on a rigid plane -- a corner
+standing on the floor, an eave running into a taller neighbour's wall -- goes on as its image there,
+its whole line mirrored, and between two such planes, a low roof between taller neighbours, for
+ever. The wall must cover the edge's wedge about the end -- the air above the roof, before the
+facade and below the eave -- for the image to be whole: a taller neighbour flush with the eave's
+own facade stands only behind it, no mirror for a wave from the street, and the end there is a
+vertex. The ends are the line's, and only a true end has a ray past it: past a piece's end the
+Keller point lies on the next piece, whose ray it is, or on the image, whose ray is the same ray by
+image theory. A plane at an angle to the edge, or a neighbour no taller, leaves a true end.
+
 **Roofs reflect.** Among vertical walls a ray changes its vertical direction only at a horizontal
 surface, and once it leaves one rising it keeps rising, so it reflects in one horizontal surface
 at most: the floor, or a roof below both ends of its stretch. A roof at height $h$ takes the
@@ -1406,7 +1460,8 @@ A vertical edge standing on the floor goes on below it as its image, and the flo
 that doubled edge between a ray and its mirror -- the ray from the source's image to the
 microphone's is the one from the source to the microphone by the edge's image -- of which the tracer
 keeps the one whose point stands above the floor. With the integral each such ray takes the edge
-with its image, $[-L, L]$, so the floor is no end. A once-diffracted ray whose Keller point lies past
+with its image, $[-L, L]$, so the floor is no end; as it takes an edge's line wherever it goes on
+(above, "Where an edge goes on"). A once-diffracted ray whose Keller point lies past
 an end of its edge still has that end's wave, which the integral over the edge carries; it is kept
 while the path through the end exceeds the Keller path by no more than 100 radians at the lowest
 band, weighted by $T(k\Delta_\mathrm{end};\ 50, 100)$, $\Delta_\mathrm{end}$ that excess.
@@ -1473,10 +1528,12 @@ $e^{ik\,\Delta L}$ with $|\Delta L|$ at most the rays' spread of lengths $\Delta
 $M \ge h\Delta/2 + 4\,(h\Delta)^{1/3} + 6$ nodes the rule is exact to round-off, and it keeps every
 pair. Left out: four edges or more; more than one reflection between two edges; any reflection between three edges or at their ends (`--max_thrice_reflections`); a shared
 face's aperture on a ray of three, which takes the cascade; more than `--max_twice_reflections` on
-either side of two edges; a roof bounce on a twice-diffracted ray; a vertex; and an edge's ends
-(except with `--edge_source`, which a ray that bounces on the floor between its edges or is
-diffracted three times does not take; one that reflects in a facade between its edges takes it
-unfolded about the facade, the second edge and the microphone's image mirrored). Continuity across
+either side of two edges; a roof bounce on a twice-diffracted ray; and a vertex's own coefficient
+where an end's transition meets a face's plane through it (the double transition), where the
+ends' weights above stand in for it. `--edge_source` takes the ends exactly, except on a ray that
+bounces on the floor between its edges or is diffracted three times, which takes UTD's; one that
+reflects in a facade between its edges takes it unfolded about the facade, the second edge and
+the microphone's image mirrored. Continuity across
 a ray's boundary rests on the diffracted ray that takes over there being traced: one with the same
 reflections, split about the boundary's edge, which a specular ray of more reflections than
 `--max_edge_reflections` on one side, or a diffracted ray whose own leg meets another edge, does not

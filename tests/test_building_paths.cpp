@@ -124,6 +124,8 @@ TEST_CASE("long buildings reproduce the ideal canyon's coherent field", "[buildi
         const Buildings city = canyon_buildings(c);
         const Vec3 microphone(0.0, c.offset, c.microphone_height);
         BuildingPathOptions options;
+        // The edges infinite, as the ideal takes them (their ends: test_point_paths.cpp).
+        options.edge_ends = false;
         options.max_order = 400;
         options.max_diffracted_order = 40;
         const auto run = facing_facades(city, microphone, options.radius);
@@ -163,6 +165,8 @@ TEST_CASE("an oblique wave at a long roof edge is the 2-D wedge at k sin(beta)",
             edge = e;
     REQUIRE(edge < city.edges().size());
     BuildingPathOptions options;
+    // The edges infinite, as the ideal takes them (their ends: test_point_paths.cpp).
+    options.edge_ends = false;
     const double k = 2.0 * pi * 500.0 / 343.2;
     for (const Vec3 offset : {Vec3(-3.0, 0.0, -2.0), Vec3(-0.5, 0.0, -6.0), Vec3(-8.0, 0.0, -0.3)})
     {
@@ -198,6 +202,8 @@ TEST_CASE("an oblique wave at a vertical corner is the 2-D wedge at k sin(beta)"
     REQUIRE(edge < city.edges().size());
     REQUIRE(city.edges()[edge].n == Catch::Approx(1.5));
     BuildingPathOptions options;
+    // The edges infinite, as the ideal takes them (their ends: test_point_paths.cpp).
+    options.edge_ends = false;
     const double k = 2.0 * pi * 1000.0 / 343.2;
     for (const Vec3 offset : {Vec3(-3.0, -2.0, 0.0), Vec3(-0.4, -7.0, 0.0), Vec3(-6.0, 0.5, 0.0)})
     {
@@ -276,6 +282,8 @@ TEST_CASE("building_gains over long buildings is ideal_canyon_gains", "[building
     const Buildings city = canyon_buildings(c);
     const Vec3 microphone(0.0, c.offset, c.microphone_height);
     BuildingPathOptions options;
+    // The edges infinite, as the ideal takes them (their ends: test_point_paths.cpp).
+    options.edge_ends = false;
     options.max_order = 400;
     options.max_diffracted_order = 40;
     const BuildingReceiver receiver(city, microphone, facing_facades(city, microphone, options.radius), options);

@@ -410,3 +410,69 @@ TEST_CASE("holes must lie inside their footprint, apart", "[buildings]")
     crossing.holes.push_back(across);
     REQUIRE_THROWS_AS(Buildings({crossing}), std::invalid_argument);
 }
+
+// Where an edge's line goes on (Edge::beyond): a corner standing on the floor
+// and an eave running square into a taller neighbour's wall go on as their
+// images, their whole lines mirrored, where the wall covers the edge's wedge
+// about its end; a side a junction cut in two goes on as the next piece; and
+// an edge between two such walls goes on for ever.  Its true ends -- a roof's
+// corner, an eave against a wall that stands only behind its facade -- are
+// where it stops.
+TEST_CASE("an edge goes on past a junction, and in its image at a wall or the floor", "[buildings]")
+{
+    Footprint wall = box(-400.0, -400.0, 400.0, 0.0, 300.0);
+    Footprint low = box(0.0, 0.0, 10.0, 30.0, 5.0);
+    const Buildings city({wall, low});
+    const double inf = std::numeric_limits<double>::infinity();
+    const auto find = [&](const Buildings& c, const Vec3& start, const Vec3& direction) -> const Edge& {
+        for (const Edge& e : c.edges())
+            if ((e.start - start).norm() < 1e-9 && (e.direction - direction).norm() < 1e-9)
+                return e;
+        FAIL("no edge from " << start.x << ", " << start.y << ", " << start.z);
+        return c.edges().front();
+    };
+    // The low roof's sides run into the wall at y = 0: mirrored there.
+    const Edge& side = find(city, Vec3(10.0, 0.0, 5.0), Vec3(0.0, 1.0, 0.0));
+    REQUIRE(side.beyond[0] == Catch::Approx(30.0));
+    REQUIRE(side.beyond[1] == 0.0);
+    const Edge whole = continued(side);
+    REQUIRE((whole.start - Vec3(10.0, -30.0, 5.0)).norm() < 1e-9);
+    REQUIRE(whole.length == Catch::Approx(60.0));
+    // A corner on the floor.
+    const Edge& corner = find(city, Vec3(10.0, 30.0, 0.0), Vec3(0.0, 0.0, 1.0));
+    REQUIRE(corner.beyond[0] == Catch::Approx(5.0));
+    REQUIRE(corner.beyond[1] == 0.0);
+    // The wall's eave, cut where the low roof meets its face, goes on whole.
+    const Edge& middle = find(city, Vec3(10.0, 0.0, 300.0), Vec3(-1.0, 0.0, 0.0));
+    REQUIRE(middle.length == Catch::Approx(10.0));
+    REQUIRE(middle.beyond[0] == Catch::Approx(390.0));
+    REQUIRE(middle.beyond[1] == Catch::Approx(400.0));
+    // The low roof's front, its corners true ends.
+    const Edge& front = find(city, Vec3(10.0, 30.0, 5.0), Vec3(-1.0, 0.0, 0.0));
+    REQUIRE(front.beyond[0] == 0.0);
+    REQUIRE(front.beyond[1] == 0.0);
+    // A low house set back between two taller ones: its eaves go on for ever,
+    // and continued() caps them.
+    const Buildings row({box(-20.0, -5.0, 0.0, 35.0, 12.0), box(0.0, 0.0, 10.0, 30.0, 5.0), box(10.0, -5.0, 30.0, 35.0, 9.0)});
+    const Edge& between = find(row, Vec3(10.0, 30.0, 5.0), Vec3(-1.0, 0.0, 0.0));
+    REQUIRE(between.beyond[0] == inf);
+    REQUIRE(between.beyond[1] == inf);
+    const Edge capped = continued(between, 100.0);
+    REQUIRE(capped.length == Catch::Approx(210.0));
+    REQUIRE(capped.beyond[0] == inf);
+    // Flush with them, the neighbours' walls stand only behind its front:
+    // no image for a wave from the street, and the eave's ends are vertices.
+    const Buildings flush({box(-20.0, 0.0, 0.0, 30.0, 12.0), box(0.0, 0.0, 10.0, 30.0, 5.0), box(10.0, 0.0, 30.0, 30.0, 9.0)});
+    const Edge& front_flush = find(flush, Vec3(10.0, 30.0, 5.0), Vec3(-1.0, 0.0, 0.0));
+    REQUIRE(front_flush.beyond[0] == 0.0);
+    REQUIRE(front_flush.beyond[1] == 0.0);
+    // A terrace of one height: each eave goes on as its neighbour's.
+    const Buildings terrace({box(0.0, 0.0, 10.0, 8.0, 6.0), box(10.0, 0.0, 25.0, 8.0, 6.0)});
+    const Edge& first = find(terrace, Vec3(0.0, 0.0, 6.0), Vec3(1.0, 0.0, 0.0));
+    REQUIRE(first.beyond[0] == 0.0);
+    REQUIRE(first.beyond[1] == Catch::Approx(15.0));
+    const Edge& second = find(terrace, Vec3(10.0, 0.0, 6.0), Vec3(1.0, 0.0, 0.0));
+    REQUIRE(second.beyond[0] == Catch::Approx(10.0));
+    REQUIRE(second.beyond[1] == 0.0);
+}
+

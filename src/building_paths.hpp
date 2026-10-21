@@ -73,6 +73,12 @@ struct BuildingPathOptions
     // can see each other is tried, with every edge: slower, and the reference
     // the beams are tested against (they must find the same rays).
     bool beams = true;
+    // Diffracted rays take their edge's ends (ended_wedge_coefficient), and one
+    // whose Keller point lies past an end is kept while the path through the
+    // end exceeds the Keller path by end_reach (m) at most, as the point-source
+    // model takes them (PointPathOptions).
+    bool edge_ends = true;
+    double end_reach = 10.0;
 };
 
 // One ray of the field at the microphone.  Its phase is k times `length` (the
@@ -81,7 +87,10 @@ struct BuildingPathOptions
 // times for a diffracted ray the wedge's coefficient over the square root of
 // the distance from the edge, both in the plane normal to it:
 //
-//   D(n, theta, theta0, k sin(beta), s sin(beta)) / sqrt(s sin(beta)).
+//   D(n, theta, theta0, k sin(beta), s sin(beta)) / sqrt(s sin(beta)),
+//
+// D with its edge's ends (`ends`).  s is the Keller point's distance, also
+// past an end, where the ray's length is through the end.
 struct BuildingRay
 {
     double length = 0.0;
@@ -95,6 +104,7 @@ struct BuildingRay
     WedgeAngles angles;
     double sin_beta = 1.0;
     double s = 0.0;
+    EdgeEnds ends;
     // The run's first-order reflection or its floor partner.
     bool run_evaluates = false;
 };

@@ -154,3 +154,64 @@ TEST_CASE("the wedge sweep is the coefficient to round-off", "[wedge]")
     REQUIRE(worst < 1e-8);
     REQUIRE(worst_near < 1e-5);
 }
+
+// fresnel_tail against its integral, taken down the steepest-descent path:
+// from t = a = sqrt(x), t = a + e^(i pi/4) u turns exp(i t^2) into
+// exp(i x) exp(-u^2 + sqrt(2) a (i - 1) u), which Simpson's rule takes on
+// [0, 12].  Either side of the table's switch at x = 50, and 1/2 at 0.
+TEST_CASE("the Fresnel tail is the stationary-phase integral beyond a point", "[wedge]")
+{
+    const auto integral = [](double x) {
+        const double a = std::sqrt(2.0 * x);
+        const int n = 24000;
+        const double h = 12.0 / n;
+        std::complex<double> sum(0.0, 0.0);
+        for (int i = 0; i <= n; i++)
+        {
+            const double u = i * h;
+            sum += (i == 0 || i == n ? 1.0 : i % 2 ? 4.0 : 2.0) * std::exp(std::complex<double>(-u * u - a * u, a * u));
+        }
+        return std::polar(1.0, x) * sum * (h / 3.0) / std::sqrt(pi);
+    };
+    REQUIRE(std::abs(fresnel_tail(0.0) - 0.5) < 1e-15);
+    double worst = 0.0;
+    for (double x : {1e-8, 1e-3, 0.1, 0.7, 2.0, 6.0, 20.0, 49.999, 50.001, 150.0, 800.0})
+        worst = std::max(worst, std::abs(fresnel_tail(x) - integral(x)) / std::abs(integral(x)));
+    INFO("worst relative difference " << worst);
+    // 1.0e-8: the transition function's table.
+    REQUIRE(worst < 3e-8);
+}
+
+// An edge's ends take each term's share beyond them (ended_wedge_coefficient):
+// with none, D itself; far off, D; with the stationary point on one, half of
+// D, which the ray past it takes there too; and at a shadow boundary the term
+// that jumps keeps D's whole jump, the geometrical-optics wave's, which the
+// ends do not touch.
+TEST_CASE("an edge's ends take their share of each term", "[wedge]")
+{
+    const double n = 1.5, k = 12.0, r = 4.0;
+    const WedgeAngles angles = wedge_angles(n, 2.1, 0.6);
+    const std::complex<double> d = hard_wedge_coefficient(angles, k, r);
+    REQUIRE(ended_wedge_coefficient(angles, k, r, EdgeEnds {}, k) == d);
+    EdgeEnds far;
+    far.lo = far.hi = 1e7;
+    REQUIRE(std::abs(ended_wedge_coefficient(angles, k, r, far, k) / d - 1.0) < 1e-4);
+    EdgeEnds on;
+    on.lo = 0.0;
+    REQUIRE(std::abs(ended_wedge_coefficient(angles, k, r, on, k) - 0.5 * d) < 1e-14 * std::abs(d));
+    EdgeEnds past = on;
+    past.past = -1;
+    REQUIRE(std::abs(ended_wedge_coefficient(angles, k, r, past, k) - 0.5 * d) < 1e-14 * std::abs(d));
+    // Across the source's shadow boundary, theta = theta0 + pi.
+    EdgeEnds ends;
+    ends.lo = 0.3;
+    ends.hi = 0.8;
+    const double theta0 = 0.6, epsilon = 1e-9;
+    const WedgeAngles before = wedge_angles(n, theta0 + pi - epsilon, theta0);
+    const WedgeAngles after = wedge_angles(n, theta0 + pi + epsilon, theta0);
+    const std::complex<double> jump = hard_wedge_coefficient(after, k, r) - hard_wedge_coefficient(before, k, r);
+    const std::complex<double> ended_jump
+            = ended_wedge_coefficient(after, k, r, ends, k) - ended_wedge_coefficient(before, k, r, ends, k);
+    REQUIRE(std::abs(jump) > 0.1 * std::abs(d));
+    REQUIRE(std::abs(ended_jump - jump) < 1e-6 * std::abs(jump));
+}

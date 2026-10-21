@@ -76,11 +76,13 @@ TEST_CASE("a point lies on a wall, a roof, a slope or an edge", "[microphone_sur
 // the partners are traced: over the roof's edge, round the wall's corner, in
 // the building's shadow, overhead; and a source on a roof is heard as one a
 // hair above it.  Rigid surfaces: a diffracted ray's wedge holds its face's
-// reflection rigidly, and so does the end on that face.  Within 0.1 dB (0.062
-// measured, at 125 Hz in the building's shadow: the backscatter off an edge
-// back along its face, which a hair off the face carries and the end on the
-// face leaves out); before, a microphone on a roof had no doubling, and none
-// at all behind the roof's edge, and one on a wall none either.
+// reflection rigidly, and so does the end on that face.  Within 0.15 dB (0.107
+// measured, at 125 Hz on the wall facing the source: the backscatter off the
+// far corner back along the face, which a hair off the face carries and the
+// end on the face leaves out, and which the corners' ends make stronger than
+// the 0.007 it was with the edges unending); before, a microphone on a roof
+// had no doubling, and none at all behind the roof's edge, and one on a wall
+// none either.
 TEST_CASE("an end on a roof or a wall is one a hair off it", "[microphone_surfaces]")
 {
     const Buildings city({box(0.0, 0.0, 20.0, 20.0, 10.0)});
@@ -114,12 +116,14 @@ TEST_CASE("an end on a roof or a wall is one a hair off it", "[microphone_surfac
         }
     }
     INFO("worst " << worst << " dB");
-    REQUIRE(worst < 0.1);
-    // A source on the roof, heard low behind the building.
+    REQUIRE(worst < 0.15);
+    // A source on the roof, heard low behind the building: within 0.03 dB
+    // (0.022 measured at 125 Hz, the same backscatter's; 0.005 with the edges
+    // unending).
     const Vec3 low(40.0, 10.0, 1.5);
     const auto on = levels(city, Vec3(15.0, 10.0, 10.0), low), off = levels(city, Vec3(15.0, 10.0, 10.0 + hair), low);
     for (std::size_t b = 0; b < bands.size(); b++)
-        REQUIRE(on[b] == Catch::Approx(off[b]).margin(0.01));
+        REQUIRE(on[b] == Catch::Approx(off[b]).margin(0.03));
 }
 
 // An absorbing roof reflects at a microphone on it as it does a hair above:

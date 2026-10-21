@@ -1900,7 +1900,9 @@ TEST_CASE("a ray crosses three roof edges as the unfolded path does", "[point_pa
 // steps there.  The outer blocks run twice as deep as the middle one, so that
 // no ray round their far corners meets the middle one's far side as it moves;
 // and the sweep steps past the apex exactly on the line, where three rays
-// graze at once.
+// graze at once.  The edges' tops are ends, the pair's and the three's alike
+// (twice_ends, chain_ends): 0.063 dB at worst (125 Hz, at the line) against
+// 0.046 with no ends, and 0.15 with ends on the pair alone.
 TEST_CASE("the field is continuous where a third edge cuts a twice-diffracted ray", "[point_paths]")
 {
     PointPathOptions options;
@@ -1946,9 +1948,102 @@ TEST_CASE("the field is continuous where a third edge cuts a twice-diffracted ra
         previous_without = now_without;
     }
     REQUIRE(worst_without > 1.0);
-    REQUIRE(worst < 0.05);
+    REQUIRE(worst < 0.08);
 }
 
+
+// An edge's end makes no step (THEORY 6.5).  As a microphone rises past where
+// the corner's Keller point leaves its top, the ray inside the edge hands over
+// to the one past its end; and past the end, a microphone crossing the plane
+// of the corner's face into the wedge's solid side, where the end still sees
+// it, takes the face's coefficient weighed by its depth (weigh_vertex).  A
+// micrometre either side, each within 1e-3 dB; with the edges unending the
+// first is a step of decibels.
+TEST_CASE("an edge's end is no step in the field", "[point_paths]")
+{
+    const Buildings city({box(0.0, 0.0, 20.0, 20.0, 6.0)});
+    PointPathOptions options, unending;
+    unending.edge_ends = false;
+    const double hair = 1e-6;
+    // The corner at the origin: its Keller point at z = (3 + z_m) / 2, the
+    // source and microphone equally far from it, crosses its top at z_m = 9.
+    const Vec3 source(-10.0, 15.0, 3.0);
+    const auto step = [&](const Vec3& s, const Vec3& below, const Vec3& above, const PointPathOptions& o) {
+        const std::vector<double> a = levels(city, s, below, 1.0, 0.0, o), b = levels(city, s, above, 1.0, 0.0, o);
+        double worst = 0.0;
+        for (std::size_t i = 0; i < bands.size(); i++)
+        {
+            REQUIRE(std::isfinite(a[i]));
+            worst = std::max(worst, std::abs(a[i] - b[i]));
+        }
+        return worst;
+    };
+    const double past_top = step(source, Vec3(15.0, -10.0, 9.0 - hair), Vec3(15.0, -10.0, 9.0 + hair), options);
+    const double without = step(source, Vec3(15.0, -10.0, 9.0 - hair), Vec3(15.0, -10.0, 9.0 + hair), unending);
+    // Past the top, across the plane x = 0 of the corner's face.
+    const double across_face
+            = step(Vec3(-10.0, -8.0, 3.0), Vec3(-hair, 10.0, 14.0), Vec3(hair, 10.0, 14.0), options);
+    INFO("past the top " << past_top << " dB (unending " << without << "), across the face's plane " << across_face);
+    REQUIRE(past_top < 1e-3);
+    REQUIRE(across_face < 1e-3);
+    REQUIRE(without > 1.0);
+}
+
+// UTD with its edges' ends against the edge-source integral, which takes each
+// edge's ends exactly: a building's corner, the microphone swept up past its
+// top and across past its end.  Away from the planes of its faces through the
+// vertex, where two ends' transitions meet and the per-term weights are not
+// the vertex's own coefficient (FIDELITY), within 0.3 dB rms and 1 dB at
+// worst (0.18 and 0.86 measured); with the edges unending, 1.4 dB rms and
+// 7 dB at worst.
+TEST_CASE("UTD with its edges' ends is the edge-source integral past a corner", "[point_paths][edge_source]")
+{
+    const Buildings city({box(0.0, 0.0, 10.0, 20.0, 6.0)});
+    const Vec3 source(-15.0, 5.0, 3.0);
+    const std::vector<double> swept {125.0, 250.0, 500.0, 1000.0, 2000.0};
+    const double k = 2.0 * pi * swept.front() / 343.2;
+    const auto field = [&](const Vec3& m, int model) {
+        PointPathOptions o;
+        o.edge_ends = model != 1;
+        o.edge_source = model == 2;
+        o.edge_source_reach = 100.0 / k;
+        o.end_reach = end_fade_hi / k;
+        const PointSourceField f(city, source, m, o);
+        std::vector<double> out(swept.size());
+        f.band_levels(std::vector<double>(city.facades().size() * swept.size(), 1.0), FloorModel(1.0), swept, 343.2,
+                out.data());
+        return out;
+    };
+    std::vector<Vec3> points;
+    for (double z = 1.0; z <= 14.0 + 1e-9; z += 0.25)
+        if (std::abs(z - 6.0) >= 0.5)
+            points.push_back(Vec3(15.0, -5.0, z));
+    for (double y = 8.0; y >= -8.0 - 1e-9; y -= 0.25)
+        if (std::abs(y) >= 0.5)
+            points.push_back(Vec3(15.0, y, 9.0));
+    double sum = 0.0, sum_unending = 0.0, worst = 0.0, worst_unending = 0.0;
+    std::size_t count = 0;
+    for (const Vec3& m : points)
+    {
+        const std::vector<double> ends = field(m, 0), bare = field(m, 1), exact = field(m, 2);
+        for (std::size_t b = 0; b < swept.size(); b++)
+        {
+            const double d = ends[b] - exact[b], u = bare[b] - exact[b];
+            sum += d * d;
+            sum_unending += u * u;
+            worst = std::max(worst, std::abs(d));
+            worst_unending = std::max(worst_unending, std::abs(u));
+            count++;
+        }
+    }
+    const double rms = std::sqrt(sum / count), rms_unending = std::sqrt(sum_unending / count);
+    INFO("with ends " << rms << " dB rms, " << worst << " at worst; unending " << rms_unending << ", "
+                      << worst_unending);
+    REQUIRE(rms < 0.3);
+    REQUIRE(worst < 1.0);
+    REQUIRE(rms_unending > 1.0);
+    REQUIRE(worst_unending > 5.0);
+}
 
 // A vertical edge standing on the floor goes on below it as its image, and the
 // floor's images split that doubled edge between rays and their mirrors: of
@@ -2018,14 +2113,14 @@ TEST_CASE("with the edge source a corner's adjacent edges give a finite field", 
     const std::vector<double> ks {2.0 * pi * 2000.0 / 343.2, 2.0 * pi * 10000.0 / 343.2};
     // The field's own factors fall back to the cascade where not finite, so
     // the integral is held directly, its vertical edge through the floor as
-    // the factors take it (through_floor).
+    // the factors take it (continued).
     int adjacent = 0;
     for (const PointRay& ray : field.rays())
     {
         if (ray.wedges != 2)
             continue;
-        const Edge g1 = through_floor(city.edges()[ray.edge_source.edges[0]]);
-        const Edge g2 = through_floor(city.edges()[ray.edge_source.edges[1]]);
+        const Edge g1 = continued(city.edges()[ray.edge_source.edges[0]]);
+        const Edge g2 = continued(city.edges()[ray.edge_source.edges[1]]);
         const Vec3 a1 = g1.start, b1 = g1.start + g1.length * g1.direction;
         const Vec3 a2 = g2.start, b2 = g2.start + g2.length * g2.direction;
         if (std::min({(a1 - a2).norm(), (a1 - b2).norm(), (b1 - a2).norm(), (b1 - b2).norm()}) > 1e-9)
@@ -2068,8 +2163,8 @@ TEST_CASE("the edge source's end ratios hold for coupled edges, and each band is
             if (ray.wedges != 2 || ray.shared || ray.floor > 0 || ray.between != PointRay::no_facade
                     || !ray.facades.empty())
                 continue;
-            const Edge g1 = through_floor(city.edges()[ray.edge_source.edges[0]]);
-            const Edge g2 = through_floor(city.edges()[ray.edge_source.edges[1]]);
+            const Edge g1 = continued(city.edges()[ray.edge_source.edges[0]]);
+            const Edge g2 = continued(city.edges()[ray.edge_source.edges[1]]);
             const std::vector<std::complex<double>> factors = edge_source_factors(city, ray, ks);
             const std::vector<std::complex<double>> exact = localized_twice_diffracted_spectrum(g1, g2,
                     ray.edge_source.source, ray.edge_source.microphone, 1.0, ks, PartnerModel::edge_source);

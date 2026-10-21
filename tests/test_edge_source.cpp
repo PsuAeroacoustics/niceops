@@ -518,8 +518,8 @@ TEST_CASE("a partner's part reaches a shared vertex", "[edge_source]")
         if (ray.wedges != 2)
             continue;
         twice++;
-        const Edge g1 = through_floor(city.edges()[ray.edge_source.edges[0]]);
-        const Edge g2 = through_floor(city.edges()[ray.edge_source.edges[1]]);
+        const Edge g1 = continued(city.edges()[ray.edge_source.edges[0]]);
+        const Edge g2 = continued(city.edges()[ray.edge_source.edges[1]]);
         for (const PartnerWave& p : twice_diffracted_partners(g1, g2, ray.edge_source.source, ray.edge_source.microphone))
         {
             const double length = (p.over_second ? g2 : g1).length;
@@ -538,10 +538,12 @@ TEST_CASE("a partner's part reaches a shared vertex", "[edge_source]")
 // free field of the block doubled through it, radiated by the source and by
 // its mirror together.  The model's rays -- over the edges, off the wall before
 // the first edge, between the edges (the second mirrored), after the second --
-// must add up to the doubled block's.  By UTD, whose edges have no ends, they
-// do to round-off.  With the edge source each ray takes the integral over its
-// own stretch of edge, ends and all; the ends at the wall do not quite cancel
-// across the mirror (1.4 dB at worst, measured), and without the rays that
+// must add up to the doubled block's.  The edges' ends at the wall are no
+// ends: each edge goes on in its image there (continued), so a ray takes the
+// doubled edge's far ends, and its mirror past the wall is the same ray and is
+// not traced.  By UTD, ends and all, and by the edge source the rays add up to
+// round-off (0.02 dB measured); when the ends at the wall were ends they
+// missed by 1.3 dB (UTD) and 1.4 dB (the edge source).  Without the rays that
 // reflect between the edges the sum misses by over 3 dB.
 TEST_CASE("a wall the edges run into is a mirror, by UTD and by the edge source", "[edge_source]")
 {
@@ -614,7 +616,7 @@ TEST_CASE("a wall the edges run into is a mirror, by UTD and by the edge source"
     {
         INFO("the source " << ys << " m from the wall");
         REQUIRE(worst_with(false, 1, ys) < 0.05);
-        REQUIRE(worst_with(true, 1, ys) < 1.5);
+        REQUIRE(worst_with(true, 1, ys) < 0.05);
     }
     REQUIRE(worst_with(true, 0, 2.0) > 3.0);
 }

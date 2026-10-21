@@ -11,7 +11,7 @@ when it is done. The [next-steps report](NICEOPS%20Urban%20Propagation%20Next%20
 | --- | --- | --- |
 | 0 | EDGE's pitched drone rows read low (diagnosis) | Cheap, and its answer sets how much step 2 matters. **Done** (below) |
 | 1a | Two edges across a step take the cascade | Found by step 0: most of UE02's bias. **Done** (below) |
-| 1 | No vertex (corner) term in UTD | Affects every district, flat or pitched; the most visible artifact |
+| 1 | No vertex (corner) term in UTD | Affects every district, flat or pitched; the most visible artifact. **Done** (below) |
 | 1b | Three or more edges in each other's transitions (a street at grazing, a roof's near edge with a step) | Found by step 0; the largest error left in the BEM checks |
 | 2 | Missing slope and roof paths | Needs step 1's end treatment for its own edges' ends |
 | 3 | Roofs and slopes do not light the diffuse field | Reuses step 2's roof and slope images |
@@ -138,6 +138,26 @@ problem (a rational approximation, as `faddeeva` is). The plane-wave tables take
 **Cost and risk.** Moderate. The factor is closed form; the work is its derivation for each ray kind (once, twice,
 thrice and chains, the shared faces, the edge source's own fade) and the GPU kernel. The risk is the double transition,
 which is why it is measured before it is built.
+
+**Result (2026-10-21).** Part 1 is in (THEORY 6.5, "An edge's ends"; FIDELITY, "An edge's ends in UTD"):
+
+- Each of D's four terms loses each end's Fresnel tail, weighted by 1/sqrt(1 + k Delta / X_i) so that the term
+  carrying a ray's own boundary keeps its jump (one factor on D broke those boundaries by 0.29 dB). A ray past an
+  end is kept within 30 radians of the run's lowest band, through the end, with the Keller point's coefficient; past
+  an end a source or microphone beyond a face's plane takes that face's coefficient weighed by its depth. Twice and
+  chain rays take each end with the other edges' points free on their lines; shared faces take the ratio; the GPU
+  and the plane-wave tables take the same.
+- Found on the way: **where an edge goes on.** A T-junction's seam cut edges into collinear pieces, each with false
+  ends, and an eave running into a taller wall is no end where the wall covers its wedge (image theory), but is one
+  on a flush terrace, where the wall stands only behind the eave's facade. Taking those right closed the image-theory
+  test to 0.02 dB (it was 1.3 by UTD and 1.4 by the edge source).
+- Against the edge source past a box's corner: 0.18 dB rms, 0.86 at worst (1.4 and 7.1 with the edges unending).
+  Continuity at an end and across a face's plane past it: 1e-5 dB per micrometre.
+- EDGE against the FDTD: UTD 1.95 -> 1.61 dB rms over the 13 runs; UE14 floor 1.22 -> 0.84, drone 0.68 -> 0.45 (the
+  plan's check); UE06 floor 2.77 -> 1.33. Against the measurements UTD 3.82 -> 3.74.
+- **Part 2, the double transition, measured:** within 0.5 m of a face's plane through the vertex the ends are no
+  better than none (worst 3.68 dB against 3.13 at 125 Hz on the box).
+- Cost: DigiCity's 22 microphones from 14 source positions, 17 bands, one thread: 6.0 -> 9.0 s, 30% more rays.
 
 ## Step 2: the slope and roof paths that are missing
 

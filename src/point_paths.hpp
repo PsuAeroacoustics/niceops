@@ -152,6 +152,14 @@ struct PointPathOptions
     // over the edge carries, so that a ray leaving the edge fades rather than
     // stops.  point_field sets it to 100 radians at the lowest band.
     double edge_source_reach = 10.0;
+    // UTD's once-diffracted rays take their edge's ends (ended_wedge_coefficient),
+    // and one whose Keller point lies past an end is kept while the path
+    // through the end exceeds the Keller path by no more than end_reach (m):
+    // the end's wave.  Callers set it to end_fade_hi radians at the lowest
+    // band, where the fade has finished.  Off, every edge is infinite, for
+    // comparison.
+    bool edge_ends = true;
+    double end_reach = 10.0;
     // With edge_source, the threads a pair's rays' integrals are shared out
     // over: for a run of fewer pairs than threads (a few microphones), where
     // the pairs alone leave cores idle.
@@ -208,12 +216,14 @@ double fade_reach(double k_min, double cap = 0.5);
 // sin(beta) of the ray to the edge, the distance parameter in the plane
 // normal to the edge, L / sin(beta), and whether the incident wave grazes a
 // face.
+// Its edge's ends (EdgeEnds), for once-diffracted rays.
 struct WedgeTerm
 {
     WedgeAngles angles;
     double sin_beta = 1.0;
     double distance = 0.0;
     bool grazing = false;
+    EdgeEnds ends;
 };
 
 // A ray diffracted over a shared face: the face and the two ends in the plane
@@ -608,11 +618,6 @@ bool meets_relief(const PointRay& ray, const std::vector<const FacadeRelief*>* r
 // of its last leg above the floor and that leg's horizontal direction, from
 // +x, radians.
 void point_ray_arrival(const PointRay& ray, double& elevation, double& azimuth);
-
-// An edge as the edge-source integral takes it: a vertical edge standing on
-// the floor (or ending on it) goes on below it as its mirror image, so the
-// kept ray of each floor pair takes both halves and the floor is no end.
-Edge through_floor(const Edge& g);
 
 // The diffraction factor a ray's edge-source integral gives it at each
 // wavenumber, what point_ray_amplitude's wedges give it at reflected = 1:

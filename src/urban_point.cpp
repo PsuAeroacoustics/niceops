@@ -583,6 +583,9 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     PointPathOptions paths = d.paths;
     if (paths.edge_source && first_band < last_band)
         paths.edge_source_reach = 100.0 / (2.0 * pi * centers[first_band] / sound_speed);
+    // UTD's end waves fade out by end_fade_hi radians, at the lowest band last.
+    if (first_band < last_band)
+        paths.end_reach = end_fade_hi / (2.0 * pi * centers[first_band] / sound_speed);
     first_band = std::min(first_band, last_band);
     const std::size_t nb = last_band - first_band, nm = microphones.size(), ns = states.size();
     constexpr double silence = -std::numeric_limits<double>::infinity();

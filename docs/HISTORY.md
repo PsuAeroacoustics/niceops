@@ -418,6 +418,21 @@ old and new results only with them in mind.
   (2.96); the flat-roofed scenes did not move. DigiCity's microphone 7 moved by under 0.1 dB.
   Under `--edge_source` such a pair takes its transition from the uniform form too: the
   integral, which it took before, was 1-3 dB low there.
+- **UTD takes an edge's ends** (THEORY 6.5, "An edge's ends"). Its edges were infinite: a
+  diffracted ray whose Keller point left the edge at its end was dropped, so the field stepped where
+  a building's corner cut an edge off (3.8 dB in the test's corner), and inside the edge the end's
+  wave was missing (up to 7 dB against the edge-source integral past a box's corner, now 0.86).
+  Each wedge term now loses each end's Fresnel tail, and a ray past an end is kept within 30
+  radians of the run's lowest band. With it, an end that is not one stopped being one: an edge cut
+  in two at a T-junction's seam goes on as the next piece, and an eave running square into a
+  taller neighbour's wall that covers it goes on as its image (`Edge::beyond`); a low roof against
+  such a wall had missed image theory by 1.3 dB as an end, and by 1.4 under `--edge_source`, whose
+  floor-only continuation had the same false end. The goldens moved: `urban_buildings` and
+  `urban_buildings_plate` by up to 0.041 dB, `urban_buildings_diffuse` 0.061,
+  `buildings_scattering` 0.014. On EDGE, UTD against the FDTD went from 1.95 to 1.61 dB rms over
+  the 13 runs (UE14's floor row 1.22 to 0.84, its drone row 0.68 to 0.45, UE06's floor row 2.77 to
+  1.33 with R1 from +4.7 to −1.1 dB mean), the edge source from 1.35 to 1.32; against the
+  measurements, UTD from 3.82 to 3.74 dB rms, the edge source 3.73 to 3.72.
 
 ### Inputs
 

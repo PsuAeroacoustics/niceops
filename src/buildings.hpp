@@ -125,6 +125,15 @@ struct Edge
     Vec3 air1;
     std::size_t building = 0;
     bool vertical = false;
+    // How far the edge's line goes on as the same wedge past each end -- past
+    // `start`, and past its far end -- 0 at a true end.  An edge a junction
+    // cut in two goes on as the next piece; one ending square on a rigid
+    // plane -- a corner on the floor, an eave running into a taller
+    // neighbour's wall -- goes on as its image there, its whole line
+    // mirrored, and between two such planes for ever (infinity).  The ends a
+    // ray takes (EdgeEnds) are its line's, and only a true end has rays past
+    // it.
+    double beyond[2] = {0.0, 0.0};
 
     // The angle of `v` about the edge, from face0 through the air, in
     // [0, 2 pi): the wedge's own angle (wedge.hpp).
@@ -154,6 +163,21 @@ struct Edge
     // second face below it.
     int air_by_sign(const Vec3& v) const;
 };
+
+// The edge's whole line (Edge::beyond): g with what lies beyond each end
+// added, at most `cap` (m) of it, for the edge-source integral and the ends'
+// excesses.  An end's image is the kept ray's other half -- a corner's kept
+// floor pair, an eave's ray beside the wall it runs into -- so the end is no
+// end there.
+constexpr double unending_reach = 1e4;
+Edge continued(const Edge& g, double cap = unending_reach);
+
+// Whether a point t along the edge (from its start) lies past one of its true
+// ends, not on its line (Edge::beyond).
+inline bool past_true_end(const Edge& e, double t)
+{
+    return (t < 0.0 && e.beyond[0] == 0.0) || (t > e.length && e.beyond[1] == 0.0);
+}
 
 class Buildings
 {
@@ -364,6 +388,8 @@ public:
 
 private:
     bool strictly_inside(std::size_t building, double x, double y) const;
+    // Sets each edge's beyond.
+    void continue_edges();
 
     // A facade's base point, unit base direction and length, and the unit
     // normal to its outside.

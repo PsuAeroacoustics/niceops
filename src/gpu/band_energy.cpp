@@ -280,6 +280,8 @@ void BandEnergies::submit()
                     end.panel += static_cast<uint32_t>(panel_at);
                 if (face.cascade != NK_NO_CASCADE)
                     face.cascade += static_cast<uint32_t>(wedge_at);
+                if (face.ends != NK_NO_CASCADE)
+                    face.ends += static_cast<uint32_t>(wedge_at);
                 faces[face_at + f] = face;
             }
             // The sampled faces: their records, the probes' problems (set-local,
@@ -352,7 +354,7 @@ void BandEnergies::submit()
             gpu_at, 256);
     batch_.dispatch(face_amplitudes_,
             {Arg(face_items_), Arg(problems_), Arg(rays_), Arg(faces_), Arg(panels_), Arg(reflected_), Arg(amplitude_),
-                    Arg(probe_out_)},
+                    Arg(probe_out_), Arg(wedges_)},
             item_at, 32);
     const uint32_t sampled = static_cast<uint32_t>(sample_at);
     batch_.dispatch(face_ratios_,

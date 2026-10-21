@@ -11,6 +11,10 @@
 
 // One wedge on a ray (WedgeTerm): its angles' parts (WedgeAngles), n,
 // sin(beta), its distance parameter, and (grazing ? 1/2 : 1) / sqrt(sin beta).
+// A wedge term (WedgeTerm): its angles' part, n, sin(beta), distance and
+// scale, and its edge's ends (EdgeEnds): each end's path excess, m, -1 for
+// none, where the stationary point lies (-1, 0, +1), and past an end the
+// factor's scale.
 struct GpuWedge
 {
     float cot[4];
@@ -19,6 +23,10 @@ struct GpuWedge
     float sin_beta;
     float distance;
     float scale;
+    float end_lo;
+    float end_hi;
+    float end_past;
+    float end_scale;
 };
 
 // One ray, in length order: its kind (0 specular, 1 to 3 its wedge terms,
@@ -61,7 +69,10 @@ struct GpuAperture
 // wavenumbers, and `cascade` is the first of its two wedge terms, which
 // ray_amplitudes takes at every problem (the first's scale carrying the
 // cascade's spreading over the face's); taken at every wavenumber, `cascade`
-// is no_cascade.
+// is no_cascade.  `ends` is the first of the same two terms where either
+// edge has an end (EdgeEnds), no_cascade where neither does: the integral
+// takes each one's coefficient with its ends over without
+// (shared_face_amplitude).
 struct GpuFace
 {
     GpuAperture end[2];
@@ -69,6 +80,7 @@ struct GpuFace
     float offset_hi;
     float offset_lo;
     uint32_t cascade;
+    uint32_t ends;
 };
 
 #define NK_NO_CASCADE 0xffffffffu

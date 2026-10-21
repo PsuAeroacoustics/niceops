@@ -103,6 +103,163 @@ Vec3 normal_part(const Edge& e, const Vec3& v)
     return v - v.dot(e.direction) * e.direction;
 }
 
+// 1 at or below lo, 0 at or above hi, a cosine-squared taper in log x between.
+double trust_taper(double x, double lo, double hi)
+{
+    if (!(x > lo))
+        return 1.0;
+    if (!(x < hi))
+        return 0.0;
+    const double c = std::cos(0.5 * pi * std::log(x / lo) / std::log(hi / lo));
+    return c * c;
+}
+
+// A once-diffracted ray's Keller point, past an end of its edge, is kept
+// while the path through the end, q, exceeds the Keller path by `reach` at
+// most and the point is above the floor (below it the point is its mirror
+// ray's, whose edge goes on there: continued).
+bool end_within_reach(const Vec3& pa, const Vec3& pb, const Vec3& q, const Vec3& keller, double reach)
+{
+    return keller.z >= 0.0 && (pa - q).norm() + (pb - q).norm() - (pa - keller).norm() - (pb - keller).norm() <= reach;
+}
+
+// The edge's ends (EdgeEnds) as the ray from pa to pb diffracted at its
+// Keller point t sees them, the edge taken through the floor.  Past an end the
+// ray is the end's -- its length, path and launch through the end, as the
+// edge-source integral takes it -- so its factor is put relative to that
+// (EdgeEnds::scale).
+EdgeEnds edge_ends(const Edge& edge, const Vec3& pa, const Vec3& pb, double t)
+{
+    const Edge g = continued(edge);
+    const double tg = t + (edge.start - g.start).dot(g.direction);
+    const Vec3 lo = g.start, hi = g.start + g.length * g.direction;
+    const Vec3 keller = edge.start + t * edge.direction;
+    const double length = (pa - keller).norm() + (pb - keller).norm();
+    EdgeEnds e;
+    if (std::isfinite(g.beyond[0]))
+        e.lo = (pa - lo).norm() + (pb - lo).norm() - length;
+    if (std::isfinite(g.beyond[1]))
+        e.hi = (pa - hi).norm() + (pb - hi).norm() - length;
+    e.past = tg < 0.0 ? -1 : tg > g.length ? 1 : 0;
+    if (e.past != 0)
+    {
+        // The ray takes the Keller point's coefficient (its sin(beta) and
+        // distance), and its spreading over the end's here, so that past the
+        // end it is the Keller ray times the factor, phase and all, and
+        // reciprocal.
+        const Vec3 end = edge.start + std::clamp(t, 0.0, edge.length) * edge.direction;
+        const auto spreading = [&](const Vec3& x) {
+            const double s_in = (pa - x).norm(), s_out = (pb - x).norm();
+            return 1.0 / std::sqrt(s_in * s_out * (s_in + s_out));
+        };
+        e.scale = spreading(keller) / spreading(end);
+    }
+    return e;
+}
+
+// Past an end the end's wave reaches wherever the end itself sees, which the
+// wedge's own faces, infinite, do not decide: the end is a vertex, and a
+// microphone beyond a face's plane may see it over the face's far edge.  Its
+// coefficient there is the face's, the angle taken onto the nearer face.
+double onto_air(double theta, double n)
+{
+    if (theta <= n * pi)
+        return theta;
+    return theta - n * pi < 2.0 * pi - theta ? n * pi : 0.0;
+}
+
+// How deep an angle lies in the wedge's solid side: 0 in its air.
+double into_solid(double theta, double n)
+{
+    return theta <= n * pi ? 0.0 : std::min(theta - n * pi, 2.0 * pi - theta);
+}
+
+// A ray past an end with its source or microphone in the wedge's solid side
+// (onto_air): the end wave there is the end's, which has to meet two limits.
+// At the plane of the face it is the air side's, and at the end -- where the
+// ray inside the edge, its other side, is no ray in the solid -- nothing.  The
+// weight 1 / sqrt(1 + L 2 sin^2(depth / 2) / Delta) meets both, the depth's
+// transition distance against the end's excess (as the coefficient's terms
+// take their ends, ended_wedge_coefficient), and folds into the ends' scale.
+void weigh_vertex(EdgeEnds& e, double theta0, double theta, double n, double s_in, double s_out)
+{
+    const double depth = std::max(into_solid(theta0, n), into_solid(theta, n));
+    if (e.past == 0 || !(depth > 0.0))
+        return;
+    const double near = std::max(e.past < 0 ? e.lo : e.hi, 1e-300);
+    const double sine = std::sin(0.5 * depth);
+    e.scale /= std::sqrt(1.0 + s_in * s_out / (s_in + s_out) * 2.0 * sine * sine / near);
+}
+
+// The least path from p to q by a point of the edge's line: unfolded about it.
+double via_line(const Edge& e, const Vec3& p, const Vec3& q)
+{
+    const Vec3 dp = p - e.start, dq = q - e.start;
+    const double tp = dp.dot(e.direction), tq = dq.dot(e.direction);
+    return std::hypot((dp - tp * e.direction).norm() + (dq - tq * e.direction).norm(), tq - tp);
+}
+
+// A twice-diffracted ray's edges' ends (EdgeEnds), from pa by g1 and g2 to pb,
+// `length` long: each end's excess with the other edge's point free on its
+// line, so that the coupling of the two (A - C^2 / B, end_ratios) is in it,
+// and the first edge's at the second edge's shadow boundary is the once-
+// diffracted ray's there, whose jump the pair carries.
+void twice_ends(const Edge& g1, const Edge& g2, const Vec3& pa, const Vec3& pb, double length, EdgeEnds& e1,
+        EdgeEnds& e2)
+{
+    const Edge f1 = continued(g1), f2 = continued(g2);
+    const Vec3 lo1 = f1.start, hi1 = f1.start + f1.length * f1.direction;
+    const Vec3 lo2 = f2.start, hi2 = f2.start + f2.length * f2.direction;
+    const double none = std::numeric_limits<double>::infinity();
+    e1.lo = std::isfinite(f1.beyond[0]) ? (pa - lo1).norm() + via_line(g2, lo1, pb) - length : none;
+    e1.hi = std::isfinite(f1.beyond[1]) ? (pa - hi1).norm() + via_line(g2, hi1, pb) - length : none;
+    e2.lo = std::isfinite(f2.beyond[0]) ? via_line(g1, pa, lo2) + (lo2 - pb).norm() - length : none;
+    e2.hi = std::isfinite(f2.beyond[1]) ? via_line(g1, pa, hi2) + (hi2 - pb).norm() - length : none;
+}
+
+// A chain-diffracted ray's edges' ends (EdgeEnds), from pa by the edges g at
+// points q to pb, `length` long: each end's excess with every other edge's
+// point free on its line, as twice_ends takes a pair's, so that a chain's
+// ends meet its own pair's where an edge of it leaves the path.
+void chain_ends(const std::vector<const Edge*>& g, const Vec3& pa, const Vec3& pb, const std::vector<Vec3>& q,
+        double length, PointRay& ray)
+{
+    const std::size_t n = g.size();
+    // The least path from a over the lines g[from, to) to b, from the ray's
+    // own points; by the points themselves where that does not settle.
+    const auto least = [&](std::size_t from, std::size_t to, const Vec3& a, const Vec3& b) {
+        if (from == to)
+            return (b - a).norm();
+        if (to == from + 1)
+            return via_line(*g[from], a, b);
+        const std::vector<const Edge*> lines(g.begin() + static_cast<std::ptrdiff_t>(from),
+                g.begin() + static_cast<std::ptrdiff_t>(to));
+        std::vector<double> t(lines.size());
+        for (std::size_t i = 0; i < lines.size(); i++)
+            t[i] = (q[from + i] - lines[i]->start).dot(lines[i]->direction);
+        chain_points(lines, a, b, t, false);
+        double l = 0.0;
+        Vec3 p = a;
+        for (std::size_t i = 0; i < lines.size(); i++)
+        {
+            const Vec3 r = lines[i]->start + t[i] * lines[i]->direction;
+            l += (r - p).norm();
+            p = r;
+        }
+        return l + (b - p).norm();
+    };
+    const double none = std::numeric_limits<double>::infinity();
+    for (std::size_t i = 0; i < n; i++)
+    {
+        const Edge f = continued(*g[i]);
+        EdgeEnds e;
+        const Vec3 lo = f.start, hi = f.start + f.length * f.direction;
+        e.lo = std::isfinite(f.beyond[0]) ? least(0, i, pa, lo) + least(i + 1, n, lo, pb) - length : none;
+        e.hi = std::isfinite(f.beyond[1]) ? least(0, i, pa, hi) + least(i + 1, n, hi, pb) - length : none;
+        (i < 3 ? ray.wedge[i] : ray.more_wedges[i - 3]).ends = e;
+    }
+}
+
 // Whether an angle lies in the wedge's air, strictly or with its faces.
 bool in_air(double theta, double n, bool faces)
 {
@@ -1211,10 +1368,11 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                         double t;
                         if (!keller_point(va.along, va.off, vb.along, vb.off, t))
                             continue;
-                        // With the edge-source integral a Keller point past an
-                        // end still has the end's wave: the end stands in for
-                        // it in every check, within the reach.
-                        const bool past = options.edge_source && !fading && (t < 0.0 || t > edge.length);
+                        // A Keller point past an end still has the end's wave
+                        // (ended_wedge_coefficient, or the edge-source integral): the
+                        // end stands in for it in every check, within the reach.
+                        const bool past = (options.edge_source || options.edge_ends) && !fading
+                                && past_true_end(edge, t);
                         const double tq = past ? std::clamp(t, 0.0, edge.length) : t;
                         // Fading keeps points a hair hidden, which the
                         // visibility proof would drop.
@@ -1226,20 +1384,20 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                         const Vec3 q = edge.start + tq * edge.direction;
                         if (q.z < 0.0 || buildings.buried(q))
                             continue;
-                        if (past)
-                        {
-                            // Below the floor the point is its mirror ray's,
-                            // whose edge goes on there (through_floor).
-                            const Vec3 keller = edge.start + t * edge.direction;
-                            if (keller.z < 0.0
-                                    || (pa - q).norm() + (pb - q).norm() - (pa - keller).norm() - (pb - keller).norm()
-                                            > options.edge_source_reach)
-                                continue;
-                        }
+                        const Vec3 keller = edge.start + t * edge.direction;
+                        if (past
+                                && !end_within_reach(pa, pb, q, keller,
+                                        options.edge_source ? options.edge_source_reach : options.end_reach))
+                            continue;
                         const Vec3 in = pa - q, out = pb - q;
                         const int on_a = end_face(source_end, edge, a.facades, fa);
                         const int on_b = end_face(microphone_end, edge, b.facades, fb);
-                        if (!end_air(edge, normal_part(edge, in), on_a) || !end_air(edge, normal_part(edge, out), on_b)
+                        // Past an end, UTD's end wave goes wherever the end sees
+                        // (onto_air); the edge-source integral keeps the wedge's.
+                        const bool vertex = past && !options.edge_source;
+                        if ((!vertex
+                                    && (!end_air(edge, normal_part(edge, in), on_a)
+                                            || !end_air(edge, normal_part(edge, out), on_b)))
                                 || doubles_back(edge, on_a, pb) || doubles_back(edge, on_b, pa))
                             continue;
                         std::vector<Vec3> to_source, to_microphone;
@@ -1280,10 +1438,14 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                 || !folded_path_open(buildings, q, microphone, b.facades, fb == 1, &to_microphone))
                             continue;
                         PointRay ray;
-                        const double theta0 = end_angle(edge, in, on_a, ray.source_on_face);
-                        const double theta = end_angle(edge, out, on_b, ray.microphone_on_face);
+                        const double raw0 = end_angle(edge, in, on_a, ray.source_on_face);
+                        const double raw = end_angle(edge, out, on_b, ray.microphone_on_face);
+                        const double theta0 = onto_air(raw0, edge.n), theta = onto_air(raw, edge.n);
                         const double s_in = in.norm(), s_out = out.norm();
-                        const double sin_beta = normal_part(edge, in).norm() / s_in;
+                        // The coefficient's sin(beta) and distance are the Keller point's,
+                        // the same either way round (edge_ends has why).
+                        const double s_in_k = (pa - keller).norm(), s_out_k = (pb - keller).norm();
+                        const double sin_beta = normal_part(edge, in).norm() / s_in_k;
                         ray.length = s_in + s_out;
                         ray.spreading = 1.0 / std::sqrt(s_in * s_out * (s_in + s_out));
                         ray.facades = a.facades;
@@ -1297,7 +1459,12 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                             add_floor_bounce(ray, q, pb, true);
                         ray.wedges = 1;
                         ray.wedge[0] = {wedge_angles(edge.n, theta, theta0), sin_beta,
-                                s_in * s_out * sin_beta / (s_in + s_out), false};
+                                s_in_k * s_out_k * sin_beta / (s_in_k + s_out_k), false};
+                        if (options.edge_ends && !fading)
+                        {
+                            ray.wedge[0].ends = edge_ends(edge, pa, pb, t);
+                            weigh_vertex(ray.wedge[0].ends, raw0, raw, edge.n, s_in, s_out);
+                        }
                         ray.edge_source.edges[0] = e;
                         ray.edge_source.source = pa;
                         ray.edge_source.microphone = pb;
@@ -1387,11 +1554,16 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                             double t;
                             if (!keller_point(va.along, va.off, vb.along, vb.off, t))
                                 continue;
-                            if (!va.visible || !vb.visible || t < std::max(va.from, vb.from)
-                                    || t > std::min(va.to, vb.to))
+                            // Past an end, the end stands in for the Keller
+                            // point in every check (the loop above has why).
+                            const bool past = options.edge_ends && past_true_end(edge, t);
+                            const double tq = past ? std::clamp(t, 0.0, edge.length) : t;
+                            if (!va.visible || !vb.visible || tq < std::max(va.from, vb.from)
+                                    || tq > std::min(va.to, vb.to))
                                 continue;
-                            const Vec3 q = edge.start + t * edge.direction;
-                            if (q.z < 0.0 || buildings.buried(q))
+                            const Vec3 q = edge.start + tq * edge.direction, keller = edge.start + t * edge.direction;
+                            if (q.z < 0.0 || buildings.buried(q)
+                                    || (past && !end_within_reach(pa, pb, q, keller, options.end_reach)))
                                 continue;
                             if ((sa >= 0 && !(q.z > buildings.footprints()[static_cast<std::size_t>(sa)].top + 1e-9))
                                     || (sb >= 0
@@ -1400,9 +1572,12 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                             const Vec3 in = pa - q, out = pb - q;
                             const int on_a = sa < 0 ? end_face(source_end, edge, a.facades, sa == floor_side) : -1;
                             const int on_b = sb < 0 ? end_face(microphone_end, edge, b.facades, sb == floor_side) : -1;
-                            if (!end_air(edge, normal_part(edge, in), on_a)
-                                    || !end_air(edge, normal_part(edge, out), on_b) || doubles_back(edge, on_a, pb)
-                                    || doubles_back(edge, on_b, pa))
+                            // Past an end, the end wave goes wherever the end sees
+                            // (onto_air).
+                            if ((!past
+                                        && (!end_air(edge, normal_part(edge, in), on_a)
+                                                || !end_air(edge, normal_part(edge, out), on_b)))
+                                    || doubles_back(edge, on_a, pb) || doubles_back(edge, on_b, pa))
                                 continue;
                             std::vector<Vec3> to_source, to_microphone;
                             const bool source_open = sa >= 0
@@ -1419,10 +1594,14 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                             if (!microphone_open)
                                 continue;
                             PointRay ray;
-                            const double theta0 = end_angle(edge, in, on_a, ray.source_on_face);
-                            const double theta = end_angle(edge, out, on_b, ray.microphone_on_face);
+                            const double raw0 = end_angle(edge, in, on_a, ray.source_on_face);
+                            const double raw = end_angle(edge, out, on_b, ray.microphone_on_face);
+                            const double theta0 = onto_air(raw0, edge.n), theta = onto_air(raw, edge.n);
                             const double s_in = in.norm(), s_out = out.norm();
-                            const double sin_beta = normal_part(edge, in).norm() / s_in;
+                            // The coefficient's sin(beta) and distance are the Keller point's,
+                            // the same either way round (edge_ends has why).
+                            const double s_in_k = (pa - keller).norm(), s_out_k = (pb - keller).norm();
+                            const double sin_beta = normal_part(edge, in).norm() / s_in_k;
                             ray.length = s_in + s_out;
                             ray.spreading = 1.0 / std::sqrt(s_in * s_out * (s_in + s_out));
                             ray.facades = a.facades;
@@ -1439,7 +1618,12 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                         = sa == floor_side ? 0.0 : buildings.footprints()[static_cast<std::size_t>(sa)].top;
                             ray.wedges = 1;
                             ray.wedge[0] = {wedge_angles(edge.n, theta, theta0), sin_beta,
-                                    s_in * s_out * sin_beta / (s_in + s_out), false};
+                                    s_in_k * s_out_k * sin_beta / (s_in_k + s_out_k), false};
+                            if (options.edge_ends)
+                            {
+                                ray.wedge[0].ends = edge_ends(edge, pa, pb, t);
+                                weigh_vertex(ray.wedge[0].ends, raw0, raw, edge.n, s_in, s_out);
+                            }
                             ray.edge_source.edges[0] = e;
                             ray.edge_source.source = pa;
                             ray.edge_source.microphone = pb;
@@ -1521,16 +1705,27 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                         const PathEnd::View vb = slope_at_source ? mic.view(0, next, other_floor)
                                                                  : view_from(edge, pb, true, 0.0, edge.length);
                         double t;
-                        if (!keller_point(va.along, va.off, vb.along, vb.off, t) || !va.visible || !vb.visible
-                                || t < std::max(va.from, vb.from) || t > std::min(va.to, vb.to))
+                        if (!keller_point(va.along, va.off, vb.along, vb.off, t))
                             continue;
-                        const Vec3 q = edge.start + t * edge.direction;
-                        if (q.z < 0.0 || buildings.buried(q))
+                        // Past an end, the end stands in for the Keller point
+                        // in every check (the first loop has why).
+                        const bool past = options.edge_ends && past_true_end(edge, t);
+                        const double tq = past ? std::clamp(t, 0.0, edge.length) : t;
+                        if (!va.visible || !vb.visible || tq < std::max(va.from, vb.from)
+                                || tq > std::min(va.to, vb.to))
+                            continue;
+                        const Vec3 q = edge.start + tq * edge.direction, keller = edge.start + t * edge.direction;
+                        if (q.z < 0.0 || buildings.buried(q)
+                                || (past && !end_within_reach(pa, pb, q, keller, options.end_reach)))
                             continue;
                         const Vec3 in = pa - q, out = pb - q;
                         const int on_a = slope_at_source ? -1 : end_face(source_end, edge, {}, other_floor);
                         const int on_b = slope_at_source ? end_face(microphone_end, edge, {}, other_floor) : -1;
-                        if (!end_air(edge, normal_part(edge, in), on_a) || !end_air(edge, normal_part(edge, out), on_b)
+                        // Past an end, the end wave goes wherever the end sees
+                        // (onto_air).
+                        if ((!past
+                                    && (!end_air(edge, normal_part(edge, in), on_a)
+                                            || !end_air(edge, normal_part(edge, out), on_b)))
                                 || doubles_back(edge, on_a, pb) || doubles_back(edge, on_b, pa))
                             continue;
                         std::vector<Vec3>& slope_points = slope_at_source ? to_source : to_microphone;
@@ -1539,10 +1734,14 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                 || !folded_path_open(buildings, q, other_end, {}, other_floor == 1, &plain_points))
                             continue;
                         PointRay ray;
-                        const double theta0 = end_angle(edge, in, on_a, ray.source_on_face);
-                        const double theta = end_angle(edge, out, on_b, ray.microphone_on_face);
+                        const double raw0 = end_angle(edge, in, on_a, ray.source_on_face);
+                        const double raw = end_angle(edge, out, on_b, ray.microphone_on_face);
+                        const double theta0 = onto_air(raw0, edge.n), theta = onto_air(raw, edge.n);
                         const double s_in = in.norm(), s_out = out.norm();
-                        const double sin_beta = normal_part(edge, in).norm() / s_in;
+                        // The coefficient's sin(beta) and distance are the Keller point's,
+                        // the same either way round (edge_ends has why).
+                        const double s_in_k = (pa - keller).norm(), s_out_k = (pb - keller).norm();
+                        const double sin_beta = normal_part(edge, in).norm() / s_in_k;
                         ray.length = s_in + s_out;
                         ray.spreading = 1.0 / std::sqrt(s_in * s_out * (s_in + s_out));
                         // The floor's bounces, along the ray from the source:
@@ -1580,7 +1779,12 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                         ray.roof_facades = {buildings.roof_facade(sl.building)};
                         ray.wedges = 1;
                         ray.wedge[0] = {wedge_angles(edge.n, theta, theta0), sin_beta,
-                                s_in * s_out * sin_beta / (s_in + s_out), false};
+                                s_in_k * s_out_k * sin_beta / (s_in_k + s_out_k), false};
+                        if (options.edge_ends)
+                        {
+                            ray.wedge[0].ends = edge_ends(edge, pa, pb, t);
+                            weigh_vertex(ray.wedge[0].ends, raw0, raw, edge.n, s_in, s_out);
+                        }
                         ray.edge_source.edges[0] = e;
                         ray.edge_source.source = pa;
                         ray.edge_source.microphone = pb;
@@ -1878,6 +2082,8 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                 if (!folded_path_open(buildings, q2_real, microphone, b.facades, fb == 1, &to_microphone))
                                     continue;
                                 PointRay ray = twice_diffracted_ray(g1, h2, pa, pb, q1, q2, ends);
+                                if (options.edge_ends)
+                                    twice_ends(g1, h2, pa, pb, ray.length, ray.wedge[0].ends, ray.wedge[1].ends);
                                 ray.facades = a.facades;
                                 if (via != nullptr && !via->floor)
                                 {
@@ -2006,6 +2212,8 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                         || !folded_path_open(buildings, q[n - 1], microphone, {}, fb == 1, &to_chain_microphone))
                     continue;
                 PointRay ray = chain_diffracted_ray(g, pa, pb, q, ends);
+                if (options.edge_ends)
+                    chain_ends(g, pa, pb, q, ray.length, ray);
                 if (fa)
                 {
                     ray.source_plane = 0.0;
@@ -2220,6 +2428,8 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                                 buildings, q3, microphone, b.facades, fb == 1, &to_third_microphone))
                                     continue;
                                 PointRay ray = thrice_diffracted_ray(g1, g2, g3, pa, pb, q1, q2, q3, ends);
+                                if (options.edge_ends)
+                                    chain_ends({&g1, &g2, &g3}, pa, pb, {q1, q2, q3}, ray.length, ray);
                                 ray.facades = a.facades;
                                 ray.facades.insert(ray.facades.end(), b.facades.begin(), b.facades.end());
                                 if (fa)
@@ -2571,7 +2781,7 @@ std::complex<double> point_ray_amplitude(const PointRay& ray, double reflected, 
         // The wedge's coefficient in the plane normal to the edge, at the
         // wavenumber and distance projected into it: for a spherical wave the
         // distance is L / sin(beta), L = s s' sin^2(beta) / (s + s').
-        amplitude *= hard_wedge_coefficient(t.angles, k * t.sin_beta, t.distance) / std::sqrt(t.sin_beta)
+        amplitude *= ended_wedge_coefficient(t.angles, k * t.sin_beta, t.distance, t.ends, k) / std::sqrt(t.sin_beta)
                 * (t.grazing ? 0.5 : 1.0);
     }
     for (const MadeEdge& s : ray.made_edges)
@@ -2587,7 +2797,19 @@ std::complex<double> shared_face_amplitude(const PointRay& ray, double reflected
     // l = l_t / sin(beta), so the factor is sin(beta) / sqrt(l_t).
     const SharedFaceTerm& t = ray.shared_face;
     const double kt = k * t.sin_beta;
-    return std::complex<double>(reflected) * t.sin_beta * field * std::polar(1.0, -kt * ray.length * t.sin_beta);
+    // The edges' ends, as the cascade's two wedge terms take them: each one's
+    // coefficient with its ends over without.
+    std::complex<double> ends(1.0, 0.0);
+    for (int w = 0; w < 2; w++)
+    {
+        const WedgeTerm& c = ray.wedge[w];
+        if (!std::isfinite(c.ends.lo) && !std::isfinite(c.ends.hi))
+            continue;
+        const std::complex<double> bare = hard_wedge_coefficient(c.angles, k * c.sin_beta, c.distance);
+        if (std::abs(bare) > 0.0)
+            ends *= ended_wedge_coefficient(c.angles, k * c.sin_beta, c.distance, c.ends, k) / bare;
+    }
+    return std::complex<double>(reflected) * t.sin_beta * field * ends * std::polar(1.0, -kt * ray.length * t.sin_beta);
 }
 
 std::array<SubBand, 3> sub_bands(double band, double sound_speed)
@@ -2643,17 +2865,6 @@ std::complex<double> made_edge_factor(const MadeEdge& screen, double k)
 
 namespace {
 
-// 1 at or below lo, 0 at or above hi, a cosine-squared taper in log x between.
-double trust_taper(double x, double lo, double hi)
-{
-    if (!(x > lo))
-        return 1.0;
-    if (!(x < hi))
-        return 0.0;
-    const double c = std::cos(0.5 * pi * std::log(x / lo) / std::log(hi / lo));
-    return c * c;
-}
-
 // Where the cascade is trusted: in each wedge's transition parameter
 // k L a above 1 (the cascade is within a few hundredths of a dB of the
 // infinite edges' integral from 0.3 up, THEORY), and every end of either
@@ -2664,27 +2875,6 @@ constexpr double transition_lo = 0.3, transition_hi = 1.0;
 constexpr double excess_lo = 100.0, excess_hi = 1000.0;
 
 } // namespace
-
-// An edge as the edge-source integral takes it.  A vertical edge standing on
-// the floor goes on below it as its mirror image: the floor's images split
-// that one edge between a ray and its mirror -- a ray from the source's image
-// to the microphone's is the ray from the source to the microphone by the
-// edge's image -- and of each such pair the tracer keeps the one whose point
-// is above the floor.  So the kept ray takes both halves, and the floor is no
-// end.
-Edge through_floor(const Edge& g)
-{
-    if (std::abs(g.direction.z) < 1.0 - 1e-12)
-        return g;
-    Edge h = g;
-    const double end = g.start.z + g.length * g.direction.z;
-    if (std::abs(g.start.z) < 1e-9)
-        h.start = g.start - g.length * g.direction;
-    else if (!(std::abs(end) < 1e-9))
-        return g;
-    h.length = 2.0 * g.length;
-    return h;
-}
 
 namespace {
 
@@ -2760,7 +2950,7 @@ std::vector<std::complex<double>> edge_source_factors(const Buildings& buildings
     const EdgeSourceTerm& t = ray.edge_source;
     if (ray.wedges == 1)
     {
-        const Edge g = through_floor(buildings.edges()[t.edges[0]]);
+        const Edge g = continued(buildings.edges()[t.edges[0]]);
         const EdgeFrameEnds ends = edge_frame_ends(g, t.source, t.microphone);
         out = edge_source_spectrum(g.n, ends, 0.0, g.length, wavenumbers);
         // A ray whose Keller point lies past an end (the tracer keeps it
@@ -2789,9 +2979,9 @@ std::vector<std::complex<double>> edge_source_factors(const Buildings& buildings
     // unfolded about it: the second edge and the microphone's image mirrored.
     const bool mirrored = ray.between != PointRay::no_facade;
     const Facade* between = mirrored ? &buildings.facades()[ray.between] : nullptr;
-    const Edge g1 = through_floor(buildings.edges()[t.edges[0]]);
-    const Edge g2 = through_floor(mirrored ? mirrored_edge(*between, buildings.edges()[t.edges[1]])
-                                           : buildings.edges()[t.edges[1]]);
+    const Edge g1 = continued(buildings.edges()[t.edges[0]]);
+    const Edge g2 = continued(mirrored ? mirrored_edge(*between, buildings.edges()[t.edges[1]])
+                                       : buildings.edges()[t.edges[1]]);
     EdgeSourceTerm t_unfolded = t;
     if (mirrored)
         t_unfolded.microphone = mirror_in(*between, t.microphone);
@@ -2874,10 +3064,17 @@ std::vector<std::complex<double>> edge_source_factors(const Buildings& buildings
         exact_j.insert(exact_j.end(), ratio_j.begin(), ratio_j.end());
         ratio_j.clear();
     }
+    // The ratios are the ends: they take the cascade without its own.
+    PointRay bare;
+    if (!ratio_j.empty())
+    {
+        bare = ray;
+        bare.wedge[0].ends = bare.wedge[1].ends = EdgeEnds {};
+    }
     for (std::size_t i = 0; i < ratio_j.size(); i++)
     {
         const std::size_t j = ratio_j[i];
-        out[j] = (weight[j] * r1[i] * r2[i] + (1.0 - weight[j])) * point_ray_amplitude(ray, 1.0, wavenumbers[j]);
+        out[j] = weight[j] * r1[i] * r2[i] * point_ray_amplitude(bare, 1.0, wavenumbers[j]) + (1.0 - weight[j]) * out[j];
     }
     if (!exact_k.empty())
     {

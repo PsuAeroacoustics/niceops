@@ -34,6 +34,7 @@
 // 40 (tests/test_wedge.cpp).
 
 #include <complex>
+#include <limits>
 
 namespace niceops {
 
@@ -81,6 +82,46 @@ private:
 
 // The transition function F(X) for X >= 0.
 std::complex<double> utd_transition(double x);
+
+// The share of a stationary-phase integral's whole beyond a point: with the
+// phase k Delta there, Delta the path's excess over the stationary path,
+//
+//   tail(x) = int over t > sqrt(x) of exp(i t^2) dt / (sqrt(pi) e^(i pi/4))
+//           = F(x) e^(i (x + pi/4)) / (2 sqrt(pi x)),   x = k Delta,
+//
+// 1/2 at x = 0, falling as 1/sqrt(x) with the end's own phase.  An edge's end
+// takes tail of the diffracted wave from beyond it (ended_wedge_coefficient).
+std::complex<double> fresnel_tail(double x);
+
+// An edge's ends as a diffracted ray sees them: each end's path excess over
+// the ray's own (m), infinite for none -- an edge goes on in its image where
+// it ends square on the floor or a wall (continued, buildings.hpp) -- and
+// where the ray's stationary point lies:
+// between them (0), before the first (-1) or past the second (+1).
+struct EdgeEnds
+{
+    double lo = std::numeric_limits<double>::infinity();
+    double hi = std::numeric_limits<double>::infinity();
+    int past = 0;
+    // Past an end, the ray is the end's (its length through it) with the
+    // Keller point's coefficient; this is the Keller ray's spreading over
+    // the end ray's, for the factor to be taken relative to it.
+    double scale = 1.0;
+};
+
+// The wedge's coefficient D (wedge.hpp) at the plane's wavenumber k_plane
+// (k sin(beta)) and distance r, its edge cut at its ends (THEORY 6.5): each of
+// D's four terms, its transition parameter X, loses each end's share,
+// fresnel_tail(k Delta) weighted by 1 / sqrt(1 + k Delta / X).  Far from the
+// term's boundary that is the stationary-phase integral along the edge cut at
+// the end; at the boundary the term is the geometrical-optics wave's jump,
+// which the ends do not touch, and the weight is 0.  With no ends, D itself;
+// with the stationary point on an end, half of each term away from its
+// boundary; past an end, the end's wave alone, falling as 1/sqrt(k Delta) and
+// faded out between end_fade_lo and end_fade_hi radians.
+std::complex<double> ended_wedge_coefficient(const WedgeAngles& angles, double k_plane, double r, const EdgeEnds& ends,
+        double k);
+constexpr double end_fade_lo = 15.0, end_fade_hi = 30.0;
 
 // The total field, geometrical optics and diffraction, of a unit plane wave
 // at (r, theta), the edge at the origin; k r is the only scale.

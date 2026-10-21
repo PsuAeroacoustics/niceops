@@ -454,7 +454,10 @@ int main(int argc, char** argv)
             if (relief_scattering != "lambert")
                 options.grating_reflections = grating_reflections;
         }
-        options.edge_source_reach = 100.0 / (2.0 * pi * *std::min_element(bands.begin(), bands.end()) / sound_speed);
+        const double lowest_k = 2.0 * pi * *std::min_element(bands.begin(), bands.end()) / sound_speed;
+        options.edge_source_reach = 100.0 / lowest_k;
+        // UTD's end waves fade out by end_fade_hi radians, at the lowest band last.
+        options.end_reach = end_fade_hi / lowest_k;
         // The GPU wherever there is one and the run is one it takes; asked
         // for (--gpu), it must be.  The flag's count takes --no-gpu too, so
         // asking is its value as well.

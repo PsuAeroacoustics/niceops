@@ -821,12 +821,12 @@ Measured and left alone:
     no term for. UE06's R1 went from +4.7 dB (UTD) to −0.1 against the FDTD, the scene from 2.77
     to 1.01 dB rms, and the edge source's pooled EDGE score from 1.63 to 1.35. A floor bounce
     between the edges keeps UTD there: a vertical edge on the floor already goes on below it in
-    the integral (`through_floor`).
+    the integral (`continued`).
   - **Image theory holds it** (`a wall the edges run into is a mirror, by UTD and by the edge
     source`): a low block's edges running into a wall that fills a half-space, against the block
-    doubled through it radiated by the source and its mirror. By UTD the sum of the rays is the
-    doubled block's to 0.02 dB; with the edge source, within 1.4 dB (the ends at the wall do not
-    quite cancel across the mirror); without the rays between the edges it misses by 6 dB.
+    doubled through it radiated by the source and its mirror. By UTD and by the edge source the
+    sum of the rays is the doubled block's to 0.02 dB, the edges going on in their images at the
+    wall (`continued`); without the rays between the edges it misses by 6 dB.
   - **The floor is every pair's last candidate** (`floor_mirrored_edge`, `PointRay::between_floor`,
     counted in `floor`), its bounce tested by `folded_path_open` below the floor with no facades,
     which holds the line to q2's floor image against the buildings and their mirrors. It took the
@@ -890,6 +890,53 @@ Measured and left alone:
     differently. No facade reflects on a chain, and `double_diffraction` off turns chains off.
   - Chains cost nothing measurable (FIDELITY, "Pitched roofs"); none arose on EDGE's LoD1 scenes or
     DigiCity, whose levels did not move.
+- **An edge's ends** (`PointPathOptions::edge_ends`, on; `EdgeEnds`, `ended_wedge_coefficient` and
+  `fresnel_tail` in `wedge.cpp`; `edge_ends`, `twice_ends`, `chain_ends` in `point_paths.cpp`;
+  THEORY 6.5). Each wedge term carries its edge's two path excesses and where its Keller point lies,
+  and the coefficient takes each end's Fresnel tail per term. What to keep:
+  - **The weight is per term, not one factor on D.** Multiplying D by the end factor broke every
+    ray's own boundary (0.29 dB steps at the GO boundaries); 1 / sqrt(1 + k Delta / X_i) leaves the
+    term that jumps there untouched.
+  - **`fresnel_tail` reads the transition function's table as F / sqrt(X)** (`over_root`), so
+    there is no 0/0 at the end; past X = 50 it takes `utd_transition`'s asymptotic form.
+  - **A ray past an end is the end's** (its path, length and launch through the end) **with the
+    Keller point's coefficient** (its sin(beta) and distance) and `EdgeEnds::scale`, the Keller
+    ray's spreading over the end's. Keller geometry throughout broke the length and launch
+    gradient tests; end geometry throughout broke reciprocity.
+  - **Past an end the admission is the end's view, not the wedge's air** (`vertex` in the once
+    builders): `end_air` is skipped, the angles go onto the nearer face (`onto_air`) and
+    `weigh_vertex` folds the solid-side depth into the scale. A fade on |F| or a blend of the
+    two coefficients each left a step either at the face's plane or at the end; this is continuous
+    at both (`an edge's end is no step in the field`).
+  - **`end_reach`** bounds the search past an end; the tools set it to `end_fade_hi` over the run's
+    lowest wavenumber, the fade's own end.
+  - **Twice and chain ends take the other edges' points free on their lines** (`via_line`, and
+    `chain_points` unconstrained for longer stretches), so that a pair's coupling (A - C^2/B) is
+    in them, as the edge source's end ratios have it, and a chain's ends are its pair's where an
+    edge leaves the path. With ends on the pair and none on the three, the handover where a third
+    edge cuts a pair's ray stepped 0.15 dB; with both, 0.063 (0.046 with no ends at all).
+  - **A shared face multiplies its integral by its cascade's ended over bare coefficients**
+    (`shared_face_amplitude`); the GPU's `face_amplitudes` does the same from `GpuFace::ends`.
+    Leaving it out on the GPU was a 1.3 dB disagreement with the CPU.
+  - **Under `--edge_source` the end ratios multiply the bare cascade** (`edge_source_factors`):
+    the ended cascade counted the ends twice (1.2 dB at 500 Hz on the S-bend).
+  - **Where an edge goes on** (`Edge::beyond`, `Buildings::continue_edges`, `continued`,
+    `past_true_end`). Collinear pieces of one wedge chain together, and an end on the floor (a
+    vertical edge) or square on walls that cover its wedge (a horizontal edge whose direction is
+    within 1e-9 of the facades' normal, and nine points round the wedge's air, a tenth of the edge
+    or 0.1 m out, each on a facade in the end's plane) mirrors the chain's whole length. Covering
+    is what matters: on EDGE's flush terraces (UE06, UE07) the taller house's side wall stands only
+    behind the low eave's facade, and taking it for a mirror put UTD's UE07 floor row 3.7 dB rms
+    off the FDTD and the edge source's 5.3, where a vertex there leaves 2.9 and 2.55. Both ends
+    mirrored is infinity, which the excesses
+    take as no end and `continued` caps at `unending_reach` (10 km) for the integral. A ray past an
+    end the line goes on beyond is not traced: it is the next piece's ray, or the image's, which is
+    the same ray. Split pieces had put false ends at every T-junction seam, and a low roof running
+    into a taller wall missed the image-theory sum by 1.3 dB (1.4 under `--edge_source`, which had
+    the same false end); both are now the doubled block's to 0.02 dB.
+  - **The plane-wave tables** (`building_paths.cpp`) take the same ends, the source's leg a plane
+    wave; their foot prefilter is bypassed when ends are on, since a past-end ray's Keller point is
+    off the edge by construction.
 
 ### In a run (`--buildings`, `src/urban_point`)
 

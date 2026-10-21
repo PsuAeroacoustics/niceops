@@ -689,11 +689,13 @@ TEST_CASE("a gable's eave against a taller flat roof", "[pitched_roofs]")
     REQUIRE(has_edge_through(city, Vec3(5.0, 8.0, 7.0)));
     // No ray diffracts in the inside corner, on the eave's line there (rays
     // reflect in the flat building's wall just above it); one diffracts over
-    // the flat building's roof edge, past the gable's slope.
+    // the flat building's roof edge, past the gable's slope.  The line's two
+    // ends are vertices -- the flat building's corners start there -- whose
+    // waves past those corners' ends the rays take.
     const PointSourceField along(city, Vec3(-2.0, 7.5, 5.6), Vec3(12.0, 7.5, 5.6));
     for (const PointRay& ray : along.rays())
         for (const Vec3& p : ray.path)
-            REQUIRE((std::abs(p.y - 8.0) > 1e-6 || std::abs(p.z - 5.0) > 1e-6));
+            REQUIRE((std::abs(p.y - 8.0) > 1e-6 || std::abs(p.z - 5.0) > 1e-6 || p.x < 1e-6 || p.x > 10.0 - 1e-6));
     const PointSourceField over(city, Vec3(-0.5, 6.0, 6.2), Vec3(6.0, 22.0, 1.5));
     bool crossed = false;
     for (const PointRay& ray : over.rays())

@@ -162,6 +162,13 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
             g.sin_beta = static_cast<float>(t.sin_beta);
             g.distance = static_cast<float>(t.distance);
             g.scale = static_cast<float>(factor * (t.grazing ? 0.5 : 1.0) / std::sqrt(t.sin_beta));
+            const auto end = [](double excess) {
+                return std::isfinite(excess) ? static_cast<float>(std::max(excess, 0.0)) : -1.0f;
+            };
+            g.end_lo = end(t.ends.lo);
+            g.end_hi = end(t.ends.hi);
+            g.end_past = static_cast<float>(t.ends.past);
+            g.end_scale = static_cast<float>(t.ends.scale);
             set.wedges.push_back(g);
         };
         if (ray.shared)
@@ -188,6 +195,7 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
             GpuFace f {};
             f.sin_beta = static_cast<float>(t.sin_beta);
             f.cascade = NK_NO_CASCADE;
+            f.ends = NK_NO_CASCADE;
             if (!in_plane.empty())
             {
                 const SharedFaceGeometry g = shared_face_geometry(t.face, t.sx, t.sz, t.rx, t.rz, in_plane);
@@ -198,11 +206,21 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
             }
             const uint32_t face = static_cast<uint32_t>(set.faces.size());
             const uint32_t self = static_cast<uint32_t>(set.rays.size());
-            if (sample)
+            const auto ended = [](const WedgeTerm& w) {
+                return std::isfinite(w.ends.lo) || std::isfinite(w.ends.hi);
+            };
+            if (sample || ended(ray.wedge[0]) || ended(ray.wedge[1]))
             {
-                f.cascade = static_cast<uint32_t>(set.wedges.size());
+                const uint32_t first = static_cast<uint32_t>(set.wedges.size());
                 put_wedge(ray.wedge[0], ray.cascade_spreading / ray.spreading);
                 put_wedge(ray.wedge[1], 1.0);
+                if (sample)
+                    f.cascade = first;
+                if (ended(ray.wedge[0]) || ended(ray.wedge[1]))
+                    f.ends = first;
+            }
+            if (sample)
+            {
                 GpuFaceSample record {};
                 record.problems = static_cast<uint32_t>(centres.size());
                 record.ray = self;

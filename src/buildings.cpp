@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 
 #include "util/constants.hpp"
 
@@ -48,6 +49,24 @@ double distance_to_side(double px, double py, double ax, double ay, double bx, d
 }
 
 } // namespace
+
+// An edge's line as the ends see it.  A corner standing on the floor goes on
+// below it as its mirror image: the floor's images split that one edge between
+// a ray and its mirror -- a ray from the source's image to the microphone's is
+// the ray from the source to the microphone by the edge's image -- and of each
+// such pair the tracer keeps the one whose point is above the floor.  So the
+// kept ray takes both halves, and the floor is no end; a wall that an edge
+// runs square into does the same (continue_edges).
+Edge continued(const Edge& g, double cap)
+{
+    Edge h = g;
+    const double lo = std::min(g.beyond[0], cap), hi = std::min(g.beyond[1], cap);
+    h.start = g.start - lo * g.direction;
+    h.length = g.length + lo + hi;
+    h.beyond[0] = g.beyond[0] - lo;
+    h.beyond[1] = g.beyond[1] - hi;
+    return h;
+}
 
 double Edge::angle(const Vec3& v) const
 {
@@ -848,6 +867,114 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
         edge_begin_[b] = std::min(edge_begin_[b], edge_begin_[b + 1]);
     for (std::size_t i = 0; i + 1 < edges_.size(); i++)
         assert(edges_[i].building <= edges_[i + 1].building);
+    continue_edges();
+}
+
+void Buildings::continue_edges()
+{
+    // Ends within this of each other, or of a plane, meet it (m): a
+    // junction's split puts a vertex within `contact` of the line.
+    const double near = 10.0 * contact;
+    const auto same = [](const Vec3& u, const Vec3& v) { return (u - v).norm() < 1e-6; };
+    const std::size_t none = static_cast<std::size_t>(-1);
+    // The piece that goes on from each edge's far end: an edge of the same
+    // wedge on the same line, starting there.
+    std::unordered_map<std::uint64_t, std::vector<std::size_t>> starts;
+    const auto cell = [&](const Vec3& p, int dx, int dy, int dz) {
+        const auto q = [&](double v, int d) { return static_cast<std::uint64_t>(std::llround(std::floor(v / near)) + d); };
+        return (q(p.x, dx) * 73856093u) ^ (q(p.y, dy) * 19349663u) ^ (q(p.z, dz) * 83492791u);
+    };
+    for (std::size_t i = 0; i < edges_.size(); i++)
+        starts[cell(edges_[i].start, 0, 0, 0)].push_back(i);
+    std::vector<std::size_t> next(edges_.size(), none), previous(edges_.size(), none);
+    for (std::size_t i = 0; i < edges_.size(); i++)
+    {
+        const Edge& e = edges_[i];
+        const Vec3 end = e.start + e.length * e.direction;
+        for (int dx = -1; dx <= 1 && next[i] == none; dx++)
+            for (int dy = -1; dy <= 1 && next[i] == none; dy++)
+                for (int dz = -1; dz <= 1 && next[i] == none; dz++)
+                {
+                    const auto found = starts.find(cell(end, dx, dy, dz));
+                    if (found == starts.end())
+                        continue;
+                    for (std::size_t j : found->second)
+                    {
+                        const Edge& f = edges_[j];
+                        if (j != i && previous[j] == none && (f.start - end).norm() < near
+                                && same(f.direction, e.direction) && same(f.face0, e.face0) && same(f.air, e.air)
+                                && std::abs(f.n - e.n) < 1e-6)
+                        {
+                            next[i] = j;
+                            previous[j] = i;
+                            break;
+                        }
+                    }
+                }
+    }
+    // Whether an edge's end at p, its line running on along `out`, meets a
+    // rigid plane square to it that its image is whole in: the floor, or walls
+    // in one plane that cover the wedge's air about p -- a taller neighbour
+    // whose wall the eave runs into, not one that stands only behind the
+    // eave's own facade, as in a row whose fronts are flush, where the end is
+    // a vertex.
+    std::vector<std::uint32_t> walls;
+    const auto mirrors = [&](const Edge& e, const Vec3& p, const Vec3& out) {
+        if (std::abs(std::abs(out.z) - 1.0) < 1e-12)
+            return out.z < 0.0 && std::abs(p.z) < 1e-9;
+        if (std::abs(out.z) > 1e-9)
+            return false;
+        // Whether q lies on a wall in p's plane, square to the line.
+        const auto on_wall = [&](const Vec3& q) {
+            facades_in_box(q.x - near, q.x + near, q.y - near, q.y + near, walls);
+            for (std::uint32_t w : walls)
+            {
+                const Facade& f = facades_[w];
+                const FacadeFrame& a = frames_[w];
+                const double along = (q.x - a.x0) * a.ax + (q.y - a.y0) * a.ay;
+                if (out.x * a.nx + out.y * a.ny < -(1.0 - 1e-9) && std::abs(facade_side(f, p)) < near
+                        && std::abs(facade_side(f, q)) < near && along > -near && along < a.length + near
+                        && q.z > facade_bottom(f, q) - near && q.z < facade_top(f, q) + near)
+                    return true;
+            }
+            return false;
+        };
+        // The wedge's air about p, face to face, a little way out.
+        const double r = 0.1 * std::min(1.0, e.length);
+        for (int j = 0; j <= 8; j++)
+        {
+            const double phi = e.n * pi * (0.02 + 0.96 * j / 8.0);
+            if (!on_wall(p + r * (std::cos(phi) * e.face0 + std::sin(phi) * e.air)))
+                return false;
+        }
+        return on_wall(p);
+    };
+    // Each run of pieces from its first: its length and its ends' planes.
+    for (std::size_t first = 0; first < edges_.size(); first++)
+    {
+        if (previous[first] != none)
+            continue;
+        std::vector<std::size_t> run {first};
+        while (next[run.back()] != none && run.size() <= edges_.size())
+            run.push_back(next[run.back()]);
+        const Edge& head = edges_[first];
+        const Edge& tail = edges_[run.back()];
+        double length = 0.0;
+        for (std::size_t i : run)
+            length += edges_[i].length;
+        const bool lo = mirrors(head, head.start, -1.0 * head.direction);
+        const bool hi = mirrors(tail, tail.start + tail.length * tail.direction, tail.direction);
+        const double inf = std::numeric_limits<double>::infinity();
+        double before = 0.0;
+        for (std::size_t i : run)
+        {
+            Edge& e = edges_[i];
+            const double after = length - before - e.length;
+            e.beyond[0] = lo && hi ? inf : before + (lo ? length : 0.0);
+            e.beyond[1] = lo && hi ? inf : after + (hi ? length : 0.0);
+            before += e.length;
+        }
+    }
 }
 
 bool Buildings::strictly_inside(std::size_t building, double x, double y) const

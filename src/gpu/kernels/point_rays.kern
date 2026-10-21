@@ -36,7 +36,9 @@ NK_KERNEL(ray_amplitudes)(NK_IN(BandProblem, problems, 0), NK_IN(uint, which, 1)
         for (uint w = 0u; w < terms; w++)
         {
             NK_GLOBAL_IN GpuWedge* t = wedges + term + w;
-            a = nk_mul(a, nk_scale(nk_wedge_coefficient(t->cot, t->c, t->n, k * t->sin_beta, t->distance), t->scale));
+            a = nk_mul(a, nk_scale(nk_ended_wedge_coefficient(t->cot, t->c, t->n, k * t->sin_beta, t->distance,
+                                           t->end_lo, t->end_hi, t->end_past, t->end_scale, k),
+                                  t->scale));
         }
         amplitude[2u * (p.first + i)] = a.re;
         amplitude[2u * (p.first + i) + 1u] = a.im;
@@ -63,11 +65,12 @@ NK_FN float nk_taper(float t, float extent)
 // The rays over a shared face (shared_face_field_at): each end's aperture
 // integral at k_t = k sin(beta), its Filon panels split among the group's
 // threads, then the launch factor and the end correction, the ends' weighted
-// mean, and the phase the aperture's lengths leave out.  One (problem, ray)
+// mean, the edges' own ends (GpuFace::ends), and the phase the aperture's
+// lengths leave out.  One (problem, ray)
 // per group of 32 threads.
 NK_KERNEL(face_amplitudes)(NK_IN(GpuFaceItem, items, 0), NK_IN(BandProblem, problems, 1), NK_IN(GpuRay, rays, 2),
         NK_IN(GpuFace, faces, 3), NK_IN(GpuPanel, panels, 4), NK_IN(float, reflected, 5), NK_OUT(float, amplitude, 6),
-        NK_OUT(float, probe_out, 7) NK_GROUP_ARGS)
+        NK_OUT(float, probe_out, 7), NK_IN(GpuWedge, wedges, 8) NK_GROUP_ARGS)
 {
     NK_SHARED_ARRAY(float, scratch, 32);
     const GpuFaceItem item = items[NK_GROUP];
@@ -140,6 +143,22 @@ NK_KERNEL(face_amplitudes)(NK_IN(GpuFaceItem, items, 0), NK_IN(BandProblem, prob
         weights += end->weight;
     }
     field = nk_scale(field, 1.0f / weights);
+    // The edges' ends, as the cascade's two terms take them.
+    if (f->ends != NK_NO_CASCADE)
+    {
+        const float k = p.k_hi + p.k_lo;
+        for (uint w = 0u; w < 2u; w++)
+        {
+            NK_GLOBAL_IN GpuWedge* t = wedges + f->ends + w;
+            if (t->end_lo < 0.0f && t->end_hi < 0.0f)
+                continue;
+            const nk_complex bare = nk_wedge_coefficient(t->cot, t->c, t->n, k * t->sin_beta, t->distance);
+            if (bare.re != 0.0f || bare.im != 0.0f)
+                field = nk_mul(field, nk_div(nk_ended_wedge_coefficient(t->cot, t->c, t->n, k * t->sin_beta,
+                                                     t->distance, t->end_lo, t->end_hi, t->end_past, t->end_scale, k),
+                                              bare));
+        }
+    }
     const GpuRay r = rays[p.rays + item.ray];
     const nk_complex reflections = nk_reflections(reflected, r.reflected, p);
     const nk_complex a = nk_mul(nk_mul(nk_scale(field, exp(-p.absorption * r.length) * s), reflections),

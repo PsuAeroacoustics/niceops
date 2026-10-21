@@ -607,30 +607,52 @@ std::vector<BuildingRay> BuildingReceiver::rays(const Vec3& u_in) const
         {
             const std::size_t e = image_edges_[i][j];
             const Incidence& in = incidence[e];
-            if (!in.lit)
+            // An edge the wave meets from inside its wedge still has its ends'
+            // waves, where they see it (below).
+            if (!in.lit && !(options_.edge_ends && in.sin_beta >= 1e-6))
                 continue;
             const Edge& edge = buildings_->edges()[e];
             for (int floor = 0; floor < 2; floor++)
             {
                 const Foot& foot = image_feet_[i][2 * j + floor];
-                if (!foot.air || in.cot < foot.low || in.cot > foot.high)
+                // The bounds keep the Keller point on the edge; with its ends
+                // the reach decides past them (below).
+                if (!foot.air || (!options_.edge_ends && (in.cot < foot.low || in.cot > foot.high)))
                     continue;
                 // On Keller's cone: the diffracted ray leaves at the incident
-                // ray's angle to the edge.
+                // ray's angle to the edge.  Past an end the end's wave goes on
+                // (ended_wedge_coefficient), and the end stands in for the
+                // Keller point in every check, within the reach.
                 const double t = foot.along - in.c * foot.across / in.sin_beta;
-                if (t < 0.0 || t > edge.length)
+                // Past an end that the line goes on beyond (Edge::beyond),
+                // the point is another piece's or its image's.
+                const bool outside = t < 0.0 || t > edge.length;
+                const bool past = outside && past_true_end(edge, t);
+                if ((outside && !(past && options_.edge_ends)) || (!outside && !in.lit))
                     continue;
                 const Vec3 target = floor ? Vec3(image.point.x, image.point.y, -image.point.z) : image.point;
-                const Vec3 q = edge.start + t * edge.direction;
+                const Vec3 keller = edge.start + t * edge.direction;
+                const Vec3 q = past ? edge.start + std::clamp(t, 0.0, edge.length) * edge.direction : keller;
+                // The plane wave's path through x, less the Keller path.
+                const double s_keller = (target - keller).norm();
+                const auto excess = [&](const Vec3& x) { return -u.dot(x - keller) + (target - x).norm() - s_keller; };
+                if (past && (keller.z < 0.0 || excess(q) > options_.end_reach))
+                    continue;
                 const Vec3 out = target - q;
                 // A microphone on one of the wedge's faces (a wall it lies
                 // on) is at that face's angle exactly, not a hair to either
                 // side of it.
                 const int face = surface_ != no_surface && image.facades.empty() ? edge_face(edge, target) : -1;
-                const double theta = face == 0 ? 0.0
+                double theta = face == 0 ? 0.0
                         : face == 1        ? edge.n * pi
                                            : edge.angle(out - out.dot(edge.direction) * edge.direction);
-                if (face < 0 && !(theta > 0.0 && theta < edge.n * pi))
+                // Past an end the end wave goes wherever the end sees, at the
+                // nearer face's angle beyond its plane (point_paths.cpp's
+                // onto_air).
+                const double raw_theta = theta;
+                if (past && face < 0 && theta > edge.n * pi)
+                    theta = theta - edge.n * pi < 2.0 * pi - theta ? edge.n * pi : 0.0;
+                if (face < 0 && !past && !(theta > 0.0 && theta < edge.n * pi))
                     continue;
                 // A point of an edge inside a neighbour (footprints that
                 // overlap, or share a side only in part) diffracts nothing.
@@ -644,10 +666,37 @@ std::vector<BuildingRay> BuildingReceiver::rays(const Vec3& u_in) const
                 BuildingRay ray;
                 ray.diffracted = true;
                 ray.edge = e;
-                ray.angles = wedge_angles(edge.n, theta, in.theta0);
+                ray.angles = wedge_angles(edge.n, theta,
+                        in.theta0 <= edge.n * pi ? in.theta0 : in.theta0 - edge.n * pi < 2.0 * pi - in.theta0 ? edge.n * pi : 0.0);
                 ray.sin_beta = in.sin_beta;
-                ray.s = out.norm();
-                ray.length = -u.dot(q) + ray.s;
+                ray.s = s_keller;
+                ray.length = -u.dot(q) + out.norm();
+                if (options_.edge_ends)
+                {
+                    // The edge's whole line (continued); its ends' excesses.  The
+                    // amplitude is the Keller ray's (s), so past an end the
+                    // scale is 1 and only the phase is the end's.
+                    const Edge g = continued(edge);
+                    const double tg = t + (edge.start - g.start).dot(g.direction);
+                    if (std::isfinite(g.beyond[0]))
+                        ray.ends.lo = excess(g.start);
+                    if (std::isfinite(g.beyond[1]))
+                        ray.ends.hi = excess(g.start + g.length * g.direction);
+                    ray.ends.past = tg < 0.0 ? -1 : tg > g.length ? 1 : 0;
+                    // In the wedge's solid side, the end wave weighed as the
+                    // point-source model weighs it (weigh_vertex), the plane
+                    // wave's transition distance the receiver's.
+                    const auto depth = [&](double a) {
+                        return a <= edge.n * pi ? 0.0 : std::min(a - edge.n * pi, 2.0 * pi - a);
+                    };
+                    const double deepest = std::max(depth(in.theta0), depth(raw_theta));
+                    if (ray.ends.past != 0 && deepest > 0.0)
+                    {
+                        const double near = std::max(ray.ends.past < 0 ? ray.ends.lo : ray.ends.hi, 1e-300);
+                        const double sine = std::sin(0.5 * deepest);
+                        ray.ends.scale /= std::sqrt(1.0 + out.norm() * 2.0 * sine * sine / near);
+                    }
+                }
                 ray.facades = image.facades;
                 ray.floor = floor;
                 rays.push_back(std::move(ray));
@@ -675,7 +724,7 @@ std::complex<double> ray_amplitude(const BuildingRay& ray, double reflected, dou
     // wavenumber and distance projected into it: for a plane wave this is the
     // oblique-incidence form, L = s sin^2(beta).
     const double r = ray.s * ray.sin_beta;
-    return reflected * hard_wedge_coefficient(ray.angles, k * ray.sin_beta, r) / std::sqrt(r);
+    return reflected * ended_wedge_coefficient(ray.angles, k * ray.sin_beta, r, ray.ends, k) / std::sqrt(r);
 }
 
 std::complex<double> ray_amplitude(const BuildingRay& ray, const std::vector<double>& reflection,

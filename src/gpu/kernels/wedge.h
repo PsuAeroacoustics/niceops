@@ -62,6 +62,30 @@ NK_FN nk_complex nk_utd_transition(float x)
     return nk_make(s * (w.re + w.im), s * (w.im - w.re));
 }
 
+// fresnel_tail (wedge.hpp): 1/2 e^(ix) w(sqrt(x) e^(i pi/4)), regular at
+// x = 0, and past x = 50 F(x) e^(i (x + pi/4)) / (2 sqrt(pi x)).
+NK_FN nk_complex nk_fresnel_tail(float x)
+{
+    if (!(x > 0.0f))
+        return nk_make(0.5f, 0.0f);
+    if (x > 50.0f)
+        return nk_scale(nk_mul(nk_utd_transition(x), nk_cis(x + 0.785398163397448310f)),
+                1.0f / (2.0f * sqrt(3.14159265358979323846f * x)));
+    const float root = sqrt(x) * 0.707106781186547524f;
+    return nk_scale(nk_mul(nk_faddeeva(nk_make(root, root)), nk_cis(x)), 0.5f);
+}
+
+// trust_taper (point_paths.cpp): 1 to lo, 0 from hi, cosine-squared in log x.
+NK_FN float nk_trust_taper(float x, float lo, float hi)
+{
+    if (!(x > lo))
+        return 1.0f;
+    if (!(x < hi))
+        return 0.0f;
+    const float c = cos(1.57079632679489662f * log(x / lo) / log(hi / lo));
+    return c * c;
+}
+
 // The hard wedge's coefficient D (hard_wedge_coefficient(WedgeAngles, k, r)):
 // -exp(i pi/4) / (2 n sqrt(2 pi k)) times the sum over its four terms of
 // cot_i F(2 k r c_i^2).
@@ -74,6 +98,44 @@ NK_FN nk_complex nk_wedge_coefficient(NK_GLOBAL_IN float* cot, NK_GLOBAL_IN floa
     const float scale = -1.0f / (2.0f * n * sqrt(6.283185307179586477f * k));
     // scale exp(i pi/4) sum
     const float h = 0.707106781186547524f * scale;
+    return nk_make(h * (sum.re - sum.im), h * (sum.re + sum.im));
+}
+
+// ended_wedge_coefficient (point_paths.cpp): D at k_plane and r with its
+// edge's ends -- excesses lo and hi, m, -1 for none, past (-1, 0, +1), and
+// past an end its scale -- each term losing each end's fresnel_tail weighted
+// by 1 / sqrt(1 + k Delta / X); past an end faded 15-30 radians out and taken
+// relative to the ray through the near end.
+NK_FN nk_complex nk_ended_wedge_coefficient(NK_GLOBAL_IN float* cot, NK_GLOBAL_IN float* c, float n, float k_plane,
+        float r, float lo, float hi, float past, float scale, float k)
+{
+    const bool has_lo = lo >= 0.0f, has_hi = hi >= 0.0f;
+    if (!has_lo && !has_hi)
+        return nk_wedge_coefficient(cot, c, n, k_plane, r);
+    const float klo = has_lo ? k * lo : 0.0f, khi = has_hi ? k * hi : 0.0f;
+    const nk_complex tl = has_lo ? nk_fresnel_tail(klo) : nk_make(0.0f, 0.0f);
+    const nk_complex th = has_hi ? nk_fresnel_tail(khi) : nk_make(0.0f, 0.0f);
+    const bool near_lo = past < 0.0f;
+    const float near = near_lo ? klo : khi;
+    const nk_complex shift = past == 0.0f ? nk_make(1.0f, 0.0f)
+                                          : nk_scale(nk_cis(-near), scale * nk_trust_taper(near, 15.0f, 30.0f));
+    const float kl = k_plane * r;
+    nk_complex sum = nk_make(0.0f, 0.0f);
+    for (int i = 0; i < 4; i++)
+    {
+        const float x = 2.0f * kl * c[i] * c[i];
+        const float wl = klo > 0.0f ? 1.0f / sqrt(1.0f + klo / x) : 1.0f;
+        const float wh = khi > 0.0f ? 1.0f / sqrt(1.0f + khi / x) : 1.0f;
+        const nk_complex a = nk_scale(tl, wl), b = nk_scale(th, wh);
+        nk_complex share;
+        if (past == 0.0f)
+            share = nk_make(1.0f - a.re - b.re, -a.im - b.im);
+        else
+            share = nk_mul(near_lo ? nk_make(a.re - b.re, a.im - b.im) : nk_make(b.re - a.re, b.im - a.im), shift);
+        sum = nk_add(sum, nk_scale(nk_mul(nk_utd_transition(x), share), cot[i]));
+    }
+    const float scale_d = -1.0f / (2.0f * n * sqrt(6.283185307179586477f * k_plane));
+    const float h = 0.707106781186547524f * scale_d;
     return nk_make(h * (sum.re - sum.im), h * (sum.re + sum.im));
 }
 

@@ -96,6 +96,13 @@ struct TransitionTable
     complex operator()(double x) const
     {
         const double u = std::sqrt(x);
+        const complex p = over_root(u);
+        return complex(p.real() * u, p.imag() * u);
+    }
+
+    // F / u at u = sqrt(X): the polynomial itself.
+    complex over_root(double u) const
+    {
         const int i = std::min(static_cast<int>(u * inverse_width), intervals - 1);
         const double t = (u - (i + 0.5) * width) * (2.0 * inverse_width);
         const double* a = re[i];
@@ -106,9 +113,20 @@ struct TransitionTable
             r = std::fma(r, t, a[p]);
             m = std::fma(m, t, b[p]);
         }
-        return complex(r * u, m * u);
+        return complex(r, m);
     }
 };
+
+} // namespace
+
+namespace {
+
+// Built on first use (TransitionTable has why).
+const TransitionTable& transition_table()
+{
+    static const TransitionTable table;
+    return table;
+}
 
 } // namespace
 
@@ -129,9 +147,69 @@ complex utd_transition(double x)
         return complex(1.0 - 0.75 * i2 + 105.0 / 16.0 * i2 * i2,
                 -0.5 * i1 + 15.0 / 8.0 * i2 * i1 - 945.0 / 32.0 * i2 * i2 * i1);
     }
-    static const TransitionTable table;
-    return table(x);
+    return transition_table()(x);
 }
+
+complex fresnel_tail(double x)
+{
+    if (std::isnan(x))
+        return complex(x, x);
+    // F / sqrt(x), which the table holds as its polynomial: no 0/0 at x = 0.
+    complex over_root;
+    if (!(x > 0.0))
+        over_root = complex(0.0, -std::sqrt(pi)) * std::polar(1.0, pi / 4.0);
+    else if (x > 50.0)
+        over_root = utd_transition(x) / std::sqrt(x);
+    else
+        over_root = transition_table().over_root(std::sqrt(x));
+    return over_root * std::polar(1.0 / (2.0 * std::sqrt(pi)), (x > 0.0 ? x : 0.0) + pi / 4.0);
+}
+
+namespace {
+
+// 1 to end_fade_lo, 0 from end_fade_hi, a cosine-squared taper in log x between.
+double end_fade(double x)
+{
+    if (!(x > end_fade_lo))
+        return 1.0;
+    if (!(x < end_fade_hi))
+        return 0.0;
+    const double c = std::cos(0.5 * pi * std::log(x / end_fade_lo) / std::log(end_fade_hi / end_fade_lo));
+    return c * c;
+}
+
+} // namespace
+
+std::complex<double> ended_wedge_coefficient(const WedgeAngles& a, double k_plane, double r, const EdgeEnds& e,
+        double k)
+{
+    using complex = std::complex<double>;
+    const bool lo = std::isfinite(e.lo), hi = std::isfinite(e.hi);
+    if (!lo && !hi)
+        return hard_wedge_coefficient(a, k_plane, r);
+    const double klo = lo ? k * std::max(e.lo, 0.0) : 0.0, khi = hi ? k * std::max(e.hi, 0.0) : 0.0;
+    const complex tail_lo = lo ? fresnel_tail(klo) : complex(0.0, 0.0);
+    const complex tail_hi = hi ? fresnel_tail(khi) : complex(0.0, 0.0);
+    // Past an end, the share between the two ends, both on one side of the
+    // stationary point, faded out as it leaves the near one, and taken
+    // relative to the ray through the near end (the ray's own length).
+    const bool near_lo = e.past < 0;
+    const complex past = e.past == 0
+            ? complex(1.0, 0.0)
+            : std::polar(e.scale * end_fade(near_lo ? klo : khi), -(near_lo ? klo : khi));
+    const double kl = k_plane * r;
+    complex sum(0.0, 0.0);
+    for (int i = 0; i < 4; i++)
+    {
+        const double x = kl * 2.0 * a.c[i] * a.c[i];
+        const auto weight = [x](double kd) { return kd > 0.0 ? 1.0 / std::sqrt(1.0 + kd / x) : 1.0; };
+        const complex wl = weight(klo) * tail_lo, wh = weight(khi) * tail_hi;
+        const complex share = e.past == 0 ? 1.0 - wl - wh : (near_lo ? wl - wh : wh - wl) * past;
+        sum += a.cot[i] * utd_transition(x) * share;
+    }
+    return -std::polar(1.0, pi / 4.0) / (2.0 * a.n * std::sqrt(2.0 * pi * k_plane)) * sum;
+}
+
 
 WedgeAngles wedge_angles(double n, double theta, double theta0)
 {
