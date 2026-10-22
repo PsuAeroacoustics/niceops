@@ -38,6 +38,24 @@ the ray set's side took the step's 72 cases above its lower roof from 2.34 to 0.
 the source above it, 0.9 across the reflection boundary), which a blend of aperture and cascade
 would remove, the GPU's aperture kernel included.
 
+**Item 2 built for flat roofs (2026-10-22).** The plane's step was not the switch alone: the
+cascade itself steps there by up to 12 dB, the far edge sitting in the near edge's transition with the
+source low over the roof, so a blend toward it would have kept the wrong level above the plane. With
+both ends above a flat roof's plane the pair now takes each end's mirror below it, negated, the
+end nearer the plane governing (THEORY "Both ends above the face's plane"). Against 528 new BEM
+cases through the plane behind the step: 0.88 -> 0.20 dB rms, worst -4.3 -> -1.0; the step at the
+plane 8.4 -> 0.45 dB at most; far above the plane (336 cases, sources to 40 degrees) it and the cascade
+agree. The GPU takes it unchanged (the sign rides in the mirrored aperture's node weights), at no
+measurable cost. Walls between corners take it too: a quarter of DigiCity's field 1.2 m up moves by
+over 0.1 dB with a source 12 m up (to 4.4 dB), its measured microphones by 0.04 dB at most; EDGE's
+scores do not move (UE20 and UE27 by 0.38 dB at most in a band). Left: a
+step's tilted pair with the source just above its line steps 2.2-2.7 dB where the microphone crosses
+the line; there the direct ray and both single diffractions are at their boundaries at once, the
+mirror is 12 dB off, and neither the cascade nor the mirror fixes it. Also left: chains of three and
+four edges over a row of roofs still step 3.9 dB in the roofs' plane where no profile is taken; the
+reflection boundary's 0.94 dB is unchanged (where it meets the plane, 10 m behind, 1.05-4.16 ->
+0.86-1.16 dB).
+
 **Item 3 measured in two dimensions (2026-10-22, not built).** A two-way pass over each street --
 the field below the next roof reflected off its wall and marched back, below this roof reflected
 forward again, the part over the next roof added -- is what the bias lacked. Against the BEM, rms:

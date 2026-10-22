@@ -109,6 +109,44 @@ double reverse_weight(const SharedFace& face, double sx, double sz, double rx, d
     return forward_weight(reversed(face), face.width - rx, rz, face.width - sx, sz);
 }
 
+// Over a shared face with both ends above the line between the edges, each
+// before its own edge, neither aperture applies as it stands, and the cascade
+// fails as an end nears the line: the far edge lies in the near one's
+// transition, whose wave is not a ray there.  Against boundary elements the
+// cascade is 2-4 dB low just above a roof's plane and steps by up to 12 dB
+// across it (THEORY 6.5, "Both ends above the face's plane").  The same holds
+// for a wall between two corners, the ends in front of it.  Near the line the
+// wave one edge diffracts toward the other is odd in the end's angle off it,
+// the transition's Fresnel integral on one side minus the other's, so the
+// pair's field with an end above is minus its field with that end mirrored
+// below the line -- the aperture's own case -- and the ray over the near
+// edge, which the ray set adds as the end rises through the line, carries the
+// rest.  Each end's mirror gives an estimate; each is weighted by the other
+// end's angle above the line, so that the end nearer the line, whose
+// transition it is, governs.  As an end falls to the line its own mirror takes
+// all the weight, and meets the aperture below it: either side, the field is
+// half the once ray's over the near edge.  Tilted faces keep the cascade:
+// there the mirror was 12 dB from a boundary-element solution.
+struct MirroredWeights
+{
+    bool applies = false;
+    // The weights of the estimates from the source's mirror and from the
+    // receiver's.
+    double forward = 0.0, reverse = 0.0;
+};
+
+MirroredWeights mirrored_weights(const SharedFace& face, double sx, double sz, double rx, double rz)
+{
+    MirroredWeights m;
+    // Above as forward_weight has it: not within 1e-9 m below the line.
+    if (face.drop1 != 0.0 || face.drop2 != 0.0 || !(sx < 0.0 && sz >= 1e-9) || !(rx > face.width && rz >= 1e-9))
+        return m;
+    m.applies = true;
+    m.forward = std::max(std::atan2(rz, rx - face.width), 1e-12);
+    m.reverse = std::max(std::atan2(sz, -sx), 1e-12);
+    return m;
+}
+
 // The moments' power series below a radian of phase: m_j, the integral of
 // v^j exp(i k v) over [0, s], is s^(j+1) times the sum over n of
 // (i phase)^n / (n! (n + j + 1)), phase = k s.  Its even terms are the real
@@ -754,7 +792,8 @@ complex aperture_at(const ApertureGeometry& g, double k)
 
 bool shared_face_applies(const SharedFace& face, double sx, double sz, double rx, double rz)
 {
-    return forward_weight(face, sx, sz, rx, rz) > 0.0 || reverse_weight(face, sx, sz, rx, rz) > 0.0;
+    return forward_weight(face, sx, sz, rx, rz) > 0.0 || reverse_weight(face, sx, sz, rx, rz) > 0.0
+            || mirrored_weights(face, sx, sz, rx, rz).applies;
 }
 
 std::complex<double> shared_face_field(const SharedFace& face, double sx, double sz, double rx, double rz, double k)
@@ -766,7 +805,14 @@ std::complex<double> shared_face_field(const SharedFace& face, double sx, double
     const double forward = forward_weight(face, sx, sz, rx, rz);
     const double reverse = reverse_weight(face, sx, sz, rx, rz);
     if (forward + reverse <= 0.0)
-        return {std::numeric_limits<double>::quiet_NaN(), 0.0};
+    {
+        const MirroredWeights m = mirrored_weights(face, sx, sz, rx, rz);
+        if (!m.applies)
+            return {std::numeric_limits<double>::quiet_NaN(), 0.0};
+        return -(m.forward * aperture(face, sx, -sz, rx, rz, k)
+                       + m.reverse * aperture(reversed(face), face.width - rx, -rz, face.width - sx, sz, k))
+                / (m.forward + m.reverse);
+    }
     complex sum(0.0, 0.0);
     if (forward > 0.0)
         sum += forward * aperture(face, sx, sz, rx, rz, k);
@@ -779,11 +825,22 @@ std::vector<std::complex<double>> shared_face_spectrum(const SharedFace& face, d
         double rz, const std::vector<double>& wavenumbers)
 {
     // As shared_face_field, wavenumber by wavenumber.
-    const double forward = forward_weight(face, sx, sz, rx, rz);
-    const double reverse = reverse_weight(face, sx, sz, rx, rz);
+    double forward = forward_weight(face, sx, sz, rx, rz);
+    double reverse = reverse_weight(face, sx, sz, rx, rz);
     std::vector<complex> out(wavenumbers.size(), {std::numeric_limits<double>::quiet_NaN(), 0.0});
+    // Both ends above the line: each end's mirror, its field negated.
+    double sign = 1.0, forward_z = sz, reverse_z = rz;
     if (forward + reverse <= 0.0)
-        return out;
+    {
+        const MirroredWeights m = mirrored_weights(face, sx, sz, rx, rz);
+        if (!m.applies)
+            return out;
+        forward = m.forward;
+        reverse = m.reverse;
+        sign = -1.0;
+        forward_z = -sz;
+        reverse_z = -rz;
+    }
     thread_local NodeTable table_scratch;
     thread_local std::vector<complex> forward_scratch, reverse_scratch;
     NodeTable& table = table_scratch;
@@ -792,9 +849,9 @@ std::vector<std::complex<double>> shared_face_spectrum(const SharedFace& face, d
     forward_field.resize(wavenumbers.size());
     reverse_field.resize(wavenumbers.size());
     if (forward > 0.0)
-        aperture_spectrum(face, sx, sz, rx, rz, wavenumbers, table, forward_field.data());
+        aperture_spectrum(face, sx, forward_z, rx, rz, wavenumbers, table, forward_field.data());
     if (reverse > 0.0)
-        aperture_spectrum(reversed(face), face.width - rx, rz, face.width - sx, sz, wavenumbers, table,
+        aperture_spectrum(reversed(face), face.width - rx, reverse_z, face.width - sx, sz, wavenumbers, table,
                 reverse_field.data());
     for (std::size_t j = 0; j < wavenumbers.size(); j++)
     {
@@ -803,7 +860,7 @@ std::vector<std::complex<double>> shared_face_spectrum(const SharedFace& face, d
             sum += forward * forward_field[j];
         if (reverse > 0.0)
             sum += reverse * reverse_field[j];
-        out[j] = sum / (forward + reverse);
+        out[j] = sign * sum / (forward + reverse);
     }
     return out;
 }
@@ -826,6 +883,24 @@ SharedFaceGeometry shared_face_geometry(const SharedFace& face, double sx, doubl
         g.forward = aperture_geometry(face, sx, sz, rx, rz, wavenumbers);
     if (g.reverse_weight > 0.0)
         g.reverse = aperture_geometry(reversed(face), face.width - rx, rz, face.width - sx, sz, wavenumbers);
+    if (g.forward_weight + g.reverse_weight > 0.0)
+        return g;
+    // Both ends above the line: each end's mirror, the minus sign in its
+    // nodes' weights, so that aperture_at, and the GPU, take it as they take
+    // any end.
+    const MirroredWeights m = mirrored_weights(face, sx, sz, rx, rz);
+    if (!m.applies)
+        return g;
+    auto negated = [](ApertureGeometry a) {
+        for (ApertureNode& n : a.nodes)
+            for (double& w : n.weight)
+                w = -w;
+        return a;
+    };
+    g.forward_weight = m.forward;
+    g.reverse_weight = m.reverse;
+    g.forward = negated(aperture_geometry(face, sx, -sz, rx, rz, wavenumbers));
+    g.reverse = negated(aperture_geometry(reversed(face), face.width - rx, -rz, face.width - sx, sz, wavenumbers));
     return g;
 }
 

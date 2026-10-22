@@ -1104,8 +1104,11 @@ form holds; a block that thin is a screen, and LoD1 buildings are not.
 and below the plane 1 to 50 m behind), the level steps by at most 0.65 dB for a source 15 m out and
 2 m up, 1.9 dB at 125 Hz for one 40 m out and 6 m up (under 0.25 dB from 1 kHz), and 0.43 dB for
 a block 10 m thick. Against the boundary elements either side of the plane the shared-face form is
-within ±0.6 dB, the exact field moving by 0.1 dB; the cascade steps by 5 to 15 dB. A source above
-the roof steps by up to 4.9 dB, where the cascade takes over above the plane.
+within ±0.6 dB, the exact field moving by 0.1 dB; the cascade steps by 5 to 15 dB. With the source
+above the roof, both ends above the line between its edges, the pair takes each end's mirror below
+the line (THEORY §6.5): from 125 Hz up the level steps by 0.3-2.4 dB, the most with the source 0.3°
+over the roof and the microphone 50 m behind, and 0.3-0.5 dB from 11° up; the cascade there steps by
+up to 14 dB.
 
 **Across a step** (THEORY §6.5; a long block 10 m across and 10 m high against one 10 m across
 and 7 m high, rigid ground, boundary elements at 45 elements a wavelength, the cases not converged
@@ -1117,7 +1120,7 @@ them. Error re the exact level, dB:
 | --- | --- | --- | --- | --- |
 | Below the lower roof, 2-10 m behind, 1.2-7 m up | 10.5-15 m up, 30-100 m off | 229 | 0.71, +0.18, +2.42 | 0.96, −0.58, −3.65 |
 | The same | 1.5 m up, 20 m off | 30 | 0.88, −0.67, −2.20 | the same |
-| Above it, 8-11 m up | 10.5-15 m up | 72 | 2.55, +0.36, +10.76 | 2.53, +0.40, +10.16 |
+| Above it, 8-11 m up | 10.5-15 m up | 72 | 0.26, −0.09, −0.99 | 2.58, +1.05, +11.48 |
 
 The first row includes the same step with the taller block 9 m high. From the low source the
 pair is not tilted -- the sound crosses the taller block's roof as a shared face first -- and nothing
@@ -1126,18 +1129,59 @@ Above the lower roof the cases sit on two boundaries: the lower roof's reflectio
 edge's wave (8.5 m up at 5 m behind, 10 m at 10) and the taller roof's plane (10 m up). A
 microphone exactly on either takes the side the ray set gives it -- in the plane, below it; on the
 reflection boundary, the reflected side -- where it took both sides' waves at once, 3-9.6 dB high
-in the plane and 13 dB at a point on the boundary. Within 1 dB in the plane now; the cascade
-alone, which never had the aperture's rule, is as it was. Above the plane the cascade is up to
-1.9 dB low (125 Hz, the source 0.5 m over the taller roof), and across the plane the level steps
-by 2.5-4.3 dB from 1 µm below to 1 µm above with the source over that roof, across the
-reflection boundary by 0.9 dB at most: the switch from the aperture to the cascade there, which a
-blend of the two would remove. Across the line through the two edges the uniform form's
+in the plane and 13 dB at a point on the boundary. Above the taller roof's plane the source and the
+microphone are both above the line between that roof's edges, and the pair takes their mirrors
+(THEORY §6.5; next paragraph). Across the plane the level steps by 0.45 dB at most from 1 µm below
+to 1 µm above (125 Hz, the source 0.3° over the taller roof, the microphone 40 m behind the step;
+0.15 dB or less with the source 2° over it or higher), across the reflection boundary by 0.94 dB at
+most, 125-1000 Hz: the switch from the aperture to the cascade there. Where the two boundaries meet,
+10 m behind the step, the level steps by 0.86-1.16 dB. Across the line through the two edges the uniform form's
 level steps by 0.45 to 2.1 dB from 1 mm below to 1 mm above, the cascade's by 0.02 to 1.5. The
 worst is a source 0.26° over the taller block's roof: the end correction is 2.1 there, the
 first wedge's coefficient taking that roof's reflection as if the roof went on, which the
 three edges over it (its near edge too) would put right and two do not. Where the microphone's
 image in the step's own wall lies behind the first edge, or the source sees the lower roof's plane
 while the microphone takes that roof's reflection, the cascade stands; THEORY has why.
+
+**Through a roof's plane, both ends above it** (THEORY §6.5; the same step, boundary elements at
+45 elements a wavelength, within 0.09 dB of 30; sources 0.3-9.5° over the taller roof, 15-100 m off;
+microphones 5-15 m behind the step, 9.5-13 m up; 125 Hz to 1 kHz, 528 cases). Error re the exact
+level by the microphone's height, rms, mean and worst, dB:
+
+| Height | Uniform form | Cascade |
+| --- | --- | --- |
+| 9.5 m | 0.16, +0.04, −0.59 | 1.25, +0.83, +3.04 |
+| 9.9 m | 0.14, +0.02, +0.59 | 1.33, +0.90, +3.24 |
+| 10 m (the plane) | 0.25, −0.01, −1.01 | 5.79, +4.60, +11.88 |
+| 10.1 m | 0.24, −0.01, −0.96 | 1.77, −1.19, −4.59 |
+| 10.25 m | 0.23, −0.01, −0.94 | 1.54, −0.99, −4.06 |
+| 10.5 m | 0.21, −0.02, −0.89 | 1.20, −0.72, −3.64 |
+| 11 m | 0.17, −0.03, −0.63 | 0.72, −0.30, −2.46 |
+| 12 m | 0.12, −0.02, −0.45 | 0.25, +0.09, −0.86 |
+| 13 m | 0.12, −0.02, +0.44 | 0.21, +0.10, +0.62 |
+
+Above the plane the pair is the mirrored apertures; below it, the receiver's own. Far above the plane
+the two forms agree: with the source 0.5-40° over the roof 60 m off and the microphone at 8 m and
+10.5-25 m up (336 cases), the uniform form is 0.18 dB rms (worst −1.73) and the cascade 0.68
+(worst −5.10); from 20° up they are within 0.03 dB rms of each other (0.36 and 0.33 at 20°, 0.14 and
+0.13 at 40°), and the cascade is off only below 5°, by up to 5 dB. A step's tilted pair keeps the
+cascade with both ends above its line, and there the level still steps where the microphone crosses
+the line: by 2.2-2.7 dB with the source 3.3° above it (0.35 at 13°, 0.13 at 43°), and against
+boundary elements with the source 0.5-10° above the line and the microphone from 2.4 m below it to
+3.4 m above (352 cases), 0.67 dB rms and −4.2 at worst, 2.8 rms 0.1 m above the line with the source
+0.5° above it. The direct ray
+and both edges' single diffractions are all at their boundaries there; mirroring the pair's term
+does not reach it (2.8 dB either way), and the mirror itself was 12 dB from the exact pair's field.
+A wall between two corners takes the same rule, the ends in front of it, and that is where the rule
+reaches ground microphones. On DigiCity's field 1.2 m up (3,000 of its microphones), with the
+loudspeaker at its hover spot 2 m up, 4.3% of the microphones move by more than 0.1 dB and none by
+more than 0.38; with a source 12 m up, 25% by more than 0.1 dB and up to 4.4 dB, the rays grazing
+along a container's wall between its corners. The four measured microphones move by 0.04 dB at
+most, and microphone 7's error stays −4.1 dB mean, 5.3 rms. On EDGE only UE20's and UE27's rays
+move, by 0.38 dB at most in a band, and no score moves at two decimals. Where an end passes over its own edge,
+from before the wall or roof to over it, the pair goes back to the cascade; the level steps there by
+up to 1.8 dB at 125 Hz with the end low over the edge, as much as it did with the cascade on both
+sides (within 0.06 dB): other rays switch there too.
 
 **EDGE's stepped terraces** (model scale; boundary elements at 45 elements a wavelength, converged
 to 0.1 dB; the drone and the floor source, microphones on the floor 0.46 and 1.25 m behind,

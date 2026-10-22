@@ -53,14 +53,16 @@ struct SharedFace
 
 // Whether shared_face_field applies: the source below the line between the
 // edges and before the first edge (x < 0), or the receiver below it and past
-// the second (x > width).
+// the second (x > width); or, on a shared face (no drop), both ends above the
+// line, each before its own edge.
 bool shared_face_applies(const SharedFace& face, double sx, double sz, double rx, double rz);
 
 // The field at the receiver, diffracted at both edges, of the 2-D wave
 // exp(i k r) / sqrt(r) from the source.  Below the line between the edges it
 // is the whole field that passes the second edge; above it, the part the
 // second edge diffracts, the first edge's own wave reaching the receiver being
-// a ray of its own.
+// a ray of its own.  With both ends above a shared face's line, the mean of
+// each end's mirror below it, negated (double_wedge.cpp, mirrored_weights).
 std::complex<double> shared_face_field(const SharedFace& face, double sx, double sz, double rx, double rz, double k);
 
 // shared_face_field at each of the wavenumbers, to the bit, for a ray taken at
@@ -125,6 +127,9 @@ struct SharedFaceGeometry
 {
     // Each end's weight (its source's angle below the line between the edges,
     // zero where it is above) and its aperture; the field is the weighted mean.
+    // With both ends above a shared face's line, each end's aperture is its
+    // mirror's, the minus sign in its nodes' weights, weighted by the other
+    // end's angle above the line.
     double forward_weight = 0.0, reverse_weight = 0.0;
     ApertureGeometry forward, reverse;
 };

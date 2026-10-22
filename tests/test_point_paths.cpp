@@ -1420,8 +1420,7 @@ TEST_CASE("over a step down to a lower roof the pair of edges is uniform", "[poi
 // ray over the near edge alone stayed blocked, as below, 3-9.6 dB high; on
 // the reflection boundary the roof's reflected ray and the pair's aperture
 // both, 13 dB at a point.  Each boundary now goes to the side the ray set
-// gives it.  Within 2 dB, rms 0.38, where it was 2.34; above the plane the
-// cascade is still up to 1.9 dB low.
+// gives it.  Within 1 dB, rms 0.26.
 TEST_CASE("above a step's lower roof the field holds to its boundaries", "[point_paths]")
 {
     const Buildings city({long_block(0.0, 10.0, 10.0), long_block(10.0, 20.0, 7.0)});
@@ -1452,10 +1451,10 @@ TEST_CASE("above a step's lower roof the field holds to its boundaries", "[point
         const double error = line_source_level(city, s, m, c.f, PointPathOptions()) - c.exact;
         INFO(c.f << " Hz, source " << c.source_y << " m, " << c.source_z << " m up, microphone " << c.behind
                   << " m behind, " << c.z << " m up");
-        REQUIRE(std::abs(error) < (c.z == 10.0 ? 1.1 : 2.0));
+        REQUIRE(std::abs(error) < 1.1);
         square += error * error;
     }
-    REQUIRE(std::sqrt(square / static_cast<double>(cases.size())) < 0.45);
+    REQUIRE(std::sqrt(square / static_cast<double>(cases.size())) < 0.35);
     // On each boundary the level is its side's: the plane's below it, the
     // reflection boundary's on the reflected side.
     for (const double f : {125.0, 250.0, 500.0})
@@ -1468,6 +1467,70 @@ TEST_CASE("above a step's lower roof the field holds to its boundaries", "[point
         REQUIRE(at(5.0, 10.0) == Catch::Approx(at(5.0, 10.0 - 1e-6)).margin(0.01));
         REQUIRE(at(5.0, 8.5) == Catch::Approx(at(5.0, 8.5 + 1e-6)).margin(0.01));
     }
+}
+
+// The same step, the source and the microphone both above the taller roof's
+// plane: the source 0.3 and 1.9 degrees above it, the microphone 0.1-2 m up
+// from it, 5 and 15 m behind (boundary elements at 45 elements a wavelength,
+// within 0.09 dB of 30).  Neither end is below the line between the roof's
+// edges, and the pair takes each end's mirror below it, negated
+// (double_wedge.cpp, mirrored_weights): within 0.3 dB, rms 0.10, where the
+// cascade is 1.6 dB rms and up to 4.3 dB low.  Through the plane the level
+// holds to 0.11 dB, where the cascade stepped up to 8 dB.
+TEST_CASE("over a roof with both ends above its plane the field holds through it", "[point_paths]")
+{
+    const Buildings city({long_block(0.0, 10.0, 10.0), long_block(10.0, 20.0, 7.0)});
+    static const std::vector<BlockCase> cases {
+            {125, -100, 10.5, 5, 10.1, -3.84}, {125, -100, 10.5, 5, 10.25, -3.86}, {125, -100, 10.5, 5, 10.5, -3.94}, {125, -100, 10.5, 5, 11, -3.52},
+            {125, -100, 10.5, 5, 12, 1.10}, {125, -100, 10.5, 15, 10.1, -2.57}, {125, -100, 10.5, 15, 10.25, -2.63}, {125, -100, 10.5, 15, 10.5, -2.77},
+            {125, -100, 10.5, 15, 11, -2.94}, {125, -100, 10.5, 15, 12, -1.36}, {125, -60, 12, 5, 10.1, -8.69}, {125, -60, 12, 5, 10.25, -8.65},
+            {125, -60, 12, 5, 10.5, -8.60}, {125, -60, 12, 5, 11, -7.76}, {125, -60, 12, 5, 12, -3.30}, {125, -60, 12, 15, 10.1, -7.06},
+            {125, -60, 12, 15, 10.25, -7.11}, {125, -60, 12, 15, 10.5, -7.20}, {125, -60, 12, 15, 11, -7.11}, {125, -60, 12, 15, 12, -5.17},
+            {250, -100, 10.5, 5, 10.1, -6.18}, {250, -100, 10.5, 5, 10.25, -5.52}, {250, -100, 10.5, 5, 10.5, -4.92}, {250, -100, 10.5, 5, 11, -4.89},
+            {250, -100, 10.5, 5, 12, -3.23}, {250, -100, 10.5, 15, 10.1, -7.65}, {250, -100, 10.5, 15, 10.25, -7.47}, {250, -100, 10.5, 15, 10.5, -7.06},
+            {250, -100, 10.5, 15, 11, -5.43}, {250, -100, 10.5, 15, 12, -2.80}, {250, -60, 12, 5, 10.1, -0.50}, {250, -60, 12, 5, 10.25, 0.08},
+            {250, -60, 12, 5, 10.5, 0.47}, {250, -60, 12, 5, 11, -0.19}, {250, -60, 12, 5, 12, 0.09}, {250, -60, 12, 15, 10.1, -2.76},
+            {250, -60, 12, 15, 10.25, -2.71}, {250, -60, 12, 15, 10.5, -2.48}, {250, -60, 12, 15, 11, -0.94}, {250, -60, 12, 15, 12, 1.06},
+            {500, -100, 10.5, 5, 10.1, -2.90}, {500, -100, 10.5, 5, 10.25, -1.56}, {500, -100, 10.5, 5, 10.5, -0.77}, {500, -100, 10.5, 5, 11, -2.23},
+            {500, -100, 10.5, 5, 12, 1.71}, {500, -100, 10.5, 15, 10.1, -3.75}, {500, -100, 10.5, 15, 10.25, -3.81}, {500, -100, 10.5, 15, 10.5, -3.50},
+            {500, -100, 10.5, 15, 11, -2.27}, {500, -100, 10.5, 15, 12, 0.29}, {500, -60, 12, 5, 10.1, -2.36}, {500, -60, 12, 5, 10.25, -1.04},
+            {500, -60, 12, 5, 10.5, -0.19}, {500, -60, 12, 5, 11, -1.15}, {500, -60, 12, 5, 12, 2.85}, {500, -60, 12, 15, 10.1, -2.76},
+            {500, -60, 12, 15, 10.25, -2.74}, {500, -60, 12, 15, 10.5, -2.34}, {500, -60, 12, 15, 11, -1.03}, {500, -60, 12, 15, 12, 1.64},
+            {1000, -100, 10.5, 5, 10.1, -5.21}, {1000, -100, 10.5, 5, 10.25, -2.97}, {1000, -100, 10.5, 5, 10.5, -1.54}, {1000, -100, 10.5, 5, 11, -0.75},
+            {1000, -100, 10.5, 5, 12, 1.11}, {1000, -100, 10.5, 15, 10.1, -4.49}, {1000, -100, 10.5, 15, 10.25, -4.30}, {1000, -100, 10.5, 15, 10.5, -3.14},
+            {1000, -100, 10.5, 15, 11, -1.18}, {1000, -100, 10.5, 15, 12, 0.25}, {1000, -60, 12, 5, 10.1, -4.21}, {1000, -60, 12, 5, 10.25, -2.20},
+            {1000, -60, 12, 5, 10.5, -1.07}, {1000, -60, 12, 5, 11, 0.02}, {1000, -60, 12, 5, 12, 1.45}, {1000, -60, 12, 15, 10.1, -3.30},
+            {1000, -60, 12, 15, 10.25, -3.02}, {1000, -60, 12, 15, 10.5, -1.89}, {1000, -60, 12, 15, 11, -0.15}, {1000, -60, 12, 15, 12, 1.18},
+    };
+    double square = 0.0, cascade_square = 0.0;
+    for (const BlockCase& c : cases)
+    {
+        const Vec3 s(0.0, c.source_y, c.source_z), m(0.0, 20.0 + c.behind, c.z);
+        const double error = line_source_level(city, s, m, c.f, PointPathOptions()) - c.exact;
+        PointPathOptions cascade;
+        cascade.shared_face = false;
+        const double cascade_error = line_source_level(city, s, m, c.f, cascade) - c.exact;
+        INFO(c.f << " Hz, source " << c.source_y << " m, " << c.source_z << " m up, microphone " << c.behind
+                  << " m behind, " << c.z << " m up");
+        REQUIRE(std::abs(error) < 0.5);
+        square += error * error;
+        cascade_square += cascade_error * cascade_error;
+    }
+    const double n = static_cast<double>(cases.size());
+    INFO("rms " << std::sqrt(square / n) << ", cascade " << std::sqrt(cascade_square / n));
+    REQUIRE(std::sqrt(square / n) < 0.15);
+    REQUIRE(std::sqrt(cascade_square / n) > 1.0);
+    for (const double f : {125.0, 250.0, 500.0})
+        for (const double source_z : {10.5, 12.0, 15.0})
+            for (const double behind : {5.0, 15.0})
+            {
+                const Vec3 s(0.0, source_z == 10.5 ? -100.0 : -60.0, source_z);
+                auto at = [&](double z) {
+                    return line_source_level(city, s, Vec3(0.0, 20.0 + behind, z), f, PointPathOptions());
+                };
+                INFO(f << " Hz, source " << source_z << " m up, " << behind << " m behind");
+                REQUIRE(at(10.0 + 1e-6) == Catch::Approx(at(10.0)).margin(0.2));
+            }
 }
 
 // EDGE's pent-roofed terrace (UE02) at model scale: a ridge 0.732 m up over a

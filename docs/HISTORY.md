@@ -4,6 +4,23 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## Through a roof's plane with both ends above it (October 2026)
+
+With the source and the microphone both above a flat roof's plane, the ray diffracted over the
+roof's two edges used to take the cascade, while the microphone just below the plane took the
+receiver's aperture. With the source low over the roof, the far edge sits in the near edge's
+transition, which the cascade cannot carry: the level stepped by 3-8 dB as the microphone crossed
+the plane (11 dB with the source 0.3° over a 2.44 m block), and above the plane the cascade was up
+to 4.3 dB low against boundary elements. The pair now takes each end's mirror below the plane,
+negated (THEORY "Both ends above the face's plane"). Over 528 cases through the plane behind a step
+the error goes from 0.88 to 0.20 dB rms and the worst from −4.3 to −1.0 dB; the step at the plane is
+0.45 dB at most. A wall between two corners takes the same rule, with both ends in front of it:
+on DigiCity's field 1.2 m up a quarter of the microphones move by more than 0.1 dB with a source
+12 m up, by up to 4.4 dB, and the measured microphones by 0.04 dB at most; EDGE's scores do not move.
+The facade-scattering
+golden moves by 1.2e-5 dB at one observer; the others do not move. A step's tilted pair keeps the
+cascade with both ends above its line, where the mirror does not hold.
+
 ## A shared face's boundaries go to one side (October 2026)
 
 A microphone exactly in a roof's plane, behind a shared face or a step, or exactly on a step's

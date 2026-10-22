@@ -1337,12 +1337,35 @@ incident and the face-reflected waves, is that field in the aperture's own appro
 subtracted. Either end below the face's plane can be the aperture's source, the other then being
 the receiver; the two evaluations are weighted by their source's angle below the plane,
 $u = (\gamma_S u_S + \gamma_R u_R)/(\gamma_S + \gamma_R)$, which is reciprocal and gives way smoothly as either end
-reaches the plane. With both ends above it, the cascade stands. An aperture whose source lies
+reaches the plane. With both ends above it, each end's mirror (below). An aperture whose source lies
 within $10^{-3}$ rad of the plane is evaluated at that angle: its limit as $\gamma \to 0$, which
 double precision cannot reach directly, its end-point terms each growing as $1/\gamma$; its weight
 stays its own $\gamma$. In space the ray is the field in
 the plane at $k\sin\beta$ times $\sin\beta/\sqrt{\ell_t}$, $\ell_t$ the ray's length in the plane: a
 wave $e^{ik_t\ell_t}/\sqrt{\ell_t}$ in the plane is $e^{ik\ell}/\ell$ in space, $\ell = \ell_t/\sin\beta$.
+
+**Both ends above the face's plane.** With the source and the receiver both above a shared
+face's plane, each before its own edge, neither can be the aperture's source, and the cascade fails
+as an end nears the plane for the same reason as below it: the second edge lies in the first's
+transition. Near the plane the wave one edge diffracts toward the other is odd in the end's angle
+$\gamma$ off the plane -- the transition's Fresnel integral on one side is minus the other's -- so
+the pair's field with an end $\gamma$ above the plane is minus its field with that end mirrored to
+$\gamma$ below, the aperture's own case, and the ray over the near edge alone, which the ray set
+traces once the end is above the plane, carries the rest. Each end's mirror gives an estimate:
+
+$$
+u = -\frac{\gamma_R\,u_{S'} + \gamma_S\,u_{R'}}{\gamma_S + \gamma_R},
+$$
+
+$u_{S'}$ the aperture with the source's mirror as its source and $u_{R'}$ the same from the
+receiver's end, each weighted by the other end's angle above the plane, so that the end nearer it,
+whose transition it is, governs. As an end falls to the plane its own mirror takes all the weight
+and meets its aperture from below: either side, the pair's field there is half the near edge's ray.
+A wall between two corners is the same problem turned on its side, the ends in front of the wall
+beyond its corners, and takes the same rule. The mirror needs the face along the line between the
+edges. Across a step (below), the near edge's
+transition at the far one is not odd in that sense: the mirrored field was 12 dB from the
+boundary-element solution there, and the cascade stands.
 
 **Across a step.** Two parallel edges that share no face -- a ridge above a step down to a lower
 roof's edge, a taller block's far edge above a lower neighbour's -- take the same integral where the

@@ -319,6 +319,9 @@ struct Fields
             {&slopes, {42.0, 10.0, 1.5}, {-20.0, 15.0, 40.0}},
             // A flush microphone on a roof, behind its edge from a low source.
             {&blocks, {-20.0, 30.0, 5.0}, {30.0, 30.0, 20.0}},
+            // Both ends above a roof's plane, the source low over it: the pair
+            // takes each end's mirror (double_wedge.cpp, mirrored_weights).
+            {&blocks, {-40.0, 30.0, 21.0}, {70.0, 30.0, 20.5}},
         };
         for (const auto& [city, source, microphone] : cases)
         {
@@ -363,7 +366,8 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
     std::vector<std::vector<double>> cpu(count, std::vector<double>(bands.size()));
     gpu::BandEnergies energies(device);
     std::vector<std::size_t> host_first, point_first;
-    std::size_t shared = 0, thrice = 0, chained = 0, between = 0, plates = 0, roof_plates = 0, slope_walls = 0;
+    std::size_t shared = 0, thrice = 0, chained = 0, between = 0, plates = 0, roof_plates = 0, slope_walls = 0,
+                mirrored = 0;
     const std::vector<double> middles = sub_band_middles(bands, c);
     FloorModel grass;
     grass.admittance = ground_impedance(GroundModel {}, middles, c);
@@ -389,6 +393,7 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
         for (const PointRay& ray : field.rays())
         {
             slope_walls += !ray.roof_facades.empty() && !ray.facades.empty();
+            mirrored += ray.shared && ray.shared_face.sz > 0.0 && ray.shared_face.rz > 0.0;
             thrice += ray.wedges == 3;
             chained += ray.wedges > 3;
             between += ray.between != PointRay::no_facade;
@@ -411,6 +416,7 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
         point_first.push_back(energies.add(point[i]));
     }
     REQUIRE(shared > 0);
+    REQUIRE(mirrored > 0);
     // Rays of three wedge terms and of more, and rays with a facade between
     // two edges, take the same kernel.
     REQUIRE(thrice > 0);

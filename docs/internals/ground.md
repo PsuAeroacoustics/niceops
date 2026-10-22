@@ -543,6 +543,37 @@ exactly. What to keep:
   tenths of the other; a plain average switches to one of them when an end crosses the plane, a
   0.3-1 dB step. The angle weights go smoothly to the evaluation that remains, and swap with the
   ends, so reciprocity holds to round-off.
+- **With both ends above a flat face's plane, each end's mirror below it, negated**
+  (`mirrored_weights`). The cascade is not a level to blend toward there: with the source low over
+  the roof it steps by up to 12 dB across the plane on its own, and above the plane it was 2-4 dB low
+  against the BEM, because the far edge is in the near edge's transition whichever side the end is
+  on. The near edge's transition wave at the far edge is odd in the end's angle off the plane, so
+  minus the mirror's field is the pair's, the ray over the near edge carrying the rest. What has to
+  hold:
+  - **Weight each mirror by the other end's angle**, so the end nearer the plane governs. Weighted
+    by its own angle the BEM score is the same (0.20 dB rms), but as an end crosses the plane the
+    weight must pass to that end's own mirror: only it meets its aperture from below, each side
+    giving half the near edge's ray. That identity holds to 0.03 dB (the aperture at the plane,
+    0.426, against half the ray, 0.429), which is what leaves 0.45 dB of step at most.
+  - **The sign rides in the mirrored aperture's node weights** (`shared_face_geometry`), so
+    `aperture_at` and the GPU's `face_amplitudes` take it as any end; their weights stay positive.
+    It costs nothing measurable: 3,000 of DigiCity's field microphones on the GPU took 4.27 -> 4.40 s
+    with the source at the hover spot and 1.95 -> 1.97 s with it 12 m up, though there a quarter of
+    them move, through walls between corners.
+  - **No fade back to the cascade far from the plane.** From 20° up the mirror and the cascade agree
+    to 0.03 dB rms against the BEM, and where an end passes over its own edge (the rule's other
+    boundary, the cascade beyond it) the level steps by what it did with the cascade on both sides,
+    within 0.06 dB: other rays switch at that vertical too.
+  - **Not the receiver's aperture at its own position above the line.** It holds the ray over the
+    near edge as a stationary point inside the aperture, and with that ray dropped from the ray set
+    it was 0.27 dB rms 0.1 m above the plane; higher up it failed, to +48 dB: Filon's rule needs the
+    path length monotonic along each panel, and the source's reflection off the face's plane beyond
+    the near edge, which no ray carries, is subtracted with the unbounded field.
+  - **Not across a step.** For the tilted pair with the source 0.5° above its line the receiver's
+    aperture gave the pair −40 dB and the source's mirror −28; the BEM sided with the aperture. The
+    cascade stands there, and the level still steps 2.2-2.7 dB where the microphone crosses the
+    line, the direct ray and both single diffractions at their boundaries at once; swapping the
+    pair's term for the mirror does not touch it.
 - **An aperture's source within 1e-3 rad of the line is taken at 1e-3 rad**, at its own distance
   (`off_the_line`, in `aperture`, `aperture_spectrum` and `aperture_geometry`, so the GPU's
   sampled geometry too); its weight stays its own angle. With the receiver above the line the
@@ -588,10 +619,8 @@ exactly. What to keep:
     reflected ray is traced there, `Buildings::over` taking a roof's edge to 1e-9 m). A microphone
     in a roof's plane took the cascade with the first edge's ray still blocked, 3-9.6 dB high
     against the BEM; one on the reflection boundary took the aperture and the reflected ray, 13 dB
-    at a point (`above a step's lower roof the field holds to its boundaries`). The switch itself
-    still steps the level, 2.5-4.3 dB across the plane with the source above it and 0.9 dB across
-    the reflection boundary: a blend of aperture and cascade there would take the GPU's aperture
-    kernel too.
+    at a point (`above a step's lower roof the field holds to its boundaries`). The switch across
+    the reflection boundary still steps the level by up to 0.94 dB.
   Known: across the line the level steps by 0.5-2 dB where the cascade steps 0-1.5. The end
   correction `c` reaches 2.1 for a source grazing the first wedge's other face (a flat roof), whose
   reflection UTD takes as infinite; on a shared face `c` is near 1 wherever the edges are in

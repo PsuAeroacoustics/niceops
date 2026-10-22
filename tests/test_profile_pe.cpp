@@ -354,7 +354,9 @@ TEST_CASE("the profile ray is reciprocal", "[profile_pe][point_paths]")
 // The profile ray is weighed in and the rays it replaces out by the ends'
 // elevations, the ends' angles off the vertical over the outer corners and
 // the line's distance from the blocks' ends: smooth, where the cascades step
-// 11 dB with the microphone in the roofs' plane.  Each sweep's largest second
+// 3.9 dB with the microphone in the roofs' plane (the chains of three and
+// four edges over the row; a twice-diffracted ray over a roof keeps its level
+// through its plane, double_wedge.cpp).  Each sweep's largest second
 // difference against its largest field, as in the 2-D test, with and without.
 TEST_CASE("the profile ray comes in and out smoothly", "[profile_pe][point_paths]")
 {
@@ -417,7 +419,7 @@ TEST_CASE("the profile ray comes in and out smoothly", "[profile_pe][point_paths
         // ...and their step in the roofs' plane gone.
         if (std::string(w.name) == "height")
         {
-            REQUIRE(worst[0] > 0.2);
+            REQUIRE(worst[0] > 0.08);
             REQUIRE(worst[1] < 0.02);
         }
     }
