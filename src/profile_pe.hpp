@@ -10,14 +10,16 @@
 // field over the row instead.
 //
 // Two-dimensional, in the plane normal to the blocks' edges: u across them, z
-// up, a line source.  The march is Crank-Nicolson with the Pade(1,1)
-// wide-angle operator,
+// up, a line source.  The march is split-step Pade (Collins; the propagators
+// of pade_propagator.hpp) on the wide-angle operator,
 //
-//   (1 + (1 - i k du) q / 4) psi(u + du) = (1 + (1 + i k du) q / 4) psi(u),
+//   psi(u + du) = r(q) psi(u) ~ exp(i k du (sqrt(1 + q) - 1)) psi(u),
 //   q = d^2 / (k^2 dz^2) + i a(z),  p = psi exp(i k u),
 //
-// rigid ground (a ghost node) at the roof under it or at the street's floor,
-// and an absorbing layer at the top.  It starts on the first block's front
+// in steps of up to eight wavelengths (the rest of each roof or street under
+// an eighth of one by a Crank-Nicolson step), with rigid ground (a ghost node)
+// at the roof under it or at the street's floor and an absorbing layer at the
+// top, both sized in profile_pe.cpp.  It starts on the first block's front
 // face with the source's wave above the roof (Kirchhoff: what would meet the
 // face below is dropped, as it is wherever the ground steps up), and stops a
 // few wavelengths before the last block's back edge.  There the field and its
@@ -35,8 +37,8 @@
 // the back corner and was 1.3 dB low behind one block.  What is left out: the
 // waves the march cannot carry back, the street's reverberation between its
 // walls, and the roofs' and the streets' floors' absorption, rigid here.
-// Against boundary elements (FIDELITY): one street 1.7 dB rms (UTD 3.4), two
-// streets 2.2 (6.7), 1 kHz 0.3 (3.5).
+// Against boundary elements (FIDELITY): one street 1.6 dB rms (UTD 3.4), two
+// streets 2.1 (6.7), 1 kHz 0.3 (3.5).
 
 #include <array>
 #include <complex>

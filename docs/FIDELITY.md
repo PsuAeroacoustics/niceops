@@ -1155,23 +1155,33 @@ cascades it replaces (`--no_profile_pe`), error re the exact level, dB, mean, rm
 
 | Row | Sources (elevation over the first roof, distance) | Cases | Profile field | Cascades |
 | --- | --- | --- | --- | --- |
-| One street, 125-500 Hz | 1.1°, 100 m; 5.7°, 50 m | 18 | −1.52, 1.65, 2.49 | +1.05, 3.40, 8.04 |
-| One street, 1 kHz (20 elements) | the same | 6 | −0.26, 0.33, 0.48 | −1.53, 3.49, 4.69 |
-| One street, 125-500 Hz (30) | 16.7°, 50 m | 9 | −0.33, 1.13, 1.73 | −1.42, 2.19, 3.86 |
-| One street, the second block 8 m high | 1.1°, 100 m; 5.7°, 50 m | 18 | +0.52, 1.15, 1.55 | +1.27, 1.86, 3.17 |
-| Two streets, 125-500 Hz (30) | all three | 27 | −1.81, 2.15, 3.61 | +4.11, 6.70, 14.54 |
+| One street, 125-500 Hz | 1.1°, 100 m; 5.7°, 50 m | 18 | −1.49, 1.61, 2.40 | +1.05, 3.40, 8.04 |
+| One street, 1 kHz (20 elements) | the same | 6 | −0.20, 0.28, 0.40 | −1.53, 3.49, 4.69 |
+| One street, 125-500 Hz (30) | 16.7°, 50 m | 9 | −0.29, 1.03, 1.60 | −1.42, 2.19, 3.86 |
+| One street, the second block 8 m high | 1.1°, 100 m; 5.7°, 50 m | 18 | +0.61, 1.18, 1.50 | +1.27, 1.86, 3.17 |
+| Two streets, 125-500 Hz (30) | all three | 27 | −1.77, 2.10, 3.55 | +4.11, 6.70, 14.54 |
 
 The cascades do not settle: over one street they are 1.2-1.6 dB low at 125 and 250 Hz and 8 dB
 high at 500 Hz at every microphone, and leaving out the thrice-diffracted rays moves their mean
 from +1.1 to −3.8 dB. The profile field's error is a bias that falls with frequency: over one
-street 2.3-2.5 dB low at 125 Hz, 1.0-1.3 at 250 and 0.8-1.1 at 500, over two 2.4-3.6 at 125 Hz.
+street 2.2-2.4 dB low at 125 Hz, 0.9-1.2 at 250 and 1.0-1.3 at 500, over two 2.2-3.6 at 125 Hz.
 That is the streets' reverberation between their walls, which the march does not carry back. One
 block alone, and two touching (a step up or down, no street), are left to the cascades: 0.16 dB
-rms for the block, 0.62 and 1.99 for the steps, which the profile field does not better (0.66 and
-2.04 in two dimensions). The 2-D solver's own grid moves these by under 0.03 dB rms for reaches of
-15 to 40 wavelengths above the roofs, absorbing layers of 15 to 50 and Huygens lines 2 to 8
-wavelengths back.
+rms for the block, 0.62 and 1.99 for the steps, which the profile field does not better (0.65 and
+2.03 in two dimensions).
 
+- **Convergence.** Against the same march in a domain 250 wavelengths high, a street's parts are
+  within 0.09 dB at 1, 3.15 and 8 kHz, from a source 100 m off and from a microphone 4 m before the
+  row; a domain 15 wavelengths high, which reflected the waves meeting its absorbing layer near
+  grazing, was 1.1 dB off at 3.15 kHz and 3 dB at 8 kHz. Over three rows from 125 Hz to 8 kHz the
+  grid's twenty points a wavelength are within 0.022 dB of a fourth-order (Numerov) march on the
+  same grid; sixteen points would be 0.07 off, and Numerov's own fewer points buy nothing, the
+  roofs' corners holding both orders to second-order convergence (at equal cost, ten points of
+  Numerov 0.18 dB against twelve of second order 0.15). The
+  split-step march is within 0.04 dB of Crank–Nicolson at a tenth of a wavelength, and its 50°
+  within 0.03 dB of 60° for sources to 40° over the first roof. With the roofs on nodes the level
+  is smooth in frequency (its largest second difference 0.005 dB over 480-520 Hz in half-hertz
+  steps, roofs at 10 and 8 m), where a roof between nodes stepped it by 0.2 dB.
 - **Continuity.** Swept in 240 steps at 250 Hz -- the microphone 2 m behind the street from 1.2
   to 19.2 m up, the source's elevation through 22-46°, the line out past the blocks' ends, the
   microphone over the last roof's corner, and the microphone's elevation through the source's --
@@ -1188,15 +1198,15 @@ wavelengths back.
   row and with a building off it; the GPU's levels within 0.02 dB of the CPU's.
 - **EDGE.** Only UE12's and UE13's receiver R3, behind both terraces, takes the profile field
   (weights 0.21-1). Against the FDTD there (1.6-6.3 kHz at model scale), the floor source's band
-  levels go from 3.54 dB above it on average to 0.98 below (UE12) and from 1.85 to 1.06 above
-  (UE13), the drone's within 0.05 dB of where they were (+0.5 and +0.6); over each row's four
-  receivers the rays' rms against the FDTD goes 2.30 → 1.65 dB (UE12 floor), 2.73 → 2.61 (UE13
-  floor), 0.40 → 0.34 and 0.36 → 0.38 (the drones). From the floor source the measurements read
-  4.2 and 6.1 dB above the FDTD at R3, so against them those rows go 4.09 → 4.82 and 5.91 → 6.06 dB
+  levels go from 3.54 dB above it on average to 1.00 below (UE12) and from 1.85 to 1.07 above
+  (UE13), the drone's within 0.06 dB of where they were (+0.5 and +0.6); over each row's four
+  receivers the rays' rms against the FDTD goes 2.30 → 1.66 dB (UE12 floor), 2.73 → 2.61 (UE13
+  floor), 0.40 → 0.35 and 0.36 → 0.37 (the drones). From the floor source the measurements read
+  4.2 and 6.1 dB above the FDTD at R3, so against them those rows go 4.09 → 4.80 and 5.91 → 6.06 dB
   rms, and all 1124 shadowed and lit band levels 3.74 → 3.77.
-- **Cost.** A street's four rays over 24 bands from 50 Hz to 10 kHz take 6.7 s of one core,
-  0.21 s to 1 kHz, where the 28 rays they replace take 1 ms. The march grows as the frequency
-  squared.
+- **Cost.** A street's four rays over 24 bands from 50 Hz to 10 kHz take 0.29 s of one core,
+  0.11 s to 4 kHz, where the 28 rays they replace take 1 ms. The march grows as the frequency
+  squared, and holds 0.27 s of the 0.29; the factorizations 0.06 and the Huygens line 0.04.
 
 **On the GPU** (the default on a Mac, an M4 Pro), which works in single precision:
 

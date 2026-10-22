@@ -620,8 +620,36 @@ exactly. What to keep:
     roof. A fade by distance, half the block's height, kept 65% of the cascades at a microphone in
     the roofs' plane 2 m behind the row, where they step 11 dB; one of 0.1 D reached street-level
     microphones and blended the cascades back in, 7.1 dB at worst over two streets.
-  - **Each roof's or street's matrix is factored once** (`Factored`), for every step over it and
-    both starts.
+  - **The march is split-step Padé in a fixed set of step lengths** (8 down to ⅛ wavelength, the
+    longest as often as it fits, each shorter once at most, the rest by one `CrankNicolson`
+    step), so every face is met exactly and the propagators are fitted once a process
+    (`propagators()`; a fit costs 1-2 ms, which would have outweighed a low band's whole march).
+    It is within 0.04 dB of Crank–Nicolson at a tenth of a wavelength. 50° rather than 60°: a
+    sixth fewer terms, within 0.03 dB for sources to 40° over the first roof.
+  - **Each pole is factored from the top down** (`factor_from_top`): rows above the ground do not
+    depend on it, so one factorization serves every roof and street, the ground's pivot formed
+    per solve, and below the layer the coefficients settle to the recurrence's fixed point, so
+    only the layer and the rows to settle are factored. The sweep takes every pole a row at a
+    time (`split_step<P>`, the count a template parameter), both fields in the one loop; that last
+    was 12%.
+  - **The domain grows as sqrt(8 lambda L) above 15 wavelengths**, L the march's length, for the
+    reach and for the absorbing layer. With 15 of each a street's parts were 1.1 dB off their
+    converged values at 3.15 kHz and 3 dB at 8 kHz: the layer, a fixed number of wavelengths,
+    reflects the waves meeting it near grazing, whose vertical wavelength is much longer. Basing
+    the scale on the source's distance instead failed for a march from a nearby microphone. The
+    Huygens line stops 30 wavelengths over the highest roof or end; 15 was 0.24 dB short.
+    `the profile field is converged in its domain at high frequency` pins it.
+  - **The spacing puts the roofs on nodes** (`aligned_spacing`, shortening it by up to a tenth). A
+    roof between nodes was taken at the nearer, a level step of 0.2 dB as the frequency moved it
+    across (`the profile field is smooth in frequency`). The propagators' fit allows for the
+    shortest spacing.
+  - **Numerov in height was built and dropped.** Fourth order at ten points a wavelength halves
+    the column, but the roofs' corners hold it to second-order convergence like the plain second
+    difference: at equal cost the two are equally accurate (ten points of Numerov 0.18 dB off,
+    twelve of second order 0.15). Twenty points of second order are within 0.022 dB.
+  - Together: a street's row to 10 kHz in 0.29 s of one core, from 6.7 s, more accurate than it
+    was. What is left is the march itself at the top bands (it grows as f^2); taking fewer
+    wavenumbers there is the next lever, and would change results.
   - Touching blocks keep the cascades: the profile does no better there (2-D, a step up 2.04 dB
     rms against the cascades' 1.99). So do a single block and a pitched roof.
 - **The 2-D field converts to 3-D per ray, by sin(beta)/sqrt(l_t).** At beta = 90° that is exact

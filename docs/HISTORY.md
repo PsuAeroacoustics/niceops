@@ -4,6 +4,16 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## The row's parabolic equation, faster and converged (October 2026)
+
+The parabolic equation over a row of roofs now marches by split-step Padé and takes a row to
+10 kHz in 0.29 s of CPU rather than 6.7. Its domain above the roofs used to be a fixed 15
+wavelengths high with a layer as thick, which reflected the near-grazing waves at high frequency:
+a street's parts were 1.1 dB off their converged values at 3.15 kHz and up to 3 dB at 8 kHz. The
+domain now grows with the row's length, and the roofs sit on grid nodes, where the level used to
+step by up to 0.2 dB as the frequency moved a roof between two. Against boundary elements one
+street goes 1.65 → 1.61 dB rms and two 2.15 → 2.10. EDGE's UE12 and UE13 move with it (FIDELITY).
+
 ## A row of roofs by a parabolic equation (October 2026)
 
 Over a row of flat-roofed blocks with a street between, crossed near grazing, the point model

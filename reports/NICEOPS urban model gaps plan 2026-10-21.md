@@ -101,7 +101,8 @@ bias at 125 Hz, 2.3-3.6 dB, the streets' reverberation the march cannot carry ba
 keep the cascades, which hold as well there; so does UE02's pitched step. EDGE: only UE12's and UE13's receiver R3,
 behind both terraces, takes it, and moves toward the FDTD (UE12's floor source from 3.5 dB above it to 1.0 below;
 the row's rms 2.30 → 1.65 dB), away from the measurements, which read 4-6 dB above the FDTD there (harness
-RESULTS). Cost: 6.7 s a row to 10 kHz on one core, the next thing to fix.
+RESULTS). Cost: 0.29 s a row to 10 kHz on one core after the optimization that followed (split-step Padé),
+from 6.7; that work also found the high-frequency domain unconverged (up to 3 dB at 8 kHz) and fixed it.
 
 ## Step 1: a vertex term for UTD
 

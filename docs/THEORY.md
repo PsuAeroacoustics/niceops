@@ -1740,29 +1740,47 @@ reflect only in those roofs and walls: the direct and floor rays, the roofs' ref
 diffracted rays and chains over it, and the walls' rays in its streets.
 
 In the plane normal to the edges, $u$ across the blocks from the source and $z$ up, the field
-$p = \psi\,e^{iku}$ is marched by Crank–Nicolson with the Padé(1,1) wide-angle operator,
+$p = \psi\,e^{iku}$ is marched on the wide-angle equation by Collins' split-step Padé method [56], in the
+propagators of the parabolic equation (§9.1),
 
 $$
-\Bigl(1 + \tfrac{1 - ik\,\Delta u}{4}\,q\Bigr)\,\psi(u + \Delta u) = \Bigl(1 + \tfrac{1 + ik\,\Delta u}{4}\,q\Bigr)\,\psi(u),
+\psi(u + \Delta u) = \Bigl[c_0 + \sum_j c_j\,(q - p_j)^{-1}\Bigr]\psi(u)
+\approx e^{ik\Delta u\,(\sqrt{1 + q} - 1)}\,\psi(u),
 \qquad q = \frac{\delta_z^2}{(k\,\Delta z)^2} + i\,a(z),
 $$
 
-$\delta_z^2$ the second difference, on twenty points a wavelength in height and ten steps a
-wavelength in range, rigid ground (a ghost node) at the roof or the street's floor beneath, and
-over the physical domain -- fifteen wavelengths above the highest roof or end -- an absorbing layer
-as thick, $a$ rising as the square of the depth into it. The march starts on the first block's
-front face with the incident wave above the roof, dropping what would meet the face below it
-(Kirchhoff, as wherever the ground steps up), and stops on a vertical line $\min(4\lambda, w/2)$
-before the last block's back edge, $w$ that block's width. From that line the field reaches the
-receiver through the back corner's own Green's function $G_W$, the rigid right-angled wedge's by
-UTD -- its direct wave and face reflections where they reach $R$, and its diffraction:
+$\delta_z^2$ the second difference, accurate for every mode within 50° of horizontal. Each roof and
+each street is crossed in steps of 8, 4, 2, 1, ½, ¼ and ⅛ wavelengths, the longest as often as it
+fits and each shorter at most once, and what is left, under an eighth, by one Crank–Nicolson step,
+$(1 + \tfrac{1 - ik\Delta u}{4}q)\,\psi(u + \Delta u) = (1 + \tfrac{1 + ik\Delta u}{4}q)\,\psi(u)$,
+so that every face is met exactly and the propagators are fitted once. The grid has twenty points a
+wavelength in height, shortened by up to a tenth so that the roofs fall on nodes, with rigid
+ground (a ghost node) at the roof or the street's floor beneath. Above the highest roof or end the
+physical domain reaches a margin $h$ further, and an absorbing layer as thick lies on it, $a$
+rising as the square of the depth into it, with
+
+$$
+h = \max\bigl(15\lambda,\ \sqrt{8\lambda L}\bigr),
+$$
+
+$L$ the march's length. A layer a fixed number of wavelengths thick reflects the waves that meet it
+near grazing, whose vertical wavelength $\lambda/\sin\theta$ is far longer than $\lambda$; what has
+to be absorbed is what would come back down to the roofs within the march, which leaves at
+$\sin\theta \approx h/L$, so the layer must go as $\lambda L/h$, and reach and layer together as
+the root. The march starts on the first block's front face with the incident wave above the roof,
+dropping what would meet the face below it (Kirchhoff, as wherever the ground steps up), and stops
+on a vertical line $\min(4\lambda, w/2)$ before the last block's back edge, $w$ that block's width.
+From that line the field reaches the receiver through the back corner's own Green's function $G_W$,
+the rigid right-angled wedge's by UTD -- its direct wave and face reflections where they reach $R$,
+and its diffraction:
 
 $$
 p(R) = \int \Bigl(-G_W(Q, R)\,\frac{\partial p}{\partial u} + p\,\frac{\partial G_W}{\partial u}\Bigr)\,dz,
 \qquad \frac{\partial p}{\partial u} = ik\,\frac{1 + 3q/4}{1 + q/4}\,\psi\,e^{iku},
 $$
 
-along the line from the roof up, tapered by a raised cosine over its upper half. The free-space
+along the line from the roof to 30 wavelengths above the highest roof or end, tapered by a raised
+cosine over its upper half. The free-space
 kernel in its place misses the back corner. $\partial G_W/\partial u$ is a central difference,
 one-sided where a shadow boundary passes between its points (the diffraction cancels a wave's step
 there only to $O(1/k\rho)$), and a receiver within $10^{-9}$ rad of a boundary is moved off it for

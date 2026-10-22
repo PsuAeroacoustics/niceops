@@ -502,3 +502,64 @@ TEST_CASE("a row's profile rays take the floor's model at their bounces", "[prof
         REQUIRE(std::abs(grass[b] - rigid[b]) > 0.1);
     }
 }
+
+// The domain above the roofs grows with the march's length at high frequency
+// (profile_pe.cpp): a layer a fixed number of wavelengths thick reflects the
+// waves meeting it near grazing, and with 15 a street's parts were 1.1 dB
+// off at 3.15 kHz and 3 dB at 8 kHz.  Against the same march in a domain 250
+// wavelengths high (and its Huygens line as high), from a source 100 m off
+// and from a microphone 4 m before the row.
+TEST_CASE("the profile field is converged in its domain at high frequency", "[profile_pe]")
+{
+    struct Reference
+    {
+        ProfileProblem problem;
+        double f;
+        double level[2][2];
+    };
+    ProfileProblem far, near;
+    far.blocks = {{100, 110, 10}, {120, 130, 10}};
+    far.sz = 12;
+    far.ru = 134;
+    far.rz = 1.2;
+    near.blocks = {{4, 14, 10}, {24, 34, 10}};
+    near.sz = 1.2;
+    near.ru = 134;
+    near.rz = 12;
+    const std::vector<Reference> references {
+            {far, 3150, {{-53.497, -54.661}, {-78.040, -79.220}}},
+            {far, 8000, {{-55.598, -56.761}, {-86.146, -87.318}}},
+            {near, 3150, {{-54.713, -78.951}, {-55.912, -80.150}}},
+            {near, 8000, {{-56.823, -87.057}, {-58.022, -88.256}}},
+    };
+    for (const Reference& r : references)
+    {
+        const ProfileParts parts = profile_parts(r.problem, 2.0 * pi * r.f / 343.2);
+        for (int a = 0; a < 2; a++)
+            for (int b = 0; b < 2; b++)
+            {
+                INFO(r.f << " Hz, source " << r.problem.sz << " m up, part " << a << b);
+                REQUIRE(20.0 * std::log10(std::abs(parts.part[a][b])) == Catch::Approx(r.level[a][b]).margin(0.12));
+            }
+    }
+}
+
+// The spacing puts the roofs on nodes (aligned_spacing): a roof between two
+// was taken at the nearer, and the level stepped by up to 0.2 dB as the
+// frequency moved it across.  Two roof heights, 480 to 520 Hz in half-hertz
+// steps: the level's largest second difference was 0.33 dB.
+TEST_CASE("the profile field is smooth in frequency", "[profile_pe]")
+{
+    ProfileProblem p;
+    p.blocks = {{100, 110, 10}, {120, 130, 8}};
+    p.sz = 12;
+    p.ru = 134;
+    p.rz = 1.2;
+    std::vector<double> level;
+    for (int i = 0; i <= 80; i++)
+        level.push_back(20.0 * std::log10(std::abs(profile_parts(p, 2.0 * pi * (480.0 + 0.5 * i) / 343.2).part[0][0])));
+    double worst = 0.0;
+    for (std::size_t i = 1; i + 1 < level.size(); i++)
+        worst = std::max(worst, std::abs(level[i + 1] - 2.0 * level[i] + level[i - 1]));
+    REQUIRE(worst < 0.03);
+}

@@ -246,7 +246,9 @@ Commands and options are in `README.md`; rationale is in
   averages their interference: one ray carrying the sum was 3.3 dB high at 2 kHz. They share one
   solve per wavenumber (`ProfileSolutions`). Weighed in by elevation, the line's clearance of the
   blocks' ends and the ends' angle off the vertical over the outer corners; the field is reciprocal
-  and smooth through all of it (tests in `test_profile_pe.cpp`). Costly: 6.7 s a row to 10 kHz.
+  and smooth through all of it (tests in `test_profile_pe.cpp`). Split-step Padé in fixed step
+  lengths, poles factored from the top; the domain grows as sqrt(8 lambda L) or the layer reflects
+  grazing waves (3 dB at 8 kHz). 0.29 s a row to 10 kHz; Numerov was tried and buys nothing.
 - **`--scattering` with `--buildings` fills the buildings' shadows** (`turbulence_scattering`, Forssén
   et al. 2014 without its canyon term). gamma_T is taken as velocity turbulence of
   C_v^2 = (3/22) c0^2 gamma_T; the paper's temperature coefficients are not used (they contradict its
