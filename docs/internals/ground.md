@@ -582,6 +582,16 @@ exactly. What to keep:
     cases above a lower roof by up to 1.9 dB, mostly the right way; small, but principled.
   - **Under `--edge_source` a step takes its transition from the aperture**, not the integral:
     on UE01 and UE02 the integral was 1-3 dB low where the aperture is within 0.5.
+  - **Each boundary of the rule goes to the side the ray set gives it** (`forward_weight`): an end
+    within 1e-9 m of the line's plane is below it (the ray over the first edge alone is blocked
+    there), and a receiver within 1e-9 m of the face's reflection boundary is reflected (the roof's
+    reflected ray is traced there, `Buildings::over` taking a roof's edge to 1e-9 m). A microphone
+    in a roof's plane took the cascade with the first edge's ray still blocked, 3-9.6 dB high
+    against the BEM; one on the reflection boundary took the aperture and the reflected ray, 13 dB
+    at a point (`above a step's lower roof the field holds to its boundaries`). The switch itself
+    still steps the level, 2.5-4.3 dB across the plane with the source above it and 0.9 dB across
+    the reflection boundary: a blend of aperture and cascade there would take the GPU's aperture
+    kernel too.
   Known: across the line the level steps by 0.5-2 dB where the cascade steps 0-1.5. The end
   correction `c` reaches 2.1 for a source grazing the first wedge's other face (a flat roof), whose
   reflection UTD takes as infinite; on a shared face `c` is near 1 wherever the edges are in

@@ -72,7 +72,13 @@ SharedFace reversed(const SharedFace& face)
 // at that end does not apply.
 double forward_weight(const SharedFace& face, double sx, double sz, double rx, double rz)
 {
-    if (!(sz < 0.0 && sx < 0.0))
+    // An end in the line's plane, within 1e-9 m as Buildings::over takes a
+    // roof's edge, is below it, as the ray set has it: there the ray over
+    // the first edge alone is blocked by the face, and taking the cascade
+    // without it summed the two edges' waves twice over, 8 dB high at a
+    // microphone in a roof's plane behind it.  Its aperture is the limit's
+    // (the source clamped to 1e-3 rad), whatever its tiny weight.
+    if (!(sz < 1e-9 && sx < 0.0))
         return 0.0;
     if (face.drop2 > 0.0)
     {
@@ -84,12 +90,17 @@ double forward_weight(const SharedFace& face, double sx, double sz, double rx, d
             return 0.0;
         const double drop = face.drop2;
         const double theta = from_face(angle2(rx - face.width, rz), drop);
-        const bool reflected = theta + drop < pi;
+        // Reflected as the ray set judges it: a roof is reflected on where
+        // its bounce lies within 1e-9 m of the roof (Buildings::over), so a
+        // receiver on the boundary takes that roof's reflected ray, and with
+        // it the cascade; taking the aperture there as well counted the wave
+        // twice, 13 dB at a point.
+        const bool reflected = theta + drop < pi + 1e-9 / std::max(std::hypot(rx - face.width, rz), 1e-9);
         const bool sees_face = sz * std::cos(drop) - (sx - face.width) * std::sin(drop) > 0.0;
         if (reflected && sees_face)
             return 0.0;
     }
-    return std::atan2(-sz, -sx);
+    return std::max(std::atan2(-sz, -sx), 1e-12);
 }
 
 // The same from the second edge's end.

@@ -27,6 +27,17 @@ Steps 0-5 are done or closed on measurement. What the work since has established
 at, in order. Each item says what was measured, what would be done, how it would be checked and what
 it costs. Nothing here has been started.
 
+**Progress (2026-10-22, later).** Item 1 measured and closed: `--fade` takes the suburb's sweep
+from 10 steps to 9 (largest 3.04 → 2.23 dB) and DigiCity's 20 lines from 23 to 21 (median 1.6 →
+1.8, largest 5.1 either way): seven of DigiCity's 21 are made partners whose own legs graze another
+edge, so the handover moves rather than goes. Not worth a default, or an extension to twice rays,
+on this evidence. Item 2 re-diagnosed: no partner was missing. A microphone exactly in a roof's
+plane, or on the lower roof's reflection boundary, took both sides' waves; giving each boundary to
+the ray set's side took the step's 72 cases above its lower roof from 2.34 to 0.38 dB rms (FIDELITY,
+"Across a step"). What is left of it is the switch's own step (2.5-4.3 dB across a roof's plane with
+the source above it, 0.9 across the reflection boundary), which a blend of aperture and cascade
+would remove, the GPU's aperture kernel included.
+
 **1. Partners beyond the orders, by `--fade` (first).** The largest defect left in the field.
 - *Evidence.* Both continuity sweeps put most of their steps in one class: a ray whose partner at a
   boundary is beyond the traced orders. DigiCity (80 lines, 79,460 positions): 355 of the 434 steps

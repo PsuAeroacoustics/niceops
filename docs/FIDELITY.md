@@ -1122,10 +1122,16 @@ them. Error re the exact level, dB:
 The first row includes the same step with the taller block 9 m high. From the low source the
 pair is not tilted -- the sound crosses the taller block's roof as a shared face first -- and nothing
 moves.
-Above the lower roof both are as far off, nearly all of it at the lower roof's reflection
-boundary for the first edge's wave (8.5 m up at 5 m behind, 10 m at 10), where the ray set steps
-by up to 6 dB with either form: the first edge's ray reflected off the lower roof switching on
-is not matched by the pair's partner. Across the line through the two edges the uniform form's
+Above the lower roof the cases sit on two boundaries: the lower roof's reflection of the first
+edge's wave (8.5 m up at 5 m behind, 10 m at 10) and the taller roof's plane (10 m up). A
+microphone exactly on either takes the side the ray set gives it -- in the plane, below it; on the
+reflection boundary, the reflected side -- where it took both sides' waves at once, 3-9.6 dB high
+in the plane and 13 dB at a point on the boundary. Within 1 dB in the plane now; the cascade
+alone, which never had the aperture's rule, is as it was. Above the plane the cascade is up to
+1.9 dB low (125 Hz, the source 0.5 m over the taller roof), and across the plane the level steps
+by 2.5-4.3 dB from 1 µm below to 1 µm above with the source over that roof, across the
+reflection boundary by 0.9 dB at most: the switch from the aperture to the cascade there, which a
+blend of the two would remove. Across the line through the two edges the uniform form's
 level steps by 0.45 to 2.1 dB from 1 mm below to 1 mm above, the cascade's by 0.02 to 1.5. The
 worst is a source 0.26° over the taller block's roof: the end correction is 2.1 there, the
 first wedge's coefficient taking that roof's reflection as if the roof went on, which the

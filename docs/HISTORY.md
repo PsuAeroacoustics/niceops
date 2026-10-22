@@ -4,6 +4,15 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## A shared face's boundaries go to one side (October 2026)
+
+A microphone exactly in a roof's plane, behind a shared face or a step, or exactly on a step's
+lower-roof reflection boundary, used to take both sides' waves at once: the pair's cascade from
+one side and the blocked or reflected ray from the other. It read 3-9.6 dB high in the plane
+against boundary elements and spiked by 13 dB on the boundary. Each now takes the side the ray set
+gives it. Over the step's 72 cases above its lower roof the error goes from 2.34 to 0.38 dB rms.
+A rooftop microphone beside a roof of the same height lies in that roof's plane.
+
 ## Twice-diffracted rays off a roof at both ends (October 2026)
 
 A twice-diffracted ray may now reflect in a roof, level or a slope, at both of its ends; it used to

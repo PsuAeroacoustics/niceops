@@ -1363,7 +1363,11 @@ holds the incident wave in the first case and its reflection in the second. A so
 tilted face's plane would leave its own reflection off that plane, past the second edge, in the
 subtracted field in the second case, a wave no ray carries; its end's aperture is not taken there.
 Each end's aperture is taken only with the other end past it, a receiver behind the first edge -- an
-image in the step's own wall -- being on the source's side. With $\delta_1 = \delta_2 = 0$ all of
+image in the step's own wall -- being on the source's side. On either boundary the aperture's rule meets -- an end in the
+line's plane, a receiver on the face's reflection boundary -- it takes the side the ray set gives
+that point, which judges a roof's edge within $10^{-9}$ m: an end in the plane is below it, where
+the ray over the first edge alone is blocked, and a receiver on the boundary is in the reflection,
+where the roof's reflected ray is traced. With $\delta_1 = \delta_2 = 0$ all of
 this is the shared face's.
 
 **The shared face sampled.** The integral is needed only where the second edge lies in the first's
