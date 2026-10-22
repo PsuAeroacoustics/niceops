@@ -1049,7 +1049,7 @@ at most: the floor, or a roof below both ends of its stretch. A roof at height $
 floor's place, its image $(x, y, 2h - z)$, the bounce on the roof's footprint, and
 $\sqrt{1 - \alpha}$ for its building's absorption, on a specular ray and on either side of a
 once-diffracted one, where it counts as one of that side's reflections. A twice-diffracted ray
-takes a roof between a bare end and its edge, on either side but not both: the end's image in the
+takes a roof between a bare end and its edge, on either side or both: the end's image in the
 roof's plane stands in for the end. The edge must stand above
 the roof, since a roof's own edges carry its reflection in their coefficients. Under
 `--edge_source` a ray off a roof takes UTD: the roof's outline bounds the stretch of the edge its

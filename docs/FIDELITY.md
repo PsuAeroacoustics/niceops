@@ -1317,7 +1317,7 @@ edges unending (and the model of the day before step 1a, which moved microphone 
 those were 0.33%, 0.025% and 14.4%: the one-frame dips where two roof edges meet at a corner.
 The slope and twice-diffracted roof paths and the shared face's limit that came after move 0.85%
 of the cell-frames by more than 0.1 dB, at most 1.7 dB and +0.0001 dB on average, and leave those
-three shares as they were.
+three shares as they were. The row of roofs' profile field moves none of them.
 
 **The edge-source integral** (`--edge_source`; `src/edge_source`, `tests/test_edge_source.cpp`).
 First order, against exact solutions:
@@ -2000,7 +2000,21 @@ move 1.6% of the band levels by more than 0.1 dB, at most 3.1 dB, mean +0.0004 d
 time (122 to 130 s). On EDGE they move only UE07's drone rows, the drone over a low roof between
 taller ones, and those the wrong way by a little: against the FDTD 2.27 to 2.31 dB rms by UTD and
 0.67 to 0.75 by the edge source (where they take UTD), against the measurements 2.30 to 2.35 and
-1.11 to 1.18. Without them the rows are as before to the hundredth.
+1.11 to 1.18. Without them the rows are as before to the hundredth. With a roof at both ends --
+a drone over the suburb, 21 microphones 1.5 m over its roofs -- they add 0.5% more rays and move
+the band levels by 0.078 dB at most (mean −0.0006 dB), for 5% more time; the street microphones
+not at all (`a twice-diffracted ray reflects in a roof at each end` holds their length to image
+theory, over level roofs and slopes, both ways round).
+
+**What the pitched suburb's field still steps at.** Lines of microphones 2.5 cm apart, 1.5 m up (8
+lines, 882 positions, the drone 60 m up and a source 2 m up in a street, 250 Hz to 2 kHz summed
+flat), step by more than 1 dB at 10 places, 1.39 dB at the median and 3.04 at most: two where a
+once-diffracted ray with three or four wall reflections appears, and eight on one line at the
+district's edge, deep in a shadow (rays −75 to −114 dB), where twice-diffracted rays with one to
+three wall reflections do -- the partners DigiCity's sweep found missing too, needing more
+reflections or a third edge. None is a ray off a roof or a slope: the paths the model does not
+trace there -- an end's slope before its walls on a diffracted ray, walls on a twice-diffracted
+ray's roof side, roofs on thrice-diffracted and chain rays -- make no step on these lines.
 
 **An end in a slope's plane.** Two of the suburb's microphones, 1.5 m up, lie exactly in a slope's
 extended plane, so a ray over that slope's two rakes has one end on the line between them, where

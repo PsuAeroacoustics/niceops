@@ -1116,3 +1116,59 @@ TEST_CASE("a roof's reflection after two edges carries on where a second edge cu
             }
     }
 }
+
+// A ray over a tall block's two roof edges with a lower roof under each end:
+// it reflects in both, the source's image in the one roof and the
+// microphone's in the other standing in for the ends, and the edges, a
+// shared face's, at the points the unfolded path crosses them.  Found both
+// ways round, and level roofs and slopes alike.
+TEST_CASE("a twice-diffracted ray reflects in a roof at each end", "[pitched_roofs]")
+{
+    for (const bool slope : {false, true})
+    {
+        Footprint a, tower, b;
+        a.x = {-40.0, -5.0, -5.0, -40.0};
+        a.y = {-50.0, -50.0, 50.0, 50.0};
+        a.top = 6.0;
+        tower.x = {0.0, 10.0, 10.0, 0.0};
+        tower.y = {-200.0, -200.0, 200.0, 200.0};
+        tower.top = 20.0;
+        b.x = {15.0, 50.0, 50.0, 15.0};
+        b.y = a.y;
+        b.top = 6.0;
+        if (slope)
+        {
+            // Sheds rising toward the tower, 1 in 20, 6 m at its foot.
+            a.top = 7.75;
+            a.roof = {{0.05, 0.0, 6.25}};
+            b.top = 7.75;
+            b.roof = {{-0.05, 0.0, 6.75}};
+        }
+        const Buildings city({a, tower, b});
+        const Vec3 source(-20.0, 0.0, 9.0), microphone(30.0, 0.0, 9.0);
+        // Each end's image in the plane under it.
+        auto image = [&](const Footprint& f, const Vec3& p) {
+            if (f.roof.empty())
+                return Vec3(p.x, p.y, 2.0 * f.top - p.z);
+            const RoofPlane& plane = f.roof.front();
+            return p - (2.0 * plane.above(p)) * plane.normal();
+        };
+        const Vec3 sa = image(a, source), mb = image(b, microphone);
+        const double expected = std::hypot(0.0 - sa.x, 20.0 - sa.z) + 10.0 + std::hypot(mb.x - 10.0, mb.z - 20.0);
+        std::size_t found[2] = {0, 0};
+        for (int way = 0; way < 2; way++)
+        {
+            const PointSourceField field(city, way ? microphone : source, way ? source : microphone);
+            for (const PointRay& ray : field.rays())
+                if (ray.wedges == 2 && ray.roof_facades.size() == 2 && ray.floor == 0 && ray.facades.empty())
+                {
+                    INFO("slope " << slope << ", way " << way);
+                    REQUIRE(ray.length == Catch::Approx(expected).epsilon(1e-9));
+                    found[way]++;
+                }
+        }
+        INFO("slope " << slope);
+        REQUIRE(found[0] == 1);
+        REQUIRE(found[1] == 1);
+    }
+}

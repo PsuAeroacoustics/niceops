@@ -446,7 +446,8 @@ checks. What to keep:
   reflection and folded chains, with a box rejection on edge-to-slope legs.
   Tests cover oblique (noncommuting) mirrors with diffraction disabled, floor-contact
   launches, reciprocal specular/diffracted lengths and a screen cutting the reflected path.
-  Still absent: end -> slope -> facades -> edge, and roofs on thrice- and chain-diffracted paths.
+  Still absent: end -> slope -> facades -> edge, and roofs on thrice- and chain-diffracted paths;
+  the suburb's continuity sweep finds no step from them (FIDELITY).
 - **Twice-diffracted rays off a roof** (`PointPathOptions::twice_roofs`): `PathEnd::bounces`, once
   per end, holds each flat roof or deck below the end and each slope it stands over (after the
   floor where `max_twice_reflections` > 1), with the end's image in the plane and the candidate
@@ -458,8 +459,10 @@ checks. What to keep:
   loops (a bounce at the source's end against the microphone's images, and the reverse) share
   both. A bounce side's leg is `roof_leg`, which the once-diffracted slope sides use too: the
   reflection on the roof, then the floor's bounce. Its end takes no face (`end_face` -1), and
-  its floor records the whole unfolded leg, as a slope's does. Not done: facades on a bounce
-  side, bounces at both ends, and thrice or chains. Tests: `a roof's reflection after two edges
+  its floor records the whole unfolded leg, as a slope's does. A bounce at each end is the
+  source's bounces against the microphone's (0.08 dB at most on the suburb's rooftop microphones).
+  Not done: facades on a bounce side, and thrice or chains: a continuity sweep of the suburb found
+  no step from either (FIDELITY, "What the pitched suburb's field still steps at"). Tests: `a roof's reflection after two edges
   carries on where a second edge cuts it off` measures the step in the field against the cut-off
   ray, not in dB: at a null of the whole field UTD's own percent or so at a second edge's shadow
   boundary is a fraction of a decibel (the same ray without a roof does the same). `pruning

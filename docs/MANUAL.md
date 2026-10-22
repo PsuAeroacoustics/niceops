@@ -1987,7 +1987,7 @@ or more -- a mansard heard from low beside it, several rows of roofs -- is trace
 `--max_chain` of them. Roofs reflect as the floor does, with their building's
 absorption: a level roof replaces the floor, and reaches an end or an edge above it. A slope
 may reflect with walls and the floor on either side, or next to the edge of a once-diffracted
-ray. A twice-diffracted ray may reflect in a level roof or a slope between one end and its edge.
+ray. A twice-diffracted ray may reflect in a level roof or a slope between either end, or both, and its edge.
 Over a row of two or more flat-roofed blocks with a street between, crossed near grazing, where
 the cascades over three and four roof edges do not settle, the rays over the row give way to its
 two-dimensional field from a parabolic equation over its cross-section ([THEORY §6.5](THEORY.md),

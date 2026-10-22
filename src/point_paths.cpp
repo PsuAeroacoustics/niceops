@@ -2677,7 +2677,7 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
         }
     // With a level roof or a slope between an end and its edge
     // (options.twice_roofs): each end's bounces (PathEnd::bounces) with the
-    // other end's images, as above; not both ends off roofs.
+    // other end's images, as above, and with the other end's bounces.
     for (int side = 0; side < 2; side++)
     {
         const bool at_source = side == 0;
@@ -2710,6 +2710,28 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                         else
                             twice_pair(eo, er, plain, other_floors, roof, 1);
                     }
+                }
+            }
+        }
+    }
+    // Both ends off roofs: the source's bounces against the microphone's.
+    for (std::size_t rs = 0; rs < source_end.bounces().size(); rs++)
+    {
+        const PathEnd::Bounce& at_source = source_end.bounces()[rs];
+        for (const std::uint32_t ks : src_bounce_at[rs])
+        {
+            const std::size_t es = at_source.edges[ks];
+            as[0] = {at_source.image, &at_source.views[ks], &bare, 0, &at_source};
+            for (std::size_t rm = 0; rm < microphone_end.bounces().size(); rm++)
+            {
+                const PathEnd::Bounce& at_microphone = microphone_end.bounces()[rm];
+                for (const std::uint32_t km : mic_bounce_at[rm])
+                {
+                    const std::size_t em = at_microphone.edges[km];
+                    if (em == es)
+                        continue;
+                    bs[0] = {at_microphone.image, &at_microphone.views[km], &bare, 0, &at_microphone};
+                    twice_pair(es, em, as, 1, bs, 1);
                 }
             }
         }

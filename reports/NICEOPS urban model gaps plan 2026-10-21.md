@@ -13,7 +13,7 @@ when it is done. The [next-steps report](NICEOPS%20Urban%20Propagation%20Next%20
 | 1a | Two edges across a step take the cascade | Found by step 0: most of UE02's bias. **Done** (below) |
 | 1 | No vertex (corner) term in UTD | Affects every district, flat or pitched; the most visible artifact. **Done** (below) |
 | 1b | Three or more edges in each other's transitions (a street at grazing, a roof's near edge with a step) | Found by step 0; the largest error left in the BEM checks. **Done** for rows with a street (below) |
-| 2 | Missing slope and roof paths | Needs step 1's end treatment for its own edges' ends |
+| 2 | Missing slope and roof paths | Needs step 1's end treatment for its own edges' ends. **Done**, the rest measured and closed (below) |
 | 3 | Roofs and slopes do not light the diffuse field | Reuses step 2's roof and slope images |
 | 4 | The plane-wave tables have no roofs | Independent of 1-3; can run alongside |
 | 5 | Re-score and document | After each step, and once at the end |
@@ -200,6 +200,16 @@ Still open in this step: end -> slope -> walls -> edge; walls on a bounce side o
 bounces at both ends; roofs on thrice and chain rays. Step 3's roof-reflected diffuse lighting
 remains separate.
 
+**Measured, and closed (2026-10-22).** Bounces at both ends are in: the source's roof bounces
+against the microphone's. They move the suburb's rooftop microphones by 0.078 dB at most, for 5%
+more time, and the street microphones not at all. To see whether the other three matter, a
+continuity sweep of the suburb (8 lines 2.5 cm apart, 882 positions, the drone and a street source)
+found 10 steps above 1 dB: two from once-diffracted rays with three or four wall reflections and
+eight on one shadowed line from twice-diffracted rays with walls, the partners DigiCity's sweep
+also found missing (more reflections, or a third edge). None is a ray off a roof or a slope. The
+three paths left are energy the model does not carry, not a step in its field, and on this
+evidence small; they stay out until a measurement says otherwise.
+
 Found on the way, not step 2's, and fixed: with a microphone exactly in a slope's extended plane,
 the shared face's aperture had one end on the line between the edges and lost its precision
 (GCC against clang up to 10 dB; GPU against CPU 3.4 dB). It is now taken at its limit; the
@@ -298,6 +308,11 @@ prefilter) and 0.005 with scattering. The gable suburb: step 2 up to 2.4 dB at 1
 step 3 +0.04 dB mean with scattering. The 3-D render: 0.85% of cell-frames move by more than 0.1 dB,
 at most 1.7 dB, its continuity shares unchanged. FIDELITY and HISTORY carry each. Step 1b, for rows
 with a street, followed on 2026-10-22 (above).
+
+**Done for step 1b (2026-10-22).** EDGE: only UE12's and UE13's receiver R3 moves, toward the FDTD
+(harness 0fa41a3, 599817f). DigiCity microphone 7 and the accuracy figure: unchanged. The gable
+suburb: unchanged by construction, its roofs all pitched. The demo approach's goldens: unchanged.
+The 3-D render: no cell-frame moves, at the same cost (27,000 s of CPU).
 
 After each step: EDGE (FDTD and measured, flat and pitched), DigiCity microphone 7 and the accuracy figure, the demo
 approach's `--buildings` SELs, the gable suburb, and the 3-D render. FIDELITY's tables are re-measured where they

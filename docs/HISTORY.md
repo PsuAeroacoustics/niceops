@@ -4,6 +4,12 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## Twice-diffracted rays off a roof at both ends (October 2026)
+
+A twice-diffracted ray may now reflect in a roof, level or a slope, at both of its ends; it used to
+take one at most. Only microphones and sources over roofs see them: on the pitched suburb's
+rooftop microphones, under a drone, the band levels move by 0.078 dB at most.
+
 ## The row's parabolic equation, faster and converged (October 2026)
 
 The parabolic equation over a row of roofs now marches by split-step Padé and takes a row to
