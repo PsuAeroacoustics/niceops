@@ -648,8 +648,18 @@ exactly. What to keep:
     difference: at equal cost the two are equally accurate (ten points of Numerov 0.18 dB off,
     twelve of second order 0.15). Twenty points of second order are within 0.022 dB.
   - Together: a street's row to 10 kHz in 0.29 s of one core, from 6.7 s, more accurate than it
-    was. What is left is the march itself at the top bands (it grows as f^2); taking fewer
-    wavenumbers there is the next lever, and would change results.
+    was. What is left is the march itself at the top bands (it grows as f^2).
+  - **Sampling the parts in frequency was built and dropped.** Each part with its path's phase
+    taken out looked smooth on a plain street (0.01 rad over a third of an octave at 8 kHz), so it
+    was solved at probes and taken between in log k, as the shared faces are. A fixed spacing of
+    two thirds of an octave missed a part that sees the other end over the roofs (the direct wave
+    and the roofs' reflections, a null 12 dB deep) by 7 dB in a band. Checking each interval's
+    middle and refining where it departed, with the interpolation quadratic through the three and
+    the bands below a sixteenth of the top solved outright, held six chosen rows to 0.09 dB at
+    1.0-3.3x -- but over 40 random rows (two or three blocks, 6-25 m high, streets 6-20 m, sources
+    20-300 m off at 0.5-35°) it gained 1.35x overall and missed 27 rows by more than 0.1 dB, by
+    0.92 at worst. The parts carry structure from the streets' floors and the roofs at scales
+    near the sub-bands' own spacing, which a midpoint does not see. Do not re-derive it.
   - Touching blocks keep the cascades: the profile does no better there (2-D, a step up 2.04 dB
     rms against the cascades' 1.99). So do a single block and a pitched roof.
 - **The 2-D field converts to 3-D per ray, by sin(beta)/sqrt(l_t).** At beta = 90° that is exact

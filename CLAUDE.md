@@ -248,7 +248,8 @@ Commands and options are in `README.md`; rationale is in
   blocks' ends and the ends' angle off the vertical over the outer corners; the field is reciprocal
   and smooth through all of it (tests in `test_profile_pe.cpp`). Split-step Padé in fixed step
   lengths, poles factored from the top; the domain grows as sqrt(8 lambda L) or the layer reflects
-  grazing waves (3 dB at 8 kHz). 0.29 s a row to 10 kHz; Numerov was tried and buys nothing.
+  grazing waves (3 dB at 8 kHz). 0.29 s a row to 10 kHz; Numerov was tried and buys nothing, and
+  so does sampling the parts in frequency (1.35x on random rows, 0.9 dB off; ground.md).
 - **`--scattering` with `--buildings` fills the buildings' shadows** (`turbulence_scattering`, Forssén
   et al. 2014 without its canyon term). gamma_T is taken as velocity turbulence of
   C_v^2 = (3/22) c0^2 gamma_T; the paper's temperature coefficients are not used (they contradict its
