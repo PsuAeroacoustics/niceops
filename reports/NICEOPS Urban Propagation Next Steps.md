@@ -23,7 +23,9 @@ roofs not lighting the diffuse field, no roofs in the plane-wave tables, EDGE's 
 their own plan: [NICEOPS urban model gaps plan 2026-10-21](NICEOPS%20urban%20model%20gaps%20plan%202026-10-21.md).
 Progress: the drone rows' bias is diagnosed (step 0) and its model part fixed: two edges across a step now take the
 uniform form (step 1a), which took UE02's drone row from +3.9 to +1.9 dB. A new gap from the diagnosis, three or more
-edges in each other's transitions (a street at grazing, up to 8 dB), is step 1b.
+edges in each other's transitions (a street at grazing, up to 8 dB), is step 1b, done for rows with a street
+(2026-10-22): a parabolic equation over the row's cross-section, 3.4 → 1.65 dB rms over one street and 6.7 → 2.15
+over two against boundary elements.
 
 **The research review** ([Urban propagation research review 2026-10-20](Urban%20propagation%20research%20review%202026-10-20.md))
 ranks what the literature says would improve the predictions most, for rotorcraft and drones among buildings:

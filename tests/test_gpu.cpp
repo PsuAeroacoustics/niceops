@@ -659,3 +659,55 @@ TEST_CASE("the GPU takes a relief's specular share as the CPU does", "[gpu]")
     for (std::size_t b = 0; b < bands.size(); b++)
         REQUIRE(std::abs(band_level(bands[b], sub_bands(bands[b], 343.2), &energy[first + 3 * b]) - cpu[b]) < 0.02);
 }
+
+// A row's profile rays (PointPathOptions::profile_pe) take their field from
+// the CPU, at every sub-band, as complex per-ray factors: the GPU's levels
+// are band_levels', the profile weighed in wholly and in part, on a rigid
+// floor, one reflecting less, grass, and a plate under a flush microphone.
+TEST_CASE("the GPU takes a row's profile rays as the CPU does", "[gpu][profile_pe]")
+{
+    gpu::Device& device = device_or_skip();
+    const Buildings street {{block(0.0, -400.0, 10.0, 400.0, 10.0), block(20.0, -400.0, 30.0, 400.0, 10.0)}};
+    const std::vector<double> bands {125, 250, 500, 1000};
+    const double c = 343.2;
+    const std::vector<double> reflection(street.facades().size() * bands.size(), 0.9);
+    const std::vector<double> middles = sub_band_middles(bands, c);
+    FloorModel grass;
+    grass.admittance = ground_impedance(GroundModel {}, middles, c);
+    FloorModel plate = grass;
+    plate.plate = [&](double elevation, double azimuth, std::complex<double>* direct, std::complex<double>* image) {
+        for (std::size_t j = 0; j < middles.size(); j++)
+        {
+            direct[j] = std::polar(1.0 + 0.3 * std::sin(elevation), 0.2 * azimuth + 0.01 * j);
+            image[j] = std::polar(0.9, -0.1 * j);
+        }
+    };
+    std::size_t whole = 0, part = 0;
+    // Grazing, and the source 33 degrees over the first roof.
+    for (const Vec3& source : {Vec3(-60.0, -10.0, 12.0), Vec3(-50.0, 0.0, 42.0)})
+        for (const FloorModel& floor : {FloorModel(1.0), FloorModel(0.7), grass, plate})
+        {
+            const Vec3 microphone(34.0, 10.0, floor.plate ? 0.0 : 1.2);
+            const PointSourceField field(street, source, microphone);
+            for (const PointRay& ray : field.rays())
+                if (ray.profile)
+                    (ray.share < 1.0 ? part : whole)++;
+            std::vector<double> cpu(bands.size());
+            field.band_levels(reflection, floor, bands, c, cpu.data());
+            gpu::PointRaySet set;
+            gpu::pack_point_rays(field, reflection, floor, bands, c, set);
+            REQUIRE(set.complex_reflections);
+            gpu::BandEnergies energies(device);
+            const std::size_t first = energies.add(set);
+            energies.submit();
+            const std::vector<double>& energy = energies.wait();
+            for (std::size_t b = 0; b < bands.size(); b++)
+            {
+                INFO("band " << bands[b] << ", floor " << floor.reflection << (floor.impedance() ? ", grass" : "")
+                             << (floor.plate ? ", plate" : ""));
+                REQUIRE(std::abs(band_level(bands[b], sub_bands(bands[b], c), &energy[first + 3 * b]) - cpu[b]) < 0.02);
+            }
+        }
+    REQUIRE(whole == 16);
+    REQUIRE(part == 16);
+}

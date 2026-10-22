@@ -587,6 +587,43 @@ exactly. What to keep:
   (Holm's higher-order series, rederived; diverged from the second order, the transition
   function's kinks in a(beta) making high derivatives meaningless), and the first wedge's lit
   face's reflection in the aperture (over a 10 m roof at grazing it covers 4.5 cm of aperture).
+- **A row of roofs crossed near grazing takes a parabolic equation** (`profile_pe.{hpp,cpp}`,
+  `PointSourceField::apply_profile`, `PointPathOptions::profile_pe`, `--no_profile_pe`; THEORY
+  "Over a row of roofs"). Three or more roof edges in each other's transitions are past what any
+  cascade does: over a street at grazing the cascades of two, three and four edges were 8 dB high
+  at 500 Hz and swung 5 dB as the thrice-diffracted rays came and went. What to keep:
+  - **Four rays, one per part** (`ProfileParts`: the source or its floor image, to the microphone or
+    its image), each of its own length (`profile_path`, the taut string). One ray carrying the sum
+    took the ends' images' interference at each sub-band's middle, 3.3 dB high at 2 kHz
+    (`a row's band levels average its parts' interference`). The four share one solve per
+    wavenumber through `ProfileSolutions`, a mutex-guarded memo on the term, so a caller going
+    ray by ray (`point_ray_amplitude`, the harness's `rays.cpp`) marches once, not four times.
+  - **The parts' bounces are rays' bounces** (`floor`, `floor_bounce`, `source_plane`), so the
+    floor's model, a plate and the launch direction take them unchanged, the GPU's included. Only
+    the march's own floors, the streets', are rigid.
+  - **The family is found by geometry, not by kind**: every point between the ends on the row's
+    roof edges, roofs, crossed walls or the floor, reflections in its roofs and crossed walls only
+    (`on_row`, `row_wall`). Keeping the street walls' rays, cascades at grazing themselves,
+    overshot by 3 dB over the street.
+  - **The finish's kernel is the back corner's own Green's function** (`CornerGreen`, UTD for a
+    rigid right angle). The free-space kernel was 1.3 dB low behind one block. Its u-derivative is
+    one-sided where a shadow boundary passes between the difference's points (the straddle was a
+    0.02 dB spike in a sweep); a fixed set of waves across the three points was worse, since the
+    diffraction steps there too. And the receiver is moved 1e-8 off a boundary within 1e-9
+    (`CornerGreen::angles`): a Huygens node lands on one exactly at some wavenumber, its height a
+    whole number of twentieths of a wavelength, and the part read 30 dB loud.
+  - **March from the end nearer grazing by |elevation|.** Signed elevation once picked a steep
+    microphone below the roof as the start, where the wide-angle march does not hold. Within 5°
+    both ways are weighed, the backward problem's part read as [b][a], which makes the field
+    reciprocal by construction (`the profile ray is reciprocal`).
+  - **The end fade goes by the angle off the vertical over the outer corner**, 90° at or below the
+    roof. A fade by distance, half the block's height, kept 65% of the cascades at a microphone in
+    the roofs' plane 2 m behind the row, where they step 11 dB; one of 0.1 D reached street-level
+    microphones and blended the cascades back in, 7.1 dB at worst over two streets.
+  - **Each roof's or street's matrix is factored once** (`Factored`), for every step over it and
+    both starts.
+  - Touching blocks keep the cascades: the profile does no better there (2-D, a step up 2.04 dB
+    rms against the cascades' 1.99). So do a single block and a pitched roof.
 - **The 2-D field converts to 3-D per ray, by sin(beta)/sqrt(l_t).** At beta = 90° that is exact
   for every kind of ray, which is what lets a 2-D BEM test the whole 3-D implementation
   (`over a long block the point-source field is the boundary-element solution's`); it also

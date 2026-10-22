@@ -1148,16 +1148,55 @@ UE02's drone row at 1.25 m goes from 4.0-5.0 dB low to 0.15-0.53; its rows at 0.
 three edges whose pairs are each in transition. The edge source's own integral was 1-3 dB low across
 these steps, and leaves them to the uniform form (THEORY §6.5).
 
-**Across a street at grazing** (two blocks 10 m across and 10 m high, 10 m apart, a source 1.1°
-above the roofs 100 m off, microphones 2-10 m behind the second at 1.2 m; 125-500 Hz). The model is
-1.2-1.6 dB low at 125 and 250 Hz and 7.9-8.0 dB high at 500 Hz, the same at every microphone, so
-the error is in what reaches the second block's far edge; 5.7° above the roofs it is within 1.3 dB,
-and with the second block 2 m lower, 1.2-3.2 dB high. The four roof edges in a row are each in the
-others' transition regions, and the cascades of two, three and more edges do not converge: leaving
-out the thrice-diffracted rays moves the mean error from +1.1 to −3.8 dB. No uniform form for
-more than two edges is in the model. Nor is a street a step: taken as one (the near block's far
-edge and the lower block's far one, the street read as roof), the second block 2 m lower read
-0.5 dB higher still, rms 2.0 dB against the cascade's 1.9, and the cascade stands there.
+**Over a row of roofs** (THEORY §6.5; long blocks 10 m across and 10 m high, 10 m streets, rigid
+ground; boundary elements at 45 elements a wavelength, or 20-30 where marked; microphones 2, 5 and
+10 m behind the last block, 1.2 m up). The point model with its profile field against the
+cascades it replaces (`--no_profile_pe`), error re the exact level, dB, mean, rms, worst:
+
+| Row | Sources (elevation over the first roof, distance) | Cases | Profile field | Cascades |
+| --- | --- | --- | --- | --- |
+| One street, 125-500 Hz | 1.1°, 100 m; 5.7°, 50 m | 18 | −1.52, 1.65, 2.49 | +1.05, 3.40, 8.04 |
+| One street, 1 kHz (20 elements) | the same | 6 | −0.26, 0.33, 0.48 | −1.53, 3.49, 4.69 |
+| One street, 125-500 Hz (30) | 16.7°, 50 m | 9 | −0.33, 1.13, 1.73 | −1.42, 2.19, 3.86 |
+| One street, the second block 8 m high | 1.1°, 100 m; 5.7°, 50 m | 18 | +0.52, 1.15, 1.55 | +1.27, 1.86, 3.17 |
+| Two streets, 125-500 Hz (30) | all three | 27 | −1.81, 2.15, 3.61 | +4.11, 6.70, 14.54 |
+
+The cascades do not settle: over one street they are 1.2-1.6 dB low at 125 and 250 Hz and 8 dB
+high at 500 Hz at every microphone, and leaving out the thrice-diffracted rays moves their mean
+from +1.1 to −3.8 dB. The profile field's error is a bias that falls with frequency: over one
+street 2.3-2.5 dB low at 125 Hz, 1.0-1.3 at 250 and 0.8-1.1 at 500, over two 2.4-3.6 at 125 Hz.
+That is the streets' reverberation between their walls, which the march does not carry back. One
+block alone, and two touching (a step up or down, no street), are left to the cascades: 0.16 dB
+rms for the block, 0.62 and 1.99 for the steps, which the profile field does not better (0.66 and
+2.04 in two dimensions). The 2-D solver's own grid moves these by under 0.03 dB rms for reaches of
+15 to 40 wavelengths above the roofs, absorbing layers of 15 to 50 and Huygens lines 2 to 8
+wavelengths back.
+
+- **Continuity.** Swept in 240 steps at 250 Hz -- the microphone 2 m behind the street from 1.2
+  to 19.2 m up, the source's elevation through 22-46°, the line out past the blocks' ends, the
+  microphone over the last roof's corner, and the microphone's elevation through the source's --
+  the profile field adds no step the cascades do not have, its weight's largest second difference
+  0.021. With the microphone in the roofs' plane the cascades step 11 dB, from −6.0 to −17.1 dB re
+  free field between 9.99 and 10.02 m up; the profile field is smooth there, its largest second
+  difference 0.010 of the sweep's largest field against the cascades' 0.25.
+- **The band sums.** Its four parts, each a ray of its own length, give a street's band levels at 1
+  and 2 kHz within 0.02 dB of the field's energy sampled at 16 points a sub-band. One ray carrying
+  the whole field at each sub-band's middle reads 3.3 dB high at 2 kHz, and up to 10 dB in a
+  single sub-band: the ends' floor images interfere across a sub-band.
+- **Each part's phase** goes as its own path's length to 0.03-0.24 m, 250 Hz to 1 kHz.
+- **Reciprocal** to 1e-6 dB with the ends swapped, both ways round weighed, obliquely across the
+  row and with a building off it; the GPU's levels within 0.02 dB of the CPU's.
+- **EDGE.** Only UE12's and UE13's receiver R3, behind both terraces, takes the profile field
+  (weights 0.21-1). Against the FDTD there (1.6-6.3 kHz at model scale), the floor source's band
+  levels go from 3.54 dB above it on average to 0.98 below (UE12) and from 1.85 to 1.06 above
+  (UE13), the drone's within 0.05 dB of where they were (+0.5 and +0.6); over each row's four
+  receivers the rays' rms against the FDTD goes 2.30 → 1.65 dB (UE12 floor), 2.73 → 2.61 (UE13
+  floor), 0.40 → 0.34 and 0.36 → 0.38 (the drones). From the floor source the measurements read
+  4.2 and 6.1 dB above the FDTD at R3, so against them those rows go 4.09 → 4.82 and 5.91 → 6.06 dB
+  rms, and all 1124 shadowed and lit band levels 3.74 → 3.77.
+- **Cost.** A street's four rays over 24 bands from 50 Hz to 10 kHz take 6.7 s of one core,
+  0.21 s to 1 kHz, where the 28 rays they replace take 1 ms. The march grows as the frequency
+  squared.
 
 **On the GPU** (the default on a Mac, an M4 Pro), which works in single precision:
 

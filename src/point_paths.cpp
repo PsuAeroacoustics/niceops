@@ -1170,6 +1170,7 @@ PointSourceField::PointSourceField(const Buildings& buildings, const Vec3& sourc
     const PathEnd source_end(buildings, source, true, options, edges_near(buildings, microphone, options.radius));
     const PathEnd microphone_end(buildings, microphone, false, options, edges_near(buildings, source, options.radius));
     trace(buildings, source_end, microphone_end, options);
+    apply_profile(buildings, source, microphone, options);
     for (PointRay& ray : rays_)
     {
         ray.source_surface = source_end.surface();
@@ -1187,6 +1188,7 @@ PointSourceField::PointSourceField(const Buildings& buildings, const PathEnd& so
     , edge_source_threads_(options.edge_source_threads)
 {
     trace(buildings, source, microphone, options);
+    apply_profile(buildings, source.point(), microphone.point(), options);
     for (PointRay& ray : rays_)
     {
         ray.source_surface = source.surface();
@@ -3208,7 +3210,7 @@ Vec3 point_ray_launch(const PointRay& ray)
     const double h = ray.source_plane;
     if (ray.launch_mirrored)
         d = Vec3(first.x - source.x, first.y - source.y, -first.z - source.z);
-    else if (ray.wedges == 0)
+    else if (ray.wedges == 0 && !ray.profile)
         d = (ray.path.size() == 2 && !std::isnan(h) ? Vec3(first.x, first.y, 2.0 * h - first.z) : first) - source;
     else if (!std::isnan(h))
         d = Vec3(first.x - source.x, first.y - source.y, 2.0 * h - first.z - source.z);
@@ -3220,7 +3222,7 @@ Vec3 point_ray_launch(const PointRay& ray)
 
 double reflected_amplitude(const PointRay& ray, const std::vector<double>& reflection, double floor_reflection)
 {
-    double amplitude = ray.spreading;
+    double amplitude = ray.spreading * ray.share;
     for (std::size_t f : ray.facades)
         amplitude *= std::sqrt(reflection[f]);
     for (int i = 0; i < ray.floor; i++)
@@ -3318,6 +3320,8 @@ std::complex<double> point_ray_amplitude(const PointRay& ray, const std::vector<
 
 std::complex<double> point_ray_amplitude(const PointRay& ray, double reflected, double k)
 {
+    if (ray.profile)
+        return reflected * profile_factors(ray, {k})[0];
     std::complex<double> amplitude = reflected;
     if (ray.shared)
     {
@@ -3842,6 +3846,10 @@ void PointSourceField::sub_band_problems(const std::vector<double>& reflection, 
             for (std::size_t i = begin; i < end; i++)
                 factors[i] = edge_source_factors(*buildings_, rays_[order[i]], wavenumbers);
         });
+    // A row's profile field, every sub-band.
+    for (std::size_t i = 0; i < order.size(); i++)
+        if (rays_[order[i]].profile)
+            factors[i] = profile_factors(rays_[order[i]], wavenumbers);
     // A floor of finite impedance and the reliefs: each ray's factor from
     // them, every sub-band at once, for the rays they touch (a plate's
     // microphone, every ray).
@@ -3943,6 +3951,325 @@ void PointSourceField::band_levels(const std::vector<double>& reflection, const 
             absorption, weights);
     for (std::size_t band = 0; band < bands.size(); band++)
         out[band] = band_level(bands[band], sub_bands(bands[band], sound_speed), &energy[3 * band]);
+}
+
+
+std::vector<std::complex<double>> profile_factors(const PointRay& ray, const std::vector<double>& wavenumbers)
+{
+    const ProfileTerm& t = ray.profile_term;
+    std::vector<double> in_plane(wavenumbers.size());
+    for (std::size_t j = 0; j < wavenumbers.size(); j++)
+        in_plane[j] = wavenumbers[j] * t.march_sin_beta;
+    std::vector<std::complex<double>> out(wavenumbers.size(), 0.0);
+    for (int way = 0; way < 2; way++)
+    {
+        if (!(t.weight[way] > 0.0))
+            continue;
+        // The wavenumbers not yet solved, solved outside the lock.
+        std::vector<double> missing;
+        {
+            const std::lock_guard<std::mutex> lock(t.solutions->mutex);
+            for (double k : in_plane)
+                if (!t.solutions->parts[way].count(k))
+                    missing.push_back(k);
+        }
+        const std::vector<ProfileParts> solved = profile_spectrum(t.problem[way], missing);
+        const std::lock_guard<std::mutex> lock(t.solutions->mutex);
+        for (std::size_t j = 0; j < missing.size(); j++)
+            t.solutions->parts[way].emplace(missing[j], solved[j]);
+        // Marched from the microphone, the source's image is the receiver's.
+        const bool from = way == 0 ? t.source_image : t.microphone_image;
+        const bool to = way == 0 ? t.microphone_image : t.source_image;
+        for (std::size_t j = 0; j < out.size(); j++)
+            out[j] += t.weight[way] * t.solutions->parts[way].at(in_plane[j]).part[from][to];
+    }
+    // As shared_face_amplitude: the 2-D field, its in-plane phase taken out,
+    // spread along the edges by sin(beta) / sqrt(l_t) (the spreading has the
+    // root).
+    for (std::size_t j = 0; j < out.size(); j++)
+        out[j] *= t.sin_beta * std::polar(1.0, -in_plane[j] * t.in_plane);
+    return out;
+}
+
+void PointSourceField::apply_profile(const Buildings& buildings, const Vec3& source, const Vec3& microphone,
+        const PointPathOptions& options)
+{
+    if (!options.profile_pe || !options.diffraction || rays_.empty())
+        return;
+    const double px = microphone.x - source.x, py = microphone.y - source.y;
+    const double D = std::hypot(px, py);
+    if (!(D > 0.0))
+        return;
+    // The buildings the plan line from the source to the microphone crosses,
+    // each over one stretch of it, entering and leaving through one side
+    // each: (t at entry, t at exit, building, the two sides' directions and
+    // where along them the line crosses, as the distance to their nearer end).
+    struct Crossing
+    {
+        double t0, t1;
+        std::size_t building;
+        double ex[2], ey[2], margin[2];
+    };
+    std::vector<Crossing> crossings;
+    std::vector<std::uint32_t> near;
+    buildings.near_box(std::min(source.x, microphone.x), std::max(source.x, microphone.x),
+            std::min(source.y, microphone.y), std::max(source.y, microphone.y), near);
+    for (const std::uint32_t b : near)
+    {
+        const Footprint& f = buildings.footprints()[b];
+        struct Hit
+        {
+            double t, ex, ey, margin;
+        };
+        std::vector<Hit> hits;
+        auto ring = [&](const std::vector<double>& rx, const std::vector<double>& ry) {
+            for (std::size_t i = 0, m = rx.size(), j = m - 1; i < m; j = i++)
+            {
+                const double ax = rx[j], ay = ry[j], bx = rx[i], by = ry[i];
+                const double sx = bx - ax, sy = by - ay;
+                const double den = px * sy - py * sx;
+                if (std::abs(den) < 1e-12)
+                    continue;
+                const double t = ((ax - source.x) * sy - (ay - source.y) * sx) / den;
+                const double v = ((ax - source.x) * py - (ay - source.y) * px) / den;
+                if (t < 0.0 || t > 1.0 || v < 0.0 || v > 1.0)
+                    continue;
+                const double len = std::hypot(sx, sy);
+                hits.push_back({t, sx / len, sy / len, std::min(v, 1.0 - v) * len});
+            }
+        };
+        ring(f.x, f.y);
+        for (const Ring& h : f.holes)
+            ring(h.x, h.y);
+        if (hits.empty())
+            continue;
+        std::sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& c) { return a.t < c.t; });
+        // One stretch, both ends outside, a flat roof: otherwise no row.
+        if (hits.size() != 2 || !f.roof.empty())
+            return;
+        crossings.push_back({hits[0].t, hits[1].t, b, {hits[0].ex, hits[1].ex}, {hits[0].ey, hits[1].ey},
+                {hits[0].margin, hits[1].margin}});
+    }
+    if (crossings.size() < 2)
+        return;
+    std::sort(crossings.begin(), crossings.end(), [](const Crossing& a, const Crossing& c) { return a.t0 < c.t0; });
+    // Every crossed side parallel to the first's, within a degree.
+    const double ex = crossings[0].ex[0], ey = crossings[0].ey[0];
+    double margin = std::numeric_limits<double>::infinity();
+    for (const Crossing& c : crossings)
+        for (int s = 0; s < 2; s++)
+        {
+            if (std::abs(c.ex[s] * ey - c.ey[s] * ex) > std::sin(pi / 180.0))
+                return;
+            margin = std::min(margin, c.margin[s]);
+        }
+    // u across the sides, from the source toward the microphone.
+    double ux = -ey, uy = ex;
+    if (ux * px + uy * py < 0.0)
+    {
+        ux = -ux;
+        uy = -uy;
+    }
+    const auto u_of = [&](double x, double y) { return (x - source.x) * ux + (y - source.y) * uy; };
+    std::vector<ProfileBlock> blocks;
+    for (const Crossing& c : crossings)
+    {
+        ProfileBlock b;
+        b.u0 = u_of(source.x + c.t0 * px, source.y + c.t0 * py);
+        b.u1 = u_of(source.x + c.t1 * px, source.y + c.t1 * py);
+        b.h = buildings.footprints()[c.building].top;
+        if (!blocks.empty() && b.u0 < blocks.back().u1 - 1e-9)
+            return;
+        blocks.push_back(b);
+    }
+    // At least one street between the blocks.
+    bool street = false;
+    for (std::size_t i = 1; i < blocks.size(); i++)
+        street = street || blocks[i].u0 > blocks[i - 1].u1 + 1e-6 * D;
+    if (!street)
+        return;
+    const double u_m = u_of(microphone.x, microphone.y);
+    // March from the end nearer grazing over its neighbouring roof edge, so
+    // the steeper end, above or below it, is the corner's, whose Green's
+    // function takes any angle; the march holds to 40 degrees.  Within 5
+    // degrees of each other, both ways round, weighed.
+    const auto elevation = [&](double z, double h, double run) {
+        return std::abs(std::atan2(z - h, std::max(run, 1e-9)));
+    };
+    const double e_source = elevation(source.z, blocks.front().h, blocks.front().u0) * 180.0 / pi;
+    const double e_microphone = elevation(microphone.z, blocks.back().h, u_m - blocks.back().u1) * 180.0 / pi;
+    const auto smooth = [](double x) {
+        x = std::clamp(x, 0.0, 1.0);
+        return x * x * (3.0 - 2.0 * x);
+    };
+    // Faded out as either end comes over the row's first or last roof,
+    // where the profile stops applying: within 15 degrees of the vertical
+    // over its outer corner.  An end at or below that roof's height cannot
+    // come over it without going through the building, and keeps it all.
+    const auto off_vertical = [&](double run, double z, double h) {
+        return z <= h ? 90.0 : std::atan2(std::max(run, 0.0), z - h) * 180.0 / pi;
+    };
+    const double w = smooth((40.0 - std::min(e_source, e_microphone)) / 15.0) * smooth((margin / D - 0.1) / 0.1)
+            * smooth(off_vertical(blocks.front().u0, source.z, blocks.front().h) / 15.0)
+            * smooth(off_vertical(u_m - blocks.back().u1, microphone.z, blocks.back().h) / 15.0);
+    if (!(w > 0.0))
+        return;
+    ProfileProblem forward, backward;
+    forward.blocks = blocks;
+    forward.su = 0.0;
+    forward.sz = source.z;
+    forward.ru = u_m;
+    forward.rz = microphone.z;
+    for (auto it = blocks.rbegin(); it != blocks.rend(); ++it)
+        backward.blocks.push_back({u_m - it->u1, u_m - it->u0, it->h});
+    backward.su = 0.0;
+    backward.sz = microphone.z;
+    backward.ru = u_m;
+    backward.rz = source.z;
+    const double lean = smooth((e_microphone - e_source) / 10.0 + 0.5); // 1: from the source
+    if (!profile_applies(forward) || !profile_applies(backward))
+        return;
+    // The row's rays: every point between the ends on one of its roof edges,
+    // its roofs, its crossed walls or the floor, and only its roofs and those
+    // walls reflecting.  The walls across a street reflect what the march
+    // drops, its reverberation; their rays, cascades at grazing, overshot it
+    // by 3 dB over the street, where the march alone is 1.7 dB rms.
+    std::vector<std::size_t> roofs;
+    for (const Crossing& c : crossings)
+        roofs.push_back(buildings.roof_facade(c.building));
+    const double tol = 1e-6 * std::max(1.0, D);
+    const auto on_row = [&](const Vec3& q) {
+        const double u = u_of(q.x, q.y);
+        if (q.z < tol)
+            return true;
+        for (const ProfileBlock& b : blocks)
+        {
+            if (std::abs(q.z - b.h) < tol && u > b.u0 - tol && u < b.u1 + tol)
+                return true;
+            if ((std::abs(u - b.u0) < tol || std::abs(u - b.u1) < tol) && q.z < b.h + tol)
+                return true;
+        }
+        return false;
+    };
+    // A wall of the row: a crossed building's, parallel to the sides, on one
+    // of the crossed sides' lines.
+    const auto row_wall = [&](std::size_t f) {
+        const Facade& w = buildings.facades()[f];
+        const std::size_t b = buildings.facade_building(f);
+        if (std::none_of(crossings.begin(), crossings.end(), [&](const Crossing& c) { return c.building == b; }))
+            return false;
+        const double u0 = u_of(w.x0, w.y0), u1 = u_of(w.x1, w.y1);
+        if (std::abs(u0 - u1) > tol)
+            return false;
+        return std::any_of(blocks.begin(), blocks.end(), [&](const ProfileBlock& k) {
+            return std::abs(u0 - k.u0) < tol || std::abs(u0 - k.u1) < tol;
+        });
+    };
+    std::vector<std::size_t> family;
+    for (std::size_t i = 0; i < rays_.size(); i++)
+    {
+        const PointRay& r = rays_[i];
+        if (r.profile || !r.made_edges.empty() || r.path.size() < 2)
+            continue;
+        bool in = std::all_of(r.roof_facades.begin(), r.roof_facades.end(), [&](std::size_t f) {
+            return std::find(roofs.begin(), roofs.end(), f) != roofs.end();
+        }) && std::all_of(r.facades.begin(), r.facades.end(), row_wall);
+        for (std::size_t j = 1; in && j + 1 < r.path.size(); j++)
+            in = on_row(r.path[j]);
+        if (in)
+            family.push_back(i);
+    }
+    if (family.empty())
+        return;
+    // The march's sin(beta) from the family's shortest ray: its length in
+    // the plane against its length.
+    std::size_t shortest = family[0];
+    for (std::size_t i : family)
+        if (rays_[i].length < rays_[shortest].length)
+            shortest = i;
+    double rep_in_plane = 0.0, rep_length = 0.0;
+    for (std::size_t j = 1; j < rays_[shortest].path.size(); j++)
+    {
+        const Vec3 d = rays_[shortest].path[j] - rays_[shortest].path[j - 1];
+        rep_in_plane += std::hypot(d.x * ux + d.y * uy, d.z);
+        rep_length += d.norm();
+    }
+    const double march_sin_beta = std::clamp(rep_in_plane / rep_length, 1e-6, 1.0);
+    // One ray for each part: its path the part's taut string, each corner
+    // along the edges in proportion to its distance along the string (the
+    // ray unfolds to a straight line), its length that line's.
+    const double v_m = (microphone.x - source.x) * ex + (microphone.y - source.y) * ey;
+    const auto solutions = std::make_shared<ProfileSolutions>();
+    std::vector<PointRay> parts;
+    for (int part = 0; part < 4; part++)
+    {
+        const bool a = part & 1, b = part & 2;
+        std::vector<std::array<double, 2>> string;
+        const double in_plane = profile_path(forward, a, b, &string);
+        PointRay ray;
+        ray.profile = true;
+        ray.length = std::hypot(in_plane, v_m);
+        ray.floor = a + b;
+        ray.path.push_back(source);
+        double along = 0.0;
+        for (std::size_t j = 1; j + 1 < string.size(); j++)
+        {
+            along += std::hypot(string[j][0] - string[j - 1][0], string[j][1] - string[j - 1][1]);
+            const double v = v_m * along / in_plane;
+            ray.path.push_back(Vec3(source.x + string[j][0] * ux + v * ex, source.y + string[j][0] * uy + v * ey,
+                    string[j][1]));
+        }
+        ray.path.push_back(microphone);
+        // Its bounces: off the floor before the first corner and after the
+        // last, on the legs unfolded through them.
+        const auto bounce = [&](const std::array<double, 2>& p, const std::array<double, 2>& q, bool at_microphone) {
+            const double l = std::hypot(q[0] - p[0], q[1] - p[1]), leg = std::hypot(l, v_m * l / in_plane);
+            return FloorBounce {std::abs(q[1] - p[1]) / leg, leg, at_microphone};
+        };
+        int bounces = 0;
+        if (a)
+            ray.floor_bounce[bounces++] = bounce(string[0], string[1], string.size() == 2);
+        if (b)
+            ray.floor_bounce[bounces++] = bounce(string[string.size() - 2], string.back(), true);
+        // A leg off the floor at the source, or a path with no corner that
+        // reflects in it anywhere.
+        if (a || (b && string.size() == 2))
+            ray.source_plane = 0.0;
+        ray.profile_term.problem[0] = forward;
+        ray.profile_term.problem[1] = backward;
+        ray.profile_term.weight[0] = lean;
+        ray.profile_term.weight[1] = 1.0 - lean;
+        ray.profile_term.source_image = a;
+        ray.profile_term.microphone_image = b;
+        ray.profile_term.march_sin_beta = march_sin_beta;
+        ray.profile_term.sin_beta = std::clamp(in_plane / ray.length, 1e-6, 1.0);
+        ray.profile_term.in_plane = in_plane;
+        ray.profile_term.solutions = solutions;
+        ray.spreading = 1.0 / std::sqrt(in_plane);
+        ray.share = w;
+        parts.push_back(std::move(ray));
+    }
+    if (w >= 1.0)
+    {
+        std::vector<PointRay> kept;
+        kept.reserve(rays_.size() - family.size() + parts.size());
+        std::size_t next = 0;
+        for (std::size_t i = 0; i < rays_.size(); i++)
+        {
+            if (next < family.size() && family[next] == i)
+            {
+                next++;
+                continue;
+            }
+            kept.push_back(std::move(rays_[i]));
+        }
+        rays_ = std::move(kept);
+    }
+    else
+        for (std::size_t i : family)
+            rays_[i].share *= 1.0 - w;
+    for (PointRay& ray : parts)
+        rays_.push_back(std::move(ray));
 }
 
 } // namespace niceops

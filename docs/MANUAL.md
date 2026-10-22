@@ -1988,9 +1988,13 @@ or more -- a mansard heard from low beside it, several rows of roofs -- is trace
 absorption: a level roof replaces the floor, and reaches an end or an edge above it. A slope
 may reflect with walls and the floor on either side, or next to the edge of a once-diffracted
 ray. A twice-diffracted ray may reflect in a level roof or a slope between one end and its edge.
+Over a row of two or more flat-roofed blocks with a street between, crossed near grazing, where
+the cascades over three and four roof edges do not settle, the rays over the row give way to its
+two-dimensional field from a parabolic equation over its cross-section ([THEORY §6.5](THEORY.md),
+"Over a row of roofs"), its floor bounces at the ends taking the floor as any ray's do.
 `--no_slope_facades` omits paths combining slopes and walls for comparison,
-`--no_twice_roofs` the twice-diffracted rays off a roof, and `--no_roof_lighting` the scattering
-patches' lighting off a roof;
+`--no_twice_roofs` the twice-diffracted rays off a roof, `--no_roof_lighting` the scattering
+patches' lighting off a roof, and `--no_profile_pe` the row's profile field;
 `--unending_edges` omits UTD's finite-edge correction. `--microphones` is a CSV with `x`, `y` and `height`
 columns, the height above the floor: a microphone (or a source) at a flat roof's height over it, or
 on a wall, lies on that surface and takes its reflection there, as one on the floor takes the
@@ -2092,7 +2096,7 @@ not cover is refused. The patches cost time and memory as the square of their nu
 | `--humidity` | Relative humidity, percent, for the air's absorption. Required, unless `--no_air_absorption`. |
 | `--temperature`, `--pressure` | For the absorption: K, default 293.15; kPa, default 101.325. |
 | `--no_air_absorption` | Leave the air's absorption out. Not with the three above. |
-| `--rays` | Also write every ray: its source's row (with `--sources`), its microphone, kind, reflections, length, its level at each band center (no band averaging; absorbed at the band center's coefficient), and its path from the source as `x y z;x y z;...`, for drawing. A leg off the floor is drawn unfolded below it, so only its `x` and `y` are the ray's. A relief's grating rays follow, of kind `grating order m`, each with its level in its own band and −300 in the others; a ray meeting a relief carries its specular share. |
+| `--rays` | Also write every ray: its source's row (with `--sources`), its microphone, kind, reflections, length, its level at each band center (no band averaging; absorbed at the band center's coefficient), and its path from the source as `x y z;x y z;...`, for drawing. A leg off the floor is drawn unfolded below it, so only its `x` and `y` are the ray's. A relief's grating rays follow, of kind `grating order m`, each with its level in its own band and −300 in the others; a ray meeting a relief carries its specular share. A row's profile field is four rays of kind `profile field`, one for each of its parts, `off the floor at the source` or `at the microphone` naming the images, each drawn along its taut string over the roofs' corners. |
 | `--gpu`, `--no-gpu` | Form the rays' amplitudes and sum the bands on the GPU, as above: the default wherever there is one. `--gpu` asks for it; `--no-gpu` keeps the CPU. |
 | `-j`, `--threads` | Pairs of source and microphone evaluated at once. Default the environment's `NICEOPS_THREADS`, else one per hardware thread. |
 | `--units`, `-o` | `ft` (default) or `m`, for every length in and out; the file to write. |

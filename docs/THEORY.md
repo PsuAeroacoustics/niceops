@@ -1727,6 +1727,81 @@ come within 1.5 dB below 4 m, where none were found before; over every case the 
 rms, the cascade over a mansard's nearly flat wedges ($n \approx 1.1$), each pair sharing the face
 the ray runs along, being the limit with three edges as with four.
 
+**Over a row of roofs** (`profile_pe`; `--no_profile_pe` in `niceops_point_field`). Where three
+or more roof edges lie in each other's transition regions -- a street between two rows of roofs,
+crossed near grazing -- the cascades over two, three and four of them each carry a share of the
+field, and their sum does not settle as edges are added. There the rays over the row give way to
+its two-dimensional field, from a parabolic equation over its cross-section. The row is what the
+plan line from the source to the microphone crosses: two or more flat-roofed footprints, each
+entered and left once through two of its sides, every crossed side within 1° of parallel to the
+first, and a street between at least one pair. The rays it stands for are those whose points
+between the ends all lie on its roof edges, its roofs, its crossed walls or the floor, and that
+reflect only in those roofs and walls: the direct and floor rays, the roofs' reflections, the
+diffracted rays and chains over it, and the walls' rays in its streets.
+
+In the plane normal to the edges, $u$ across the blocks from the source and $z$ up, the field
+$p = \psi\,e^{iku}$ is marched by Crank–Nicolson with the Padé(1,1) wide-angle operator,
+
+$$
+\Bigl(1 + \tfrac{1 - ik\,\Delta u}{4}\,q\Bigr)\,\psi(u + \Delta u) = \Bigl(1 + \tfrac{1 + ik\,\Delta u}{4}\,q\Bigr)\,\psi(u),
+\qquad q = \frac{\delta_z^2}{(k\,\Delta z)^2} + i\,a(z),
+$$
+
+$\delta_z^2$ the second difference, on twenty points a wavelength in height and ten steps a
+wavelength in range, rigid ground (a ghost node) at the roof or the street's floor beneath, and
+over the physical domain -- fifteen wavelengths above the highest roof or end -- an absorbing layer
+as thick, $a$ rising as the square of the depth into it. The march starts on the first block's
+front face with the incident wave above the roof, dropping what would meet the face below it
+(Kirchhoff, as wherever the ground steps up), and stops on a vertical line $\min(4\lambda, w/2)$
+before the last block's back edge, $w$ that block's width. From that line the field reaches the
+receiver through the back corner's own Green's function $G_W$, the rigid right-angled wedge's by
+UTD -- its direct wave and face reflections where they reach $R$, and its diffraction:
+
+$$
+p(R) = \int \Bigl(-G_W(Q, R)\,\frac{\partial p}{\partial u} + p\,\frac{\partial G_W}{\partial u}\Bigr)\,dz,
+\qquad \frac{\partial p}{\partial u} = ik\,\frac{1 + 3q/4}{1 + q/4}\,\psi\,e^{iku},
+$$
+
+along the line from the roof up, tapered by a raised cosine over its upper half. The free-space
+kernel in its place misses the back corner. $\partial G_W/\partial u$ is a central difference,
+one-sided where a shadow boundary passes between its points (the diffraction cancels a wave's step
+there only to $O(1/k\rho)$), and a receiver within $10^{-9}$ rad of a boundary is moved off it for
+both the wave's test and the coefficient, as `hard_wedge_field` does.
+
+The source's floor image starts a second march on the same matrices, and the receiver's takes the
+integral again, so the field comes in four parts: from the source or its image to the receiver or
+its image. Each goes as $e^{ik l_t}$, $l_t$ its own path in the plane, the taut string over the
+roofs' corners between those two points, and the point model carries each as a ray. A band's sum
+then averages the parts' interference over each sub-band as it does the traced rays off the floor,
+where one ray carrying the whole field would take that interference at the sub-band's middle. The
+line source is normalised to a free field $e^{ikr}/\sqrt r$, and each part's ray takes it into
+space as a shared face's does: the field at $k\sin\beta$, $\beta$ from the shortest ray over the
+row, times $\sin\beta/\sqrt{l_t}$, its phase $e^{ik\sin\beta\,l_t}$ replaced by $e^{ikl}$ with
+$l = \sqrt{l_t^2 + v^2}$, $v$ the ends' separation along the edges.
+
+The march holds to about 40°. It starts from the end nearer grazing over its neighbouring roof's
+edge, so that the steeper end is the corner's, whose Green's function takes any direction; with the
+ends' elevations within 5° of each other both ways round are taken and weighed, which keeps the
+field reciprocal. The profile's rays are weighed in by
+
+$$
+w = S\Bigl(\frac{40^\circ - \min(e_s, e_m)}{15^\circ}\Bigr)\,
+    S\Bigl(\frac{m/D - 0.1}{0.1}\Bigr)\,
+    S\Bigl(\frac{\phi_s}{15^\circ}\Bigr)\,S\Bigl(\frac{\phi_m}{15^\circ}\Bigr)
+$$
+
+and the rays they stand for by $1 - w$: $S$ the smoothstep, $e$ each end's elevation over its
+neighbouring roof's edge, $m$ the plan line's distance along the crossed sides to their nearer end
+and $D$ its length, and $\phi$ each end's angle off the vertical over its outer corner, 90° at or
+below that roof's height, where it would come over the roof and the profile stop applying. Touching
+blocks keep the cascades, which hold across a step, as do pitched roofs and a footprint the line
+crosses more than once. Each part's bounces off the floor at the ends are a ray's, so a floor of
+finite impedance takes them as it does any ray's, its spherical-wave coefficient at the bounce's
+grazing angle over its unfolded leg, and a plate under a flush microphone its transfer by the
+arrival. What it leaves out: the waves it cannot carry back, chiefly a street's reverberation
+between its walls, whose rays go with those it stands for; and the roofs' and the streets'
+absorption, the march's floors being rigid.
+
 **Turbulence scattering into the buildings' shadows** (`--scattering` $\gamma_T$ with
 `--buildings`). Still air leaves a shielded microphone the diffracted rays alone; turbulence
 scatters energy into the shadow, most at high frequency. The scattered level relative to free field

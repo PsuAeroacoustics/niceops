@@ -249,6 +249,7 @@ add_library(niceops_core STATIC
   src/fdtd.cpp
   src/wedge.cpp
   src/double_wedge.cpp
+  src/profile_pe.cpp
   src/edge_source.cpp
   src/buildings.cpp
   src/building_paths.cpp
@@ -368,6 +369,7 @@ add_executable(niceops_unit_tests
   tests/test_diffuse_facades.cpp
   tests/test_geojson_buildings.cpp
   tests/test_point_paths.cpp
+  tests/test_profile_pe.cpp
   tests/test_source_coherence.cpp
   tests/test_urban_point.cpp
   tests/test_turbulence_scattering.cpp

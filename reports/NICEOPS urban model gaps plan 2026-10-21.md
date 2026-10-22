@@ -12,7 +12,7 @@ when it is done. The [next-steps report](NICEOPS%20Urban%20Propagation%20Next%20
 | 0 | EDGE's pitched drone rows read low (diagnosis) | Cheap, and its answer sets how much step 2 matters. **Done** (below) |
 | 1a | Two edges across a step take the cascade | Found by step 0: most of UE02's bias. **Done** (below) |
 | 1 | No vertex (corner) term in UTD | Affects every district, flat or pitched; the most visible artifact. **Done** (below) |
-| 1b | Three or more edges in each other's transitions (a street at grazing, a roof's near edge with a step) | Found by step 0; the largest error left in the BEM checks |
+| 1b | Three or more edges in each other's transitions (a street at grazing, a roof's near edge with a step) | Found by step 0; the largest error left in the BEM checks. **Done** for rows with a street (below) |
 | 2 | Missing slope and roof paths | Needs step 1's end treatment for its own edges' ends |
 | 3 | Roofs and slopes do not light the diffuse field | Reuses step 2's roof and slope images |
 | 4 | The plane-wave tables have no roofs | Independent of 1-3; can run alongside |
@@ -88,6 +88,20 @@ of the field and do not converge. The street at grazing is 8 dB high at 500 Hz.
 screens; costly per pair, but only where the chain is in transition); Tzaras and Saunders's heuristic for the
 transition functions' distance parameters; and the edge source's higher orders. The boundary-element tool now takes
 several blocks (`--blocks`), so streets and rows can be solved exactly.
+
+**Done (2026-10-22) for rows with a street.** The row's field is marched, a wide-angle parabolic equation over its
+cross-section from the first block's front face, finished through the last block's back corner by that wedge's
+UTD Green's function (THEORY "Over a row of roofs"), prototyped in two dimensions against the boundary elements
+before it went into the point model. In the point model it replaces every ray over the row with
+four, the parts from the source or its floor image to the microphone or its image, each its own length, weighed in
+by elevation (40-25°), by the line's clearance of the blocks' ends, and by each end's angle off the vertical over
+its outer corner. Against boundary elements, rms: one street 1.65 dB (cascades 3.40), at 1 kHz 0.33 (3.49), a
+source 16.7° up 1.13 (2.19), a step across a street 1.15 (1.86), two streets 2.15 (6.70). What is left is a low
+bias at 125 Hz, 2.3-3.6 dB, the streets' reverberation the march cannot carry back. Touching blocks (no street)
+keep the cascades, which hold as well there; so does UE02's pitched step. EDGE: only UE12's and UE13's receiver R3,
+behind both terraces, takes it, and moves toward the FDTD (UE12's floor source from 3.5 dB above it to 1.0 below;
+the row's rms 2.30 → 1.65 dB), away from the measurements, which read 4-6 dB above the FDTD there (harness
+RESULTS). Cost: 6.7 s a row to 10 kHz on one core, the next thing to fix.
 
 ## Step 1: a vertex term for UTD
 
@@ -281,8 +295,8 @@ loudspeaker stands below the container roofs; harness 1ae0bbc). The demo approac
 SELs: within 1.2e-6 dB (the shared face's limit); the table runs' goldens 0.001 dB (step 4's
 prefilter) and 0.005 with scattering. The gable suburb: step 2 up to 2.4 dB at 125 Hz in near-nulls,
 step 3 +0.04 dB mean with scattering. The 3-D render: 0.85% of cell-frames move by more than 0.1 dB,
-at most 1.7 dB, its continuity shares unchanged. FIDELITY and HISTORY carry each. Step 1b stays open:
-its form is the decision below.
+at most 1.7 dB, its continuity shares unchanged. FIDELITY and HISTORY carry each. Step 1b, for rows
+with a street, followed on 2026-10-22 (above).
 
 After each step: EDGE (FDTD and measured, flat and pitched), DigiCity microphone 7 and the accuracy figure, the demo
 approach's `--buildings` SELs, the gable suburb, and the 3-D render. FIDELITY's tables are re-measured where they

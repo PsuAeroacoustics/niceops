@@ -239,6 +239,14 @@ Commands and options are in `README.md`; rationale is in
   searches'); terms past the third in `more_wedges`, read through `wedge_term`. Over a mansard's
   nearly flat, face-sharing wedges the cascade is 3-4 dB rms off the BEM with three edges as with
   four; a gable's is 0.17.
+- **A row of flat roofs with a street, crossed near grazing, is a parabolic equation**
+  (`profile_pe`, `apply_profile`; ground.md). Three or more roof edges in each other's transitions
+  defeat every cascade (8 dB at 500 Hz over one street). The row's rays give way to four, the parts
+  of its 2-D field (source or floor image, to microphone or image), each its own length so a band
+  averages their interference: one ray carrying the sum was 3.3 dB high at 2 kHz. They share one
+  solve per wavenumber (`ProfileSolutions`). Weighed in by elevation, the line's clearance of the
+  blocks' ends and the ends' angle off the vertical over the outer corners; the field is reciprocal
+  and smooth through all of it (tests in `test_profile_pe.cpp`). Costly: 6.7 s a row to 10 kHz.
 - **`--scattering` with `--buildings` fills the buildings' shadows** (`turbulence_scattering`, Forssén
   et al. 2014 without its canyon term). gamma_T is taken as velocity turbulence of
   C_v^2 = (3/22) c0^2 gamma_T; the paper's temperature coefficients are not used (they contradict its

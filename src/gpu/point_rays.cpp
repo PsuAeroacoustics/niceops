@@ -112,7 +112,9 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
         throw std::invalid_argument("pack_point_rays: the floor's admittance is not three per band");
     const double floor_reflection = floor.impedance() ? 1.0 : floor.reflection;
     // A relief's share changes across a band too.
-    set.complex_reflections = floor.impedance() || field.reliefs() != nullptr;
+    // So does a row's profile field (PointRay::profile), computed here.
+    set.complex_reflections = floor.impedance() || field.reliefs() != nullptr
+            || std::any_of(rays.begin(), rays.end(), [](const PointRay& r) { return r.profile; });
     std::vector<double> frequencies(centres.size());
     for (std::size_t j = 0; j < centres.size(); j++)
         frequencies[j] = centres[j] * sound_speed / (2.0 * pi);
@@ -135,6 +137,12 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
             floor_factors(ray, floor, centres, floor.plate ? plate.data() : nullptr, floor_factor.data());
             if (meets_relief(ray, field.reliefs()))
                 relief_factors(ray, *field.reliefs(), frequencies, sound_speed, floor_factor.data());
+            if (ray.profile)
+            {
+                const auto field_factors = profile_factors(ray, centres);
+                for (std::size_t j = 0; j < centres.size(); j++)
+                    floor_factor[j] *= field_factors[j];
+            }
         }
         for (std::size_t band = 0; band < nb; band++)
         {

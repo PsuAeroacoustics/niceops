@@ -54,6 +54,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <vector>
 
 #include "atmosphere.hpp"
@@ -61,6 +64,7 @@
 #include "buildings.hpp"
 #include "edge_source.hpp"
 #include "double_wedge.hpp"
+#include "profile_pe.hpp"
 #include "vec3.hpp"
 #include "wedge.hpp"
 
@@ -171,6 +175,18 @@ struct PointPathOptions
     // comparison.
     bool edge_ends = true;
     double end_reach = 10.0;
+    // A row of two or more flat-roofed blocks between the source and the
+    // microphone, their crossed sides parallel and a street between at least
+    // two, crossed near grazing: every ray over it by its roof edges, its
+    // roofs, its crossed walls and the floor gives way to four rays, the
+    // parts of its 2-D field marched by a parabolic equation (profile_pe.hpp,
+    // PointRay::profile), where those rays' cascades do not converge.  Weighed
+    // in from 40 to 25 degrees of elevation at the end nearer grazing, as the
+    // line clears the blocks' ends, and as either end comes off the vertical
+    // over its outer corner, so the field does not step.  The parts' floor
+    // bounces take the floor's model as any ray's do; the march's own
+    // floors, the streets', are rigid.  Off, for comparison.
+    bool profile_pe = true;
     // With edge_source, the threads a pair's rays' integrals are shared out
     // over: for a run of fewer pairs than threads (a few microphones), where
     // the pairs alone leave cores idle.
@@ -296,6 +312,38 @@ struct FloorBounce
     bool microphone = false;
 };
 
+// The parts of a row's profile field solved so far, by in-plane wavenumber,
+// for each way round: shared by the row's four rays, since each march gives
+// every part.
+struct ProfileSolutions
+{
+    std::mutex mutex;
+    std::map<double, ProfileParts> parts[2];
+};
+
+// A row's profile field (PointRay::profile): the 2-D problem in the plane
+// normal to its blocks' edges, marched from either end, and which of its
+// parts the ray carries.
+struct ProfileTerm
+{
+    // From the source's end (0) and from the microphone's, weighed: from the
+    // end nearer grazing, both within 5 degrees of each other (the field is
+    // the same either way round but for the start's and the corner's
+    // approximations).
+    ProfileProblem problem[2];
+    double weight[2] = {1.0, 0.0};
+    // The part: from the source or its floor image, to the microphone or its
+    // image (ProfileParts).
+    bool source_image = false, microphone_image = false;
+    // The march's sin(beta), which sets its wavenumber, the row's shortest
+    // ray's; this part's own, which takes its field into space; and the
+    // length of its path in the plane, whose phase the field's own.
+    double march_sin_beta = 1.0;
+    double sin_beta = 1.0;
+    double in_plane = 0.0;
+    std::shared_ptr<ProfileSolutions> solutions;
+};
+
 struct PointRay
 {
     double length = 0.0;
@@ -314,6 +362,16 @@ struct PointRay
     std::vector<WedgeTerm> more_wedges;
     bool shared = false;
     SharedFaceTerm shared_face;
+    // A row's profile field in place of every ray over the row
+    // (PointPathOptions::profile_pe), one ray for each of its four parts: its
+    // path the part's taut string over the roofs' corners, its floor bounces
+    // the part's images, no wedges or reflections of its own; its spreading
+    // is 1/sqrt(its in-plane length), as a shared face's is.
+    bool profile = false;
+    ProfileTerm profile_term;
+    // The part of its amplitude the ray keeps: where a row's profile field
+    // is blended in, w for that ray and 1 - w for those it stands for.
+    double share = 1.0;
     // Over a shared face, the cascade's spreading, which `spreading` then
     // replaces: the cascade of its two wedge terms (`wedge`, kept) is what
     // the face's field is taken relative to where it is sampled.
@@ -622,6 +680,9 @@ private:
     };
     void trace(const Buildings& buildings, const PathEnd& source, const PathEnd& microphone,
             const PointPathOptions& options);
+    // PointPathOptions::profile_pe: a row's rays to its profile field.
+    void apply_profile(const Buildings& buildings, const Vec3& source, const Vec3& microphone,
+            const PointPathOptions& options);
 
     std::vector<PointRay> rays_;
     std::size_t facade_count_ = 0;
@@ -742,5 +803,10 @@ SharedFaceSamples shared_face_samples(const SharedFaceTerm& face, const std::vec
 // point_ray_amplitude for a ray over a shared face, given its face's field at
 // k sin(beta) (shared_face_field, or shared_face_spectrum for many k at once).
 std::complex<double> shared_face_amplitude(const PointRay& ray, double reflected, double k, std::complex<double> field);
+
+// A row's profile ray's factor at each wavenumber, what point_ray_amplitude
+// gives it at reflected = 1: sin(beta) times its part of the profile's 2-D
+// field at k sin(beta), the phase of its in-plane length taken out.
+std::vector<std::complex<double>> profile_factors(const PointRay& ray, const std::vector<double>& wavenumbers);
 
 } // namespace niceops

@@ -125,6 +125,7 @@ int main(int argc, char** argv)
     bool no_slope_facades = false;
     bool no_twice_roofs = false;
     bool no_roof_lighting = false;
+    bool no_profile_pe = false;
     bool unending_edges = false;
     bool exact_shared_faces = false;
     bool cascade = false;
@@ -207,6 +208,9 @@ int main(int argc, char** argv)
             "once-diffracted ray with walls and a slope on one side.");
     app.add_flag("--no_roof_lighting", no_roof_lighting,
             "With scattering, no lighting path off a level roof or a slope onto the patches, for comparison.");
+    app.add_flag("--no_profile_pe", no_profile_pe,
+            "Over a row of flat-roofed blocks with a street, crossed near grazing, the cascades' rays rather than the "
+            "row's profile marched by a parabolic equation, for comparison.");
     app.add_flag("--no_twice_roofs", no_twice_roofs,
             "No level roof's or slope's reflection on a twice-diffracted ray, for comparison.");
     app.add_flag("--unending_edges", unending_edges,
@@ -458,6 +462,7 @@ int main(int argc, char** argv)
         options.roofs = !no_roofs;
         options.slope_facades = !no_slope_facades;
         options.twice_roofs = !no_twice_roofs;
+        options.profile_pe = !no_profile_pe;
         options.edge_ends = !unending_edges;
         options.shared_face = !cascade;
         options.sample_shared_faces = !exact_shared_faces;
@@ -543,7 +548,11 @@ int main(int argc, char** argv)
             for (std::size_t i = 0; i < field.rays().size(); i++)
             {
                 const PointRay& ray = field.rays()[i];
-                const std::string kind = std::string(ray.wedges == 0 ? "specular"
+                const ProfileTerm& part = ray.profile_term;
+                const std::string kind = ray.profile
+                        ? std::string("profile field") + (part.source_image ? ", off the floor at the source" : "")
+                                + (part.microphone_image ? ", off the floor at the microphone" : "")
+                        : std::string(ray.wedges == 0 ? "specular"
                                                              : ray.wedges == 1 ? "diffracted"
                                                              : ray.wedges == 3 ? "diffracted three times"
                                                              : ray.wedges > 3  ? "diffracted " + std::to_string(ray.wedges)

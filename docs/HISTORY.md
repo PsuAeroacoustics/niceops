@@ -4,6 +4,19 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## A row of roofs by a parabolic equation (October 2026)
+
+Over a row of flat-roofed blocks with a street between, crossed near grazing, the point model
+used to sum the cascades over two, three and four roof edges, which do not converge there: over
+one street they were 8 dB high at 500 Hz. Those rays now give way to the row's two-dimensional
+field from a parabolic equation over its cross-section, carried as four rays (THEORY "Over a row
+of roofs"). Against boundary elements one street goes from 3.4 to 1.65 dB rms and two from 6.7 to
+2.15, the cascades having been as much as 14 dB off; at a microphone in the roofs' plane behind
+the row, where the cascades stepped 11 dB, the field is now smooth. On EDGE only UE12's and UE13's
+receiver R3 moves, toward the FDTD (UE12's floor source from 3.5 dB above it to 1.0 below). The
+shipped goldens do not move. `--no_profile_pe` in point_field restores the cascades, for
+comparison. A row costs seconds of CPU at high frequency (FIDELITY).
+
 ## Plane-wave tables over roofs (October 2026)
 
 `niceops_urban_table` now takes a microphone on or over a roof, which it used to refuse: the roofs
