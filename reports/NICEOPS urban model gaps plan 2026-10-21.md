@@ -14,12 +14,91 @@ when it is done. The [next-steps report](NICEOPS%20Urban%20Propagation%20Next%20
 | 1 | No vertex (corner) term in UTD | Affects every district, flat or pitched; the most visible artifact. **Done** (below) |
 | 1b | Three or more edges in each other's transitions (a street at grazing, a roof's near edge with a step) | Found by step 0; the largest error left in the BEM checks. **Done** for rows with a street (below) |
 | 2 | Missing slope and roof paths | Needs step 1's end treatment for its own edges' ends. **Done**, the rest measured and closed (below) |
-| 3 | Roofs and slopes do not light the diffuse field | Reuses step 2's roof and slope images |
-| 4 | The plane-wave tables have no roofs | Independent of 1-3; can run alongside |
-| 5 | Re-score and document | After each step, and once at the end |
+| 3 | Roofs and slopes do not light the diffuse field | Reuses step 2's roof and slope images. **Done** |
+| 4 | The plane-wave tables have no roofs | Independent of 1-3; can run alongside. **Done**, two leftovers deferred |
+| 5 | Re-score and document | After each step, and once at the end. **Done** through step 2's close |
 
 Each step lands as its own commit (or a few), with both suites passing, FIDELITY re-measured where it moves, and
 HISTORY and the internals updated, as this branch's work has.
+
+## Next steps (updated 2026-10-22)
+
+Steps 0-5 are done or closed on measurement. What the work since has established, and what it points
+at, in order. Each item says what was measured, what would be done, how it would be checked and what
+it costs. Nothing here has been started.
+
+**1. Partners beyond the orders, by `--fade` (first).** The largest defect left in the field.
+- *Evidence.* Both continuity sweeps put most of their steps in one class: a ray whose partner at a
+  boundary is beyond the traced orders. DigiCity (80 lines, 79,460 positions): 355 of the 434 steps
+  above 1 dB, a diffracted ray's leg meeting another edge or its reflection leaving its wall (265),
+  and a specular ray's leg meeting an edge whose partner needs three or four reflections (90); that
+  sweep predates three roof edges, reflections between edges and two reflections at each end, which
+  took 20 of its lines from 31 steps to 23, so these counts are high. The
+  gable suburb (8 lines, 882 positions): all 10, once-diffracted rays with three or four wall
+  reflections and twice-diffracted rays with walls. Raising `--max_edge_reflections` to 4 makes it
+  worse (490 steps, 10.1 dB at most), and UE06's R1 (+4.7 dB, a reflection 3 cm inside a wall's end
+  kept whole) is the same failure. The research review's "truncate together" (Calamia 2009) is the
+  remedy.
+- *What exists.* `--fade` makes that partner from the ray it partners, for specular and
+  once-diffracted rays, in `niceops_point_field` only, CPU only, off by default. Its effect on the
+  sweeps has not been recorded.
+- *Approach.* Measure `--fade` on both sweeps first (steps removed, cost). Then extend it to
+  twice-diffracted rays (the suburb's main case), bring it to the run (`niceops --buildings`) and the
+  GPU, and decide whether it becomes the default.
+- *Check.* The sweeps' step counts; the BEM and image-theory tests unchanged; UE06 R1 and EDGE
+  against the FDTD; cost on the demo approach and DigiCity's flyover.
+- *Cost.* Moderate; the GPU path is most of it. The sweeps take 20 minutes (suburb) to an hour or two
+  (DigiCity) each.
+
+**2. A roof between two edges.** The step tables' remaining error.
+- *Evidence.* FIDELITY, "Across a step": microphones above the lower roof are 2.55 dB rms against the
+  boundary elements (10.8 dB at worst), with either form, nearly all of it at the lower roof's
+  reflection boundary for the first edge's wave, where the ray set steps by up to 6 dB. The partner
+  that would take over is a twice-diffracted ray reflected in the lower roof between its edges; a
+  reflection between two edges is a facade or the floor today. The row of roofs' profile march does
+  not help touching blocks (a step up: 2.04 dB rms in two dimensions against the cascade's 1.99).
+- *Approach.* A level roof or a slope as a reflection between the edges, the second edge mirrored in
+  its plane, as the floor between two edges already is.
+- *Check.* The stored step tables (`tests/test_point_paths.cpp`), and continuity across that
+  boundary.
+- *Cost.* Small to moderate.
+
+**3. The row of roofs' low-frequency bias.**
+- *Evidence.* The profile field is low against the boundary elements by 2.2-2.4 dB at 125 Hz over one
+  street, 2.2-3.6 over two, and about 1 dB at 250-500 Hz: the street's reverberation between its
+  walls, which a one-way march cannot carry back. Taking the walls' rays back in as cascades
+  overshot by 3 dB.
+- *Approach.* Measure in two dimensions before building: the walls' rays at a share, or a reverberant
+  term from the ideal canyon's solution (§6.6), against the stored BEM cases.
+- *Cost.* Moderate. Risk: no form may hold across street widths.
+
+**4. The row of roofs' cost in a run.** No shipped case exercises it: the demo goldens, DigiCity and
+EDGE barely reach it. A row costs 0.29 s to 10 kHz for each microphone and state that sees one, and on
+the GPU path the profile factors are still formed on the CPU. A terraced district with a low approach,
+run with the profile and without, would say whether a run can afford it and what it moves. Needs a run
+flag to switch it off (`--no_profile_pe` is point_field's only).
+
+**5. Deferred, with the evidence for deferring.**
+- *Step 1, part 2 (the double transition).* A strip under 0.5 m wide where a face's plane passes
+  through a vertex; worst 3.68 dB at 125 Hz on the test box; the render does not show it. If it is
+  ever wanted, hand those rays to the edge-source integral (less work) rather than derive the
+  generalized-Fresnel coefficient.
+- *Step 2's three remaining paths* (an end's slope before its walls on a diffracted ray, walls on a
+  twice-diffracted ray's roof side, roofs on thrice and chain rays). No step from them in the
+  suburb's sweep; the one measured kind of their family, a roof at both ends, moved levels by 0.08 dB
+  at most.
+- *Step 4's leftovers* (in the tables, a slope with facades between it and the microphone; the plane
+  wave's lighting off a slope). They touch only tables over pitched roofs; measure on the suburb's
+  table before building.
+- *Step 1b for touching blocks and pitched steps.* No method found that beats the cascade there;
+  item 2 addresses the measured main error over a lower roof.
+- *Frequency sampling of the profile, and Numerov in height.* Built, measured and dropped (internals).
+- *Data, not the model* (hypotheses, not findings): from the floor source EDGE's measurements read
+  4-6 dB above the FDTD at UE12's and UE13's R3; UE17's R1 stays open; R3 and R4 are free-field
+  capsules where R1 and R2 are pressure ones, which may explain their high-frequency trends.
+
+**6. Re-score** after items 1-3, as step 5 did: EDGE, DigiCity's microphone 7 and accuracy figure,
+the demo approach's goldens, the suburb with its sweep, and the 3-D render.
 
 ## Step 0: why EDGE's pitched drone rows read low
 
@@ -320,11 +399,13 @@ move, and HISTORY says what moved and why. The next-steps report is updated as e
 
 ## Decisions for you
 
-- **Step 1, part 2**: if the double transition matters, should it take the generalized-Fresnel coefficient (more
-  work, closed form, GPU-able) or hand those rays to the edge-source integral (less work, CPU only, slower)? I would
-  measure first and recommend then.
-- **Step 0's FDTD runs** take GPU time (minutes to tens of minutes a scene at 3 mm). Fine to spend?
-- **Order**: steps 1 and 4 are independent; if rooftop receivers in tables are wanted soon, step 4 can go first.
-- **Step 1a was taken before step 1**, as step 0 found it behind the largest measured bias; step 1 (the vertex term)
-  is next unless step 1b is wanted first.
-- **Step 1b**: which multi-edge form, measured on streets and rows against boundary elements before any is built.
+Settled: step 0's FDTD time was spent; step 1a went before step 1; step 1b took the profile march
+(measured against the boundary elements before it was built); step 2 closed on measurement.
+
+Open:
+
+- **Whether `--fade` becomes the default** (next step 1), once the sweeps say what it removes and what
+  it costs. It changes every run's levels near those boundaries.
+- **The low-frequency bias's treatment** (next step 3), after the two-dimensional measurement.
+- **Step 1, part 2**: deferring is the recommendation; if wanted, the edge-source integral for those
+  rays rather than a new coefficient.
