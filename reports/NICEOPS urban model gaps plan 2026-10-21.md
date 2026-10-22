@@ -38,6 +38,18 @@ the ray set's side took the step's 72 cases above its lower roof from 2.34 to 0.
 the source above it, 0.9 across the reflection boundary), which a blend of aperture and cascade
 would remove, the GPU's aperture kernel included.
 
+**Item 3 measured in two dimensions (2026-10-22, not built).** A two-way pass over each street --
+the field below the next roof reflected off its wall and marched back, below this roof reflected
+forward again, the part over the next roof added -- is what the bias lacked. Against the BEM, rms:
+one street 1.61 -> 0.58 dB at 24 round trips, two streets 2.10 -> 0.69, the step 1.18 -> 0.41, the
+steep source 1.03 -> 0.29; the 125 Hz bias -2.3 -> -0.9. But a street is a weakly damped cavity at
+high frequency: at 1 kHz the partial sums swing 0.25-0.55 dB rms with the trip count (forward only
+0.28), and each trip costs two marches over the full column. Trips only at low frequency (16, the
+last half tapered, faded out between a street 60 and 120 radians wide) keep most of the gain (one
+street 0.72, two 0.87, step 0.64, steep 0.46, 1 kHz unchanged) at a cost still to measure.
+Prototype: job tmp/twoway/tw.cpp. Decision for the user: build that, and whether a frequency fade
+is acceptable.
+
 **1. Partners beyond the orders, by `--fade` (first).** The largest defect left in the field.
 - *Evidence.* Both continuity sweeps put most of their steps in one class: a ray whose partner at a
   boundary is beyond the traced orders. DigiCity (80 lines, 79,460 positions): 355 of the 434 steps
