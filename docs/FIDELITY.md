@@ -1266,6 +1266,9 @@ sit 3 dB or more off the median of their neighbours on the same surface, and 0.0
 3 dB against both the frames either side; 0.17% of roof cells ever do so in the flight. With the
 edges unending (and the model of the day before step 1a, which moved microphone 7 by under 0.1 dB)
 those were 0.33%, 0.025% and 14.4%: the one-frame dips where two roof edges meet at a corner.
+The slope and twice-diffracted roof paths and the shared face's limit that came after move 0.85%
+of the cell-frames by more than 0.1 dB, at most 1.7 dB and +0.0001 dB on average, and leave those
+three shares as they were.
 
 **The edge-source integral** (`--edge_source`; `src/edge_source`, `tests/test_edge_source.cpp`).
 First order, against exact solutions:

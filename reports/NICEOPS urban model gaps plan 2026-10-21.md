@@ -274,6 +274,16 @@ receiver flush on a roof against one a hair above it. The canyon and long-buildi
 
 ## Step 5: re-score and document
 
+**Done for steps 1-4 (2026-10-21).** EDGE: only UE07's drone rows move after step 2, by 0.04-0.08
+dB rms the wrong way, from the twice-diffracted roof rays (harness f7e3fe7); steps 3 and 4 do not
+reach it (no scattering, no tables). DigiCity microphone 7 and the accuracy figure: unchanged (the
+loudspeaker stands below the container roofs; harness 1ae0bbc). The demo approach's `--buildings`
+SELs: within 1.2e-6 dB (the shared face's limit); the table runs' goldens 0.001 dB (step 4's
+prefilter) and 0.005 with scattering. The gable suburb: step 2 up to 2.4 dB at 125 Hz in near-nulls,
+step 3 +0.04 dB mean with scattering. The 3-D render: 0.85% of cell-frames move by more than 0.1 dB,
+at most 1.7 dB, its continuity shares unchanged. FIDELITY and HISTORY carry each. Step 1b stays open:
+its form is the decision below.
+
 After each step: EDGE (FDTD and measured, flat and pitched), DigiCity microphone 7 and the accuracy figure, the demo
 approach's `--buildings` SELs, the gable suburb, and the 3-D render. FIDELITY's tables are re-measured where they
 move, and HISTORY says what moved and why. The next-steps report is updated as each gap closes.
