@@ -702,6 +702,24 @@ exactly. What to keep:
     20-300 m off at 0.5-35°) it gained 1.35x overall and missed 27 rows by more than 0.1 dB, by
     0.92 at worst. The parts carry structure from the streets' floors and the roofs at scales
     near the sub-bands' own spacing, which a midpoint does not see. Do not re-derive it.
+  - **Round trips across the streets were built and dropped.** The march drops a street's
+    reverberation, and at single frequencies it read 2.2-3.6 dB low at 125 Hz. Round trips of the
+    field below each next roof -- reflected off that block's front wall, marched back across the
+    street, reflected off this block's back wall below its roof, marched forward again, what
+    stands above the next roof added -- were built (16 of them, the second half tapered, faded out
+    between k w = 60 and 120, each wall's reflection per band; 13-32% of a row's cost), and took
+    single frequencies over one street from 1.61 to 0.72 dB rms, at depth to width 0.5-3 alike.
+    Untapered at every wavenumber the partial sums never settle (a weakly damped cavity: 0.25-0.55
+    dB swings at 1 kHz with the count). But against boundary elements averaged over each band the
+    march alone was already within 0.22 / 0.40 / 0.66 dB rms (one street, two, a 20 m street), with
+    no low bias at 125 Hz: the single-frequency deficit is where the exact field sits among the
+    cavity's resonances. The trips gained 0.15 dB at most there, and since their delays run to 32
+    street widths they put structure at about 1 Hz into the parts, which a run's three samples a
+    band cannot average: 0.49 / 0.72 / 0.93 against the march's 0.38 / 0.54 / 0.82. Carried right
+    they would need a ray per trip (its own length and spreading -- the 2-D field's conversion by
+    the direct path's length also overstates late trips by up to 6 dB), and per combination over
+    several streets. Score a row's change by band levels, not single frequencies. The patch and the
+    BEM sets are in the session's scratch (`tmp/item3`).
   - Touching blocks keep the cascades: the profile does no better there (2-D, a step up 2.04 dB
     rms against the cascades' 1.99). So do a single block and a pitched roof.
 - **The 2-D field converts to 3-D per ray, by sin(beta)/sqrt(l_t).** At beta = 90° that is exact

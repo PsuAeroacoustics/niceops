@@ -56,6 +56,16 @@ four edges over a row of roofs still step 3.9 dB in the roofs' plane where no pr
 reflection boundary's 0.94 dB is unchanged (where it meets the plane, 10 m behind, 1.05-4.16 ->
 0.86-1.16 dB).
 
+**Item 3 closed (2026-10-22, not pursued).** Built (round trips across each street, faded out above
+k w = 120, the walls' reflection per band) and measured against new BEM: it held at single frequencies
+for streets 0.5-3 times as deep as wide (1.19 -> 0.58, 0.90 -> 0.59, 1.39 -> 0.67 dB rms). But BEM at 16
+frequencies a band showed the march alone already within 0.22 / 0.40 / 0.66 dB rms of the band levels
+(one street, two, a 20 m street), at 125 Hz -0.31 to +0.18: the "bias" was where single frequencies
+fall among the street cavity's resonances. Band-averaged the trips gained 0.15 dB at most, and at a
+run's three samples a band their fine structure made the levels worse (0.49 / 0.72 / 0.93 against
+0.38 / 0.54 / 0.82). Reverted, recorded in FIDELITY ("Over a row of roofs") and internals; patch in job
+tmp/item3. The user chose not to pursue it further for now.
+
 **Item 3 measured in two dimensions (2026-10-22, not built).** A two-way pass over each street --
 the field below the next roof reflected off its wall and marched back, below this roof reflected
 forward again, the part over the next roof added -- is what the bias lacked. Against the BEM, rms:
@@ -104,7 +114,7 @@ is acceptable.
   boundary.
 - *Cost.* Small to moderate.
 
-**3. The row of roofs' low-frequency bias.**
+**3. The row of roofs' low-frequency bias.** (Closed 2026-10-22: not a bias in band levels; see above.)
 - *Evidence.* The profile field is low against the boundary elements by 2.2-2.4 dB at 125 Hz over one
   street, 2.2-3.6 over two, and about 1 dB at 250-500 Hz: the street's reverberation between its
   walls, which a one-way march cannot carry back. Taking the walls' rays back in as cascades
@@ -217,7 +227,8 @@ four, the parts from the source or its floor image to the microphone or its imag
 by elevation (40-25°), by the line's clearance of the blocks' ends, and by each end's angle off the vertical over
 its outer corner. Against boundary elements, rms: one street 1.65 dB (cascades 3.40), at 1 kHz 0.33 (3.49), a
 source 16.7° up 1.13 (2.19), a step across a street 1.15 (1.86), two streets 2.15 (6.70). What is left is a low
-bias at 125 Hz, 2.3-3.6 dB, the streets' reverberation the march cannot carry back. Touching blocks (no street)
+bias at 125 Hz, 2.3-3.6 dB, the streets' reverberation the march cannot carry back (at single
+frequencies; averaged over a band it is not there, next steps, item 3). Touching blocks (no street)
 keep the cascades, which hold as well there; so does UE02's pitched step. EDGE: only UE12's and UE13's receiver R3,
 behind both terraces, takes it, and moves toward the FDTD (UE12's floor source from 3.5 dB above it to 1.0 below;
 the row's rms 2.30 → 1.65 dB), away from the measurements, which read 4-6 dB above the FDTD there (harness
@@ -447,6 +458,6 @@ Open:
 
 - **Whether `--fade` becomes the default** (next step 1), once the sweeps say what it removes and what
   it costs. It changes every run's levels near those boundaries.
-- **The low-frequency bias's treatment** (next step 3), after the two-dimensional measurement.
+- ~~The low-frequency bias's treatment~~ (next step 3): closed; there is no bias in band levels.
 - **Step 1, part 2**: deferring is the recommendation; if wanted, the edge-source integral for those
   rays rather than a new coefficient.

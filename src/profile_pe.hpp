@@ -36,7 +36,10 @@
 // field into the shadow with the free-space (Neumann) kernel instead missed
 // the back corner and was 1.3 dB low behind one block.  What is left out: the
 // waves the march cannot carry back, the street's reverberation between its
-// walls, and the roofs' and the streets' floors' absorption, rigid here.
+// walls, and the roofs' and the streets' floors' absorption, rigid here.  The
+// reverberation matters at single frequencies (a street is a lightly damped
+// cavity) but not to a band's level, which the march holds to 0.2-0.7 dB rms
+// (FIDELITY, "Over a row of roofs"; round trips across the streets were tried).
 // Against boundary elements (FIDELITY): one street 1.6 dB rms (UTD 3.4), two
 // streets 2.1 (6.7), 1 kHz 0.3 (3.5).
 

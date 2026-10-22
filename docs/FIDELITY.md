@@ -1213,9 +1213,27 @@ cascades it replaces (`--no_profile_pe`), error re the exact level, dB, mean, rm
 
 The cascades do not settle: over one street they are 1.2-1.6 dB low at 125 and 250 Hz and 8 dB
 high at 500 Hz at every microphone, and leaving out the thrice-diffracted rays moves their mean
-from +1.1 to −3.8 dB. The profile field's error is a bias that falls with frequency: over one
-street 2.2-2.4 dB low at 125 Hz, 0.9-1.2 at 250 and 1.0-1.3 at 500, over two 2.2-3.6 at 125 Hz.
-That is the streets' reverberation between their walls, which the march does not carry back. One
+from +1.1 to −3.8 dB. At these single frequencies the profile field reads low, by a margin that
+falls with frequency: over one street 2.2-2.4 dB at 125 Hz, 0.9-1.2 at 250 and 1.0-1.3 at 500, over
+two 2.2-3.6 at 125 Hz. That is not a bias in a band's level. The streets' reverberation between
+their walls, which the march does not carry back, makes each street a lightly damped cavity whose
+resonances lie a few hertz apart, and at one frequency the exact field sits on one or between two.
+Averaged over each third-octave band (boundary elements at 16 frequencies a band, 30 elements a
+wavelength; sources and microphones as above, 125, 250 and 500 Hz, 18 band levels a row), rms and
+worst, dB:
+
+| Row | Profile field | Round trips (not kept) | Round trips at a run's three samples a band |
+| --- | --- | --- | --- |
+| One street, 10 m | 0.22, −0.35 | 0.15 | 0.49 |
+| Two streets, 10 m | 0.40, −0.64 | 0.25 | 0.72 |
+| One street, 20 m | 0.66, −1.22 | 0.65 | 0.93 |
+
+At 125 Hz the profile field is −0.31 to +0.18 dB. Carrying the reverberation back -- round trips
+of the field below each next roof across its street, 16 of them faded out as the street widens past
+60 radians, built and measured -- took the single-frequency scores over one street from 1.61 to
+0.72 dB rms and two from 2.10 to 0.87, and held for streets 0.5 to 3 times as deep as wide; but a
+band's level moved by 0.15 dB at most, and the trips' fine structure in frequency (delays up to 32
+widths) made a run's band levels worse, as above. They are not in the model. One
 block alone, and two touching (a step up or down, no street), are left to the cascades: 0.16 dB
 rms for the block, 0.62 and 1.99 for the steps, which the profile field does not better (0.65 and
 2.03 in two dimensions).

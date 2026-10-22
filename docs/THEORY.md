@@ -1845,7 +1845,10 @@ finite impedance takes them as it does any ray's, its spherical-wave coefficient
 grazing angle over its unfolded leg, and a plate under a flush microphone its transfer by the
 arrival. What it leaves out: the waves it cannot carry back, chiefly a street's reverberation
 between its walls, whose rays go with those it stands for; and the roofs' and the streets'
-absorption, the march's floors being rigid.
+absorption, the march's floors being rigid. The reverberation shapes the field at single
+frequencies, the street a cavity with resonances a few hertz apart, but a band's level averages
+them, and there the march is within 0.2-0.7 dB of the boundary elements; round trips across each
+street, which carry it back, were built and measured and are not kept (FIDELITY).
 
 **Turbulence scattering into the buildings' shadows** (`--scattering` $\gamma_T$ with
 `--buildings`). Still air leaves a shielded microphone the diffracted rays alone; turbulence
