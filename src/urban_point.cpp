@@ -1104,8 +1104,11 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     };
     // The pairs `todo` (state, microphone), sorted by state, into `out`
     // alike: the sources' ends a block at a time, built in parallel, and
-    // the pairs microphone by microphone, so a worker keeps the
-    // microphone's end while its pairs last.
+    // the pairs microphone by microphone, up to `block` microphones at a
+    // time, whose ends are built in parallel too and kept from one group to
+    // the next, across blocks and calls, while the next group wants them.
+    // Built in each chunk instead, a run on a few microphones rebuilt every
+    // end once per chunk: 3828 times for 7 microphones at -j 8.
     // On a GPU: the workers trace each pair, weigh its rays and pack them
     // without pause, and a stream (gpu/band_stream.hpp) sums them there and
     // turns its energies into the pair's levels.
@@ -1115,6 +1118,8 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     std::vector<std::array<SubBand, 3>> parts(nb);
     for (std::size_t b = 0; b < nb; b++)
         parts[b] = sub_bands(bands[b], sound_speed);
+    std::vector<std::unique_ptr<PathEnd>> microphone_ends(nm);
+    std::vector<std::size_t> held_microphones, group_microphones, missing_microphones;
     auto evaluate_pairs = [&](const std::vector<std::pair<std::size_t, std::size_t>>& todo, std::vector<Pair>& out) {
         out.assign(todo.size(), Pair {});
         for (Pair& p : out)
@@ -1161,59 +1166,85 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
             std::stable_sort(work.begin(), work.end(),
                     [&](std::size_t a, std::size_t b) { return todo[a].second < todo[b].second; });
             auto run = [&] {
-                parallel_chunks(work.size(), workers, [&](std::size_t begin, std::size_t end) {
-                    std::unique_ptr<PathEnd> microphone;
-                    std::size_t microphone_row = nm;
-                    Scratch w;
-                    for (std::size_t i = begin; i < end; i++)
+                for (std::size_t from = 0; from < work.size();)
+                {
+                    // The pairs of the next `block` distinct microphones.
+                    group_microphones.clear();
+                    std::size_t to = from;
+                    while (to < work.size()
+                            && (group_microphones.size() < block
+                                    || todo[work[to]].second == group_microphones.back()))
                     {
-                        const auto [state, m] = todo[work[i]];
-                        if (m != microphone_row)
-                        {
-                            microphone = std::make_unique<PathEnd>(city, microphones[m], false, paths, near_sources);
-                            microphone_row = m;
-                        }
-                        if (!stream)
-                        {
-                            evaluate(*source_ends[slot[state]], *microphone, state, m, w, out[work[i]]);
-                            continue;
-                        }
-                        const PointSourceField field(city, *source_ends[slot[state]], *microphone,
-                                microphone_paths[m]);
-                        // The diffuse energy before the push: the stream's
-                        // callback adds it.
-                        Pair& p = out[work[i]];
-                        p.diffuse.clear();
-                        if (diffuse)
-                            diffuse_energy(state, m, w, p.diffuse);
-                        grating_energy(*source_ends[slot[state]], *microphone, state, m, w, p.diffuse);
-                        turbulence_energy(state, m, w, p.scattered);
-                        if (field.rays().empty())
-                        {
-                            // The diffuse and scattered fields alone, where
-                            // they reach.
-                            if (!p.diffuse.empty() || !p.scattered.empty())
-                            {
-                                add_diffuse(p.diffuse, p.bands);
-                                add_scattered(p.scattered, p.bands);
-                                w.full.assign(all, silence);
-                                std::copy(p.bands.begin(), p.bands.end(),
-                                        w.full.begin() + static_cast<std::ptrdiff_t>(first_band));
-                                p.level = weighted_level(w.full.data(), gains);
-                            }
-                            continue;
-                        }
-                        weigh(field, state, w);
-                        gpu::PointRaySet set;
-                        gpu::PointRayPacking packing;
-                        packing.weights = w.weights.data();
-                        packing.sum = gpu_sum;
-                        packing.cone = coherence.cone;
-                        gpu::pack_point_rays(field, reflection_for(m), floor_of[m], bands, sound_speed, set,
-                                sub_band_air, packing);
-                        stream->push(work[i], std::move(set));
+                        if (group_microphones.empty() || todo[work[to]].second != group_microphones.back())
+                            group_microphones.push_back(todo[work[to]].second);
+                        to++;
                     }
-                });
+                    // Both lists are sorted.
+                    for (std::size_t m : held_microphones)
+                        if (!std::binary_search(group_microphones.begin(), group_microphones.end(), m))
+                            microphone_ends[m].reset();
+                    missing_microphones.clear();
+                    for (std::size_t m : group_microphones)
+                        if (!microphone_ends[m])
+                            missing_microphones.push_back(m);
+                    parallel_chunks(missing_microphones.size(), workers, [&](std::size_t begin, std::size_t end) {
+                        for (std::size_t k = begin; k < end; k++)
+                        {
+                            const std::size_t m = missing_microphones[k];
+                            microphone_ends[m] = std::make_unique<PathEnd>(
+                                    city, microphones[m], false, paths, near_sources);
+                        }
+                    });
+                    held_microphones.swap(group_microphones);
+                    parallel_chunks(to - from, workers, [&](std::size_t begin, std::size_t end) {
+                        Scratch w;
+                        for (std::size_t i = from + begin; i < from + end; i++)
+                        {
+                            const auto [state, m] = todo[work[i]];
+                            const PathEnd& microphone = *microphone_ends[m];
+                            if (!stream)
+                            {
+                                evaluate(*source_ends[slot[state]], microphone, state, m, w, out[work[i]]);
+                                continue;
+                            }
+                            const PointSourceField field(city, *source_ends[slot[state]], microphone,
+                                    microphone_paths[m]);
+                            // The diffuse energy before the push: the stream's
+                            // callback adds it.
+                            Pair& p = out[work[i]];
+                            p.diffuse.clear();
+                            if (diffuse)
+                                diffuse_energy(state, m, w, p.diffuse);
+                            grating_energy(*source_ends[slot[state]], microphone, state, m, w, p.diffuse);
+                            turbulence_energy(state, m, w, p.scattered);
+                            if (field.rays().empty())
+                            {
+                                // The diffuse and scattered fields alone, where
+                                // they reach.
+                                if (!p.diffuse.empty() || !p.scattered.empty())
+                                {
+                                    add_diffuse(p.diffuse, p.bands);
+                                    add_scattered(p.scattered, p.bands);
+                                    w.full.assign(all, silence);
+                                    std::copy(p.bands.begin(), p.bands.end(),
+                                            w.full.begin() + static_cast<std::ptrdiff_t>(first_band));
+                                    p.level = weighted_level(w.full.data(), gains);
+                                }
+                                continue;
+                            }
+                            weigh(field, state, w);
+                            gpu::PointRaySet set;
+                            gpu::PointRayPacking packing;
+                            packing.weights = w.weights.data();
+                            packing.sum = gpu_sum;
+                            packing.cone = coherence.cone;
+                            gpu::pack_point_rays(field, reflection_for(m), floor_of[m], bands, sound_speed, set,
+                                    sub_band_air, packing);
+                            stream->push(work[i], std::move(set));
+                        }
+                    });
+                    from = to;
+                }
             };
             if (!stream)
                 run();

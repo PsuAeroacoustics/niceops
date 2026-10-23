@@ -983,8 +983,12 @@ it bought:
   busy to the end. The tool runs the sources a block at a time (64, or four per worker) to bound
   what it holds: the block's ends, levels and, for `--rays`, ray text, written out before the
   next. Within a block the pairs go microphone by microphone, which keeps the workers busy
-  however few microphones there are, and each worker keeps the microphone's end while its pairs
-  last; across a block boundary it is traced again, which the 3% makes noise.
+  however few microphones there are. The microphones' ends are built in parallel before their
+  pairs, up to a block of microphones at a time, and kept while the next group wants them, so a
+  run on fewer microphones than a block traces each once per call (`microphone_ends` in
+  `urban_point.cpp`). Built per chunk instead, the district's 7 rebuilt 3828 times at `-j 8`;
+  holding them took its `--gpu -j 8` run from 10.3 to 9.7 s of CPU (best of 3, alternated).
+  The end is immutable and its inputs the same, so the output is byte-identical.
 - **On a boundary the coefficient takes the side its ray is kept on** (`term_angles` in
   `wedge.cpp`): the incident wave's where |beta| < pi, face 0's reflection's where beta < pi, face
   n's where beta > (2n - 1) pi. The path tests count a path through an edge as open, so a ray

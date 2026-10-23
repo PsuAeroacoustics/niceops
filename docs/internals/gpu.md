@@ -182,7 +182,13 @@ every shared face's integral at every wavenumber.
   busy 3.3 s of it and sets the pace: the shared faces' panels (`face_amplitudes`) take about
   half of that, the other rays' amplitudes 0.4 s and the band sums the rest. The workers spend
   72% of their time on the path search and 25% packing the rays, two thirds of that the shared
-  faces' aperture geometry (415,000 faces on this run, 286 nodes each).
+  faces' aperture geometry (415,000 faces on this run, 286 nodes each). That geometry works out
+  every segment's panel ends before placing a node, so `aperture_geometry` reserves its nodes
+  exactly, and `pack_point_rays` reserves the set's per-ray arrays and grows its panels
+  geometrically: grown an element at a time they were a tenth of packing in copies. Same values,
+  same order; the district's `--gpu -j 8` run went from 9.7 to 8.7 s of CPU on top of the held
+  microphone ends (ground.md), 10.3 to 8.7 s for both (best of 3, alternated), and at `-j 1`
+  from 7.5 to 7.1 s of CPU.
 
 - **The canyon wave solver**: the 20 m canyon to 707 Hz at 15 points per wavelength (1.08
   million cells, 66,764 steps) marches in 10.8 s of GPU time, about 6.7e9 cell updates a second,

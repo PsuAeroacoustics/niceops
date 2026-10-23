@@ -38,6 +38,13 @@ GpuAperture pack_aperture(const ApertureGeometry& g, double weight, std::vector<
     put_angles(g.keller, a.keller_cot, a.keller_c);
     a.n1 = static_cast<float>(g.keller.n);
     a.keller_scale = static_cast<float>(g.keller_scale);
+    // Room for its panels, growing geometrically still: reserving just
+    // enough at every aperture would copy the field's panels each time.
+    std::size_t need = panels.size();
+    for (std::size_t s = 0; s + 1 < g.segments.size(); s++)
+        need += (g.segments[s + 1] - g.segments[s]) / 2;
+    if (need > panels.capacity())
+        panels.reserve(std::max(need, 2 * panels.capacity()));
     for (std::size_t s = 0; s + 1 < g.segments.size(); s++)
         for (std::size_t i = g.segments[s]; i + 2 < g.segments[s + 1]; i += 2)
         {
@@ -120,6 +127,15 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
         frequencies[j] = centres[j] * sound_speed / (2.0 * pi);
     std::vector<std::complex<double>> floor_factor(centres.size(), 1.0), plate(floor.plate ? 2 * centres.size() : 0);
     std::vector<double> in_plane;
+    // Every ray's records, and their wedges at most; a shared face has two.
+    std::size_t wedges = 0;
+    for (const PointRay& ray : rays)
+        wedges += ray.shared ? 2 : static_cast<std::size_t>(std::max(ray.wedges, 0));
+    set.rays.reserve(rays.size());
+    set.length.reserve(rays.size());
+    set.launch.reserve(3 * rays.size());
+    set.reflected.reserve(rays.size() * nb * (set.complex_reflections ? 6 : 1));
+    set.wedges.reserve(wedges);
     for (std::size_t index : order)
     {
         const PointRay& ray = rays[index];

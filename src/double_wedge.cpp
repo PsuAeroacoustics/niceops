@@ -711,14 +711,24 @@ ApertureGeometry aperture_geometry(const SharedFace& face, double sx, double sz,
         g.nodes.push_back(n);
     };
     const double smallest = std::max(0.01 * std::min(w, s1), 1e-6 * extent);
+    // Every segment's panel ends first, so that its nodes, two per panel and
+    // one more per segment, go into a vector already their size.  Grown a
+    // node at a time, the copies were 6% of packing a GPU field.
+    struct Segment
+    {
+        double a, b;
+        std::size_t ends;
+    };
+    thread_local std::vector<double> ends;
+    thread_local std::vector<Segment> segments;
+    ends.clear();
+    segments.clear();
     for (std::size_t c = 0; c + 1 < cuts.size(); c++)
     {
         const double a = cuts[c], b = cuts[c + 1];
         if (b - a < 1e-9 * extent)
             continue;
-        int count[4];
-        wave_counts(face, f, a, b, count);
-        std::vector<double> ends {a};
+        ends.push_back(a);
         for (double t = a; t < b;)
         {
             const double h = panel_step(features, t, smallest, w);
@@ -733,6 +743,17 @@ ApertureGeometry aperture_geometry(const SharedFace& face, double sx, double sz,
             ends.push_back(next);
             t = next;
         }
+        segments.push_back({a, b, ends.size()});
+    }
+    g.nodes.reserve(2 * ends.size() - segments.size());
+    g.segments.reserve(segments.size() + 1);
+    for (std::size_t s = 0, first = 0; s < segments.size(); first = segments[s++].ends)
+    {
+        const double a = segments[s].a, b = segments[s].b;
+        const double* end = ends.data() + first;
+        const std::size_t n = segments[s].ends - first;
+        int count[4];
+        wave_counts(face, f, a, b, count);
         // A hair inside, as aperture() takes it, but never more than a hair of
         // the shortest aperture: a geometrical-optics wave's stationary point
         // is on its cut, where its amplitude per unit length goes as
@@ -742,10 +763,10 @@ ApertureGeometry aperture_geometry(const SharedFace& face, double sx, double sz,
         const double inside = 1e-7 * std::min(b - a, shortest);
         g.segments.push_back(g.nodes.size());
         node(a + inside, count);
-        for (std::size_t p = 0; p + 1 < ends.size(); p++)
+        for (std::size_t p = 0; p + 1 < n; p++)
         {
-            node(0.5 * (ends[p] + ends[p + 1]), count);
-            node(p + 2 == ends.size() ? b - inside : ends[p + 1], count);
+            node(0.5 * (end[p] + end[p + 1]), count);
+            node(p + 2 == n ? b - inside : end[p + 1], count);
         }
     }
     g.segments.push_back(g.nodes.size());
