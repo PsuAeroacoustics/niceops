@@ -3634,6 +3634,14 @@ std::complex<double> point_ray_amplitude(const PointRay& ray, const std::vector<
     return weighted_amplitude(ray, point_ray_amplitude(ray, reflected_amplitude(ray, reflection, floor_reflection), k), k);
 }
 
+void PointPathOptions::set_lowest_band(double frequency, double sound_speed)
+{
+    const double k = 2.0 * pi * frequency / sound_speed;
+    edge_source_reach = 100.0 / k;
+    end_reach = end_fade_hi / k;
+    tilted_step_k_min = 2.0 * pi * frequency / std::pow(2.0, 1.0 / 6.0) / sound_speed;
+}
+
 double tilted_step_fade(double x)
 {
     const double g = std::pow(2.0 * std::abs(fresnel_tail(x)), TiltedStepSplit::fade_power);

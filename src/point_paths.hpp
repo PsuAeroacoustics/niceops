@@ -222,6 +222,12 @@ struct PointPathOptions
     // image tree goes that deep and one more, the relief, whatever the edges'
     // orders and source_reflections.  0 without grating rays.
     std::size_t grating_reflections = 0;
+
+    // The band-dependent reaches for a run whose lowest band is centred on
+    // `frequency` (Hz): edge_source_reach to 100 radians of path excess at
+    // its centre, end_reach to end_fade_hi radians, where UTD's end waves
+    // have faded out, and tilted_step_k_min to the band's lower edge.
+    void set_lowest_band(double frequency, double sound_speed);
 };
 
 // The diffracted ray the model does not trace at a boundary, made from the

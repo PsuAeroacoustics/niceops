@@ -86,6 +86,24 @@ double invert(Cdf cdf, double lo, double hi, double q)
     return 0.5 * (lo + hi);
 }
 
+// The next group of a run whose equal keys key(i) are adjacent: from
+// `from`, the items of the next `block` distinct keys, which go to `group`
+// in order.  Returns the end of the group.
+template <class Key>
+std::size_t next_group(std::size_t from, std::size_t count, std::size_t block, Key key,
+        std::vector<std::size_t>& group)
+{
+    group.clear();
+    std::size_t to = from;
+    while (to < count && (group.size() < block || key(to) == group.back()))
+    {
+        if (group.empty() || key(to) != group.back())
+            group.push_back(key(to));
+        to++;
+    }
+    return to;
+}
+
 // partially_coherent_energies's buffers.
 struct PairScratch
 {
@@ -93,7 +111,13 @@ struct PairScratch
     std::vector<double> azimuth;
     std::vector<std::uint32_t> first, second;
     std::vector<std::uint32_t> by_z;
-    std::vector<std::uint64_t> candidates;
+    // A sweep pair: (i << 32 | j) and its launches' chord.
+    struct Candidate
+    {
+        std::uint64_t key;
+        double norm;
+    };
+    std::vector<Candidate> candidates;
     std::vector<double> degrees, power, spread_power;
     std::vector<std::int8_t> wrap;
     std::vector<double> mean, root_spread;
@@ -183,16 +207,26 @@ void partially_coherent_energies(const PointSourceField& field, const std::vecto
     wrap.clear();
     if (coherence.sum != RaySum::energy)
     {
-        auto add = [&](std::size_t i, std::size_t j) {
+        // `norm` is the launches' chord, |launch[i] - launch[j]|.
+        auto add = [&](std::size_t i, std::size_t j, double norm) {
             first.push_back(static_cast<std::uint32_t>(i));
             second.push_back(static_cast<std::uint32_t>(j));
-            const double d = (launch[i] - launch[j]).norm() * 180.0 / pi;
+            const double d = norm * 180.0 / pi;
             degrees.push_back(d);
             power.push_back(measured ? std::pow(d, coherence.exponent) : 0.0);
             if (variance != nullptr)
                 spread_power.push_back(coherence.spread_exponent == 1.0 ? d : std::pow(d, coherence.spread_exponent));
             const double raw = azimuth[i] - azimuth[j];
             wrap.push_back(static_cast<std::int8_t>(raw > pi ? -1 : raw < -pi ? 1 : 0));
+        };
+        auto reserve = [&](std::size_t size) {
+            first.reserve(size);
+            second.reserve(size);
+            degrees.reserve(size);
+            power.reserve(size);
+            if (variance != nullptr)
+                spread_power.reserve(size);
+            wrap.reserve(size);
         };
         // Without the variance, a pair beyond a fixed angle is dropped at the
         // first band and never comes back: the cone's outer edge, or where
@@ -216,25 +250,19 @@ void partially_coherent_energies(const PointSourceField& field, const std::vecto
         // launch has no place in the sort, and the old loop drops its pairs.
         const bool sweep = reach < 60.0 && n > 32
                 && std::all_of(launch.begin(), launch.end(), [](const Vec3& v) { return std::isfinite(v.norm()); });
+        const std::size_t count = n * (n - 1) / 2;
         auto enumerate_all = [&] {
-            const std::size_t count = n * (n - 1) / 2;
-            first.reserve(count);
-            second.reserve(count);
-            degrees.reserve(count);
-            power.reserve(count);
-            if (variance != nullptr)
-                spread_power.reserve(count);
-            wrap.reserve(count);
+            reserve(count);
             for (std::size_t i = 0; i < n; i++)
                 for (std::size_t j = i + 1; j < n; j++)
-                    add(i, j);
+                    add(i, j, (launch[i] - launch[j]).norm());
         };
-        if (sweep)
-        {
+        auto& candidates = scratch.candidates;
+        // The sweep's pairs within the chord, each with its chord, or false
+        // where they pass max_candidates.
+        auto collect = [&] {
             const double chord = reach * pi / 180.0 * (1.0 + 1e-6) + 1e-12;
             auto& by_z = scratch.by_z;
-            auto& candidates = scratch.candidates;
-            const std::size_t count = n * (n - 1) / 2;
             // On the measured launch sets, sorting and filtering stop paying
             // once the sweep keeps about a fifth of all pairs. Bound both its
             // work and its retained candidate buffer there; dense sets take
@@ -245,38 +273,31 @@ void partially_coherent_energies(const PointSourceField& field, const std::vecto
             std::sort(by_z.begin(), by_z.end(),
                     [&](std::uint32_t a, std::uint32_t b) { return launch[a].z < launch[b].z; });
             candidates.clear();
-            bool dense = false;
             for (std::size_t a = 0; a < n; a++)
-            {
                 for (std::size_t b = a + 1; b < n && launch[by_z[b]].z - launch[by_z[a]].z <= chord; b++)
                 {
                     const std::uint64_t i = std::min(by_z[a], by_z[b]), j = std::max(by_z[a], by_z[b]);
-                    if ((launch[i] - launch[j]).norm() <= chord)
+                    const double norm = (launch[i] - launch[j]).norm();
+                    if (norm <= chord)
                     {
                         if (candidates.size() == max_candidates)
-                        {
-                            dense = true;
-                            break;
-                        }
-                        candidates.push_back(i << 32 | j);
+                            return false;
+                        candidates.push_back({i << 32 | j, norm});
                     }
                 }
-                if (dense)
-                    break;
-            }
-            if (dense)
-                candidates.clear();
-            else
-            {
-                std::sort(candidates.begin(), candidates.end());
-                for (std::uint64_t c : candidates)
-                    add(static_cast<std::size_t>(c >> 32), static_cast<std::size_t>(c & 0xffffffffu));
-            }
-            if (dense)
-                enumerate_all();
-        }
-        else
+            return true;
+        };
+        if (!sweep || !collect())
             enumerate_all();
+        else
+        {
+            // The keys are distinct, so this is the (i, j) order.
+            std::sort(candidates.begin(), candidates.end(),
+                    [](const PairScratch::Candidate& a, const PairScratch::Candidate& b) { return a.key < b.key; });
+            reserve(candidates.size());
+            for (const PairScratch::Candidate& c : candidates)
+                add(static_cast<std::size_t>(c.key >> 32), static_cast<std::size_t>(c.key & 0xffffffffu), c.norm);
+        }
     }
     const std::size_t pairs = first.size();
     const double half_band = std::pow(2.0, 1.0 / 6.0);
@@ -656,19 +677,11 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     const std::vector<double>& centers = database.band_centers();
     const std::size_t all = centers.size();
     last_band = std::min(last_band, all);
-    // The paths' options for this run's bands: with the edge source, a ray
-    // whose Keller point lies past an end is kept to 100 radians of path
-    // excess at the lowest band, as niceops_point_field keeps it.
+    // The paths' options for this run's bands, as niceops_point_field sets
+    // them.
     PointPathOptions paths = d.paths;
-    if (paths.edge_source && first_band < last_band)
-        paths.edge_source_reach = 100.0 / (2.0 * pi * centers[first_band] / sound_speed);
-    // UTD's end waves fade out by end_fade_hi radians, at the lowest band last.
     if (first_band < last_band)
-        paths.end_reach = end_fade_hi / (2.0 * pi * centers[first_band] / sound_speed);
-    // The tilted steps' foot fields where their fade at the lowest band's
-    // lower edge is above its floor.
-    if (first_band < last_band)
-        paths.tilted_step_k_min = 2.0 * pi * centers[first_band] / std::pow(2.0, 1.0 / 6.0) / sound_speed;
+        paths.set_lowest_band(centers[first_band], sound_speed);
     // The split is the difference of the foot fields' twin rays, and only
     // cancels where they add with their phases: summed in energy, every twin
     // adds, so there is no split.
@@ -1181,15 +1194,8 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         for (std::size_t first = 0; first < todo.size();)
         {
             // The pairs of the next `block` distinct states.
-            block_states.clear();
-            std::size_t last = first;
-            while (last < todo.size()
-                    && (block_states.size() < block || todo[last].first == block_states.back()))
-            {
-                if (block_states.empty() || todo[last].first != block_states.back())
-                    block_states.push_back(todo[last].first);
-                last++;
-            }
+            const std::size_t last = next_group(first, todo.size(), block,
+                    [&](std::size_t i) { return todo[i].first; }, block_states);
             for (std::size_t k = 0; k < block_states.size(); k++)
                 slot[block_states[k]] = k;
             source_ends.clear();
@@ -1207,16 +1213,8 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
                 for (std::size_t from = 0; from < work.size();)
                 {
                     // The pairs of the next `block` distinct microphones.
-                    group_microphones.clear();
-                    std::size_t to = from;
-                    while (to < work.size()
-                            && (group_microphones.size() < block
-                                    || todo[work[to]].second == group_microphones.back()))
-                    {
-                        if (group_microphones.empty() || todo[work[to]].second != group_microphones.back())
-                            group_microphones.push_back(todo[work[to]].second);
-                        to++;
-                    }
+                    const std::size_t to = next_group(from, work.size(), block,
+                            [&](std::size_t i) { return todo[work[i]].second; }, group_microphones);
                     // Both lists are sorted.
                     for (std::size_t m : held_microphones)
                         if (!std::binary_search(group_microphones.begin(), group_microphones.end(), m))

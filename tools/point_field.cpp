@@ -481,13 +481,8 @@ int main(int argc, char** argv)
             if (relief_scattering != "lambert")
                 options.grating_reflections = grating_reflections;
         }
-        const double lowest_k = 2.0 * pi * *std::min_element(bands.begin(), bands.end()) / sound_speed;
-        options.edge_source_reach = 100.0 / lowest_k;
-        // UTD's end waves fade out by end_fade_hi radians, at the lowest band last.
-        options.end_reach = end_fade_hi / lowest_k;
-        // The split's foot fields are taken where its fade at the lowest
-        // sub-band's lower edge is above its floor.
-        options.tilted_step_k_min = lowest_k / std::pow(2.0, 1.0 / 6.0);
+        const double lowest = *std::min_element(bands.begin(), bands.end());
+        options.set_lowest_band(lowest, sound_speed);
         // The GPU wherever there is one and the run is one it takes; asked
         // for (--gpu), it must be.  The flag's count takes --no-gpu too, so
         // asking is its value as well.
@@ -496,8 +491,7 @@ int main(int argc, char** argv)
             throw std::runtime_error("--edge_source does not run with --gpu or --fade");
         if (fade)
         {
-            const double k_min = 2.0 * pi * *std::min_element(bands.begin(), bands.end()) / sound_speed;
-            options.fade_reach = app.count("--fade_reach") > 0 ? fade_reach_given * to_meters : fade_reach(k_min);
+            options.fade_reach = app.count("--fade_reach") > 0 ? fade_reach_given * to_meters : fade_reach(2.0 * pi * lowest / sound_speed);
             options.fade_incident = fade_incident;
             if (gpu_asked)
                 throw std::runtime_error("--fade does not run on the GPU yet");
