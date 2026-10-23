@@ -838,8 +838,9 @@ it bought:
   and without (a slack of -0.5 m in the reach test fails it, as does the stretch pulled in by
   0.5 m); the ray dumps of DigiCity's grid and the district were byte-identical too.
 - **The once-diffracted slope search walks only the edges a plain image sees.** When every floor
-  of the plain end's image sees an edge as invisible, each slope and floor ends at
-  `!vb.visible`, and only pure tests run before it. So `trace` lists each image's other edges
+  of the plain end's image sees an edge as invisible, each slope and floor ends at the plain
+  view's `visible` test (`vb` for a slope at the source, `va` for one at the microphone), and
+  only pure tests run before it. So `trace` lists each image's other edges
   once per side, with their plan boxes, and the slopes loop over that list in the same order.
   The slope's view of the edge is formed once rather than per floor. On the pitched suburb, once
   chains were proved, 86% of the 63M (slope, image, edge) iterations a microphone had were such

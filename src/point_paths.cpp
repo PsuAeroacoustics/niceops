@@ -4320,8 +4320,10 @@ void PointSourceField::sub_band_problems(const std::vector<double>& reflection, 
     }
     // Every other ray's amplitude at every sub-band, a ray at a time: its
     // wedges' coefficients across the wavenumbers at once, [i * problems + j].
+    // With no bands every ray's spectrum is empty, shared and profile ones
+    // too, and there is nothing to form.
     std::vector<std::complex<double>> plain(order.size() * problems), scratch;
-    for (std::size_t i = 0; i < order.size(); i++)
+    for (std::size_t i = 0; i < order.size() && problems != 0; i++)
     {
         if (!factors[i].empty() || !shared[i].empty())
             continue;

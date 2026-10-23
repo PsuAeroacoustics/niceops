@@ -399,6 +399,8 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
             between += ray.between != PointRay::no_facade;
         }
         const std::vector<double> absorption = i % 2 ? absorbing : std::vector<double> {};
+        // No bands is nothing to do, shared and profile rays included.
+        REQUIRE_NOTHROW(field.band_levels({}, FloorModel(1.0), {}, c, nullptr));
         field.band_levels(reflection, floor, bands, c, cpu[i].data(), absorption);
         field.sub_band_problems(
                 reflection, floor, bands, c,
