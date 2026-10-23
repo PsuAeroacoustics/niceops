@@ -774,6 +774,26 @@ same run unsampled:
 - **Cost**, 14 threads on an M4 Pro (the development build, asserts on): 3.2 s with `--no-gpu`,
   1.2 s with the rays formed and summed on the GPU, against 0.3 s for the run without buildings.
 
+**Fast modes** (`--path_radius`, `--no_profile_pe`), against the default model, per microphone
+for one fixed source, with a flat source spectrum A-weighted. The time is the trace and the
+coherent band sum on one core:
+
+| Case | Mode | Faster | A-weighted: mean, rms, worst | Worst band rms, 100 Hz up |
+| --- | --- | --- | --- | --- |
+| Pitched suburb, 3 microphones, source 60 m up | `--path_radius` 75 m | 3.6x | −0.07, 0.11, 0.18 dB | 1.5 dB (200 Hz) |
+| | 100 m | 2.0x | −0.06, 0.10, 0.18 | 0.9 (100 Hz) |
+| Test district, 42 microphones, source 89 m up | 75 m | 1.4x | 0.00, 0.002, 0.003 | 0.06 |
+| Terraces, 20 microphones, source 131 m up | 75 m | 1.1x | −0.06, 0.14, 0.59 | 0.7 (160 Hz) |
+| | `--no_profile_pe` | 3.9x | +0.02, 0.06, 0.21 | 0.25 (160 Hz) |
+| | both | 6.1x | −0.06, 0.13, 0.55 | 0.7 (160 Hz) |
+| DigiCity, 60 microphones, source 2 m up | either | 1.0x | none | none |
+
+Below 100 Hz a band can move by several dB (7 dB rms at 12 Hz on the terraces at 75 m), the
+buildings left out being the ones those wavelengths still see. The radius pays where the buildings
+spread out: DigiCity lies within 75 m of every microphone, so it changes nothing there. On the
+demo track over the test district, a whole `--no-gpu` run at 75 m took 6% less CPU, its SELs
+within 0.009 dB of the default's.
+
 **A ground model's floor** (`--buildings --ground_effect`, each bounce taking Q). Not validated
 against measurement among buildings; what is checked is that it is the open-ground model where it
 should be. Over open ground, with Q held at the band's centre, the ray sum is the open-ground

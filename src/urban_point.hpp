@@ -141,6 +141,11 @@ public:
         // rather than the row's profile (PointPathOptions::profile_pe), for
         // comparison.
         bool no_profile_pe = false;
+        // How far from a source or microphone, horizontally, buildings'
+        // edges and walls enter its rays (PointPathOptions::radius), metres;
+        // 0 for its default.  Less is a fast mode, at a cost in dB that
+        // depends on the layout.
+        double path_radius = 0.0;
         // Diffraction by the edge-source integral (edge_source.hpp), on the
         // CPU.
         bool edge_source = false;

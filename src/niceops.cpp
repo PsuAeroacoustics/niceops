@@ -5007,6 +5007,7 @@ int run(int argc, char* argv[])
     std::size_t grating_reflections = 2;
     double patch_size = 4.0;      // m
     double diffuse_radius = 0.0;  // m; 0 for the rays' reach
+    double path_radius = 0.0;     // m; 0 for PointPathOptions' 150 m
     bool exact_shared_faces = false;
     bool no_profile_pe = false;
     bool buildings_edge_source = false;
@@ -5534,7 +5535,11 @@ int run(int argc, char* argv[])
             "With scattering facades: the diffuse field's patches' size at most (default 4 m).");
     auto* diffuse_radius_option = app.add_option("--diffuse_radius", diffuse_radius,
             "With scattering facades: a building with a wall within this horizontal distance of a microphone "
-            "scatters, walls and roof (default 150 m, the rays' own reach).");
+            "scatters, walls and roof (default the rays' own reach, --path_radius).");
+    auto* path_radius_option = app.add_option("--path_radius", path_radius,
+            "With --buildings: the horizontal distance from a source or microphone within which buildings' edges "
+            "and walls enter its rays (default 150 m). Less is faster where the buildings spread out, at a cost in "
+            "dB that depends on the layout (FIDELITY, 'Fast modes').");
     app.add_flag("--edge_source", buildings_edge_source,
             "With --buildings: the rays diffract by the edge-source integral (BTM's, over each edge's length, its ends "
             "and the transitions the cascade misses), on the CPU, instead of UTD. Tens of times UTD's cost.");
@@ -6156,6 +6161,7 @@ int run(int argc, char* argv[])
     to_meters(screening_min_height_option, screening_min_height);
     to_meters(patch_size_option, patch_size);
     to_meters(diffuse_radius_option, diffuse_radius);
+    to_meters(path_radius_option, path_radius);
     // An operations file's offsets are lengths the user wrote, in --units.
     if (operations)
     {
@@ -6362,6 +6368,8 @@ int run(int argc, char* argv[])
             input_error("--patch_size is a positive length; given ", patch_size, ".");
         if (app.count("--diffuse_radius") > 0 && (!(diffuse_radius > 0.0) || !std::isfinite(diffuse_radius)))
             input_error("--diffuse_radius is a positive length; given ", diffuse_radius, ".");
+        if (app.count("--path_radius") > 0 && (!(path_radius > 0.0) || !std::isfinite(path_radius)))
+            input_error("--path_radius is a positive length; given ", path_radius, ".");
         if (app.count("--phase_interval") > 0)
         {
             if (!(phase_interval > 0.0 && phase_interval < 100.0))
@@ -6389,9 +6397,9 @@ int run(int argc, char* argv[])
         input_error("--facade_scattering, --facade_scattering_spectrum, --facade_relief, --relief_scattering, "
                     "--grating_reflections, --patch_size and --diffuse_radius go with --buildings.");
     else if (exact_shared_faces || no_profile_pe || buildings_edge_source || app.count("--state_tolerance") > 0
-            || app.count("--gpu") > 0 || app.count("--no-gpu") > 0)
-        input_error("--exact_shared_faces, --no_profile_pe, --edge_source, --state_tolerance, --gpu and --no-gpu go "
-                    "with --buildings.");
+            || app.count("--path_radius") > 0 || app.count("--gpu") > 0 || app.count("--no-gpu") > 0)
+        input_error("--exact_shared_faces, --no_profile_pe, --edge_source, --state_tolerance, --path_radius, --gpu "
+                    "and --no-gpu go with --buildings.");
     else if (app.count("--ray_coherence") > 0 || app.count("--coherence_angle") > 0
             || app.count("--phase_interval") > 0)
         input_error("--ray_coherence, --coherence_angle and --phase_interval go with --buildings.");
@@ -6715,6 +6723,7 @@ int run(int argc, char* argv[])
         input.grating_reflections = grating_reflections;
         input.patch_size = patch_size;
         input.diffuse_radius = diffuse_radius;
+        input.path_radius = path_radius;
         input.turbulence = scattering;
         input.exact_shared_faces = exact_shared_faces;
         input.no_profile_pe = no_profile_pe;

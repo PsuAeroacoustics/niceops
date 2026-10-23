@@ -191,13 +191,14 @@ is a physical quantity, given here in meters with its value in feet.
 | `--facade_relief`, `--relief_scattering`, `--grating_reflections` | With `--buildings`: walls with a periodic relief, reflecting into its grating orders ([Buildings around the microphones](#buildings-around-the-microphones)). |
 | `--roofs` | With a CSV `--buildings`: pitched roofs (LoD2), one row per roof plane ([Buildings around the microphones](#buildings-around-the-microphones)). |
 | `--edge_source` | With `--buildings`: diffraction by the edge-source integral, on the CPU, as `niceops_point_field --edge_source` takes it. |
-| `--patch_size`, `--diffuse_radius` | With scattering facades: the diffuse field's patches' size at most (default 4 m (13.123 ft)), and the horizontal distance from a microphone within which a building scatters (default 150 m (492.13 ft), the rays' own reach). |
+| `--patch_size`, `--diffuse_radius` | With scattering facades: the diffuse field's patches' size at most (default 4 m (13.123 ft)), and the horizontal distance from a microphone within which a building scatters (default the rays' own reach, `--path_radius`). |
 | `--ray_coherence` | With `--buildings`: how rays leaving the source in different directions add. `cone`, `measured`, `coherent` or `energy`. Default `measured` where the database records its vehicle's coherence, `cone` otherwise ([Buildings around the microphones](#buildings-around-the-microphones)). |
 | `--coherence_angle` | With `--buildings`: the cone's half-angle, degrees, within which rays leaving the source add with their phases. Default 1. Given alone, it selects `cone`. |
 | `--phase_interval` | With `--buildings`, under `cone` or `measured`: also write the SEL at each end of this percent interval over the source's unknown phases, as `<output>_phase_lower` and `<output>_phase_upper`. |
 | `--state_tolerance` | With `--buildings`: dB by which the buildings' effect, taken linearly between the states evaluated, may miss a state's A-weighted level. Default 0.02; 0 evaluates every state ([Buildings around the microphones](#buildings-around-the-microphones)). |
 | `--exact_shared_faces` | With `--buildings`: take the integral over a flat roof between its two edges, or down a step between two roofs' edges, at every wavenumber, not only where the cascade of the two edges cannot stand in for it. The reference; much slower. |
-| `--no_profile_pe` | With `--buildings`: over a row of flat-roofed blocks with a street, crossed near grazing, the cascades' rays rather than the row's profile marched by a parabolic equation, for comparison ([Buildings around the microphones](#buildings-around-the-microphones)). |
+| `--no_profile_pe` | With `--buildings`: over a row of flat-roofed blocks with a street, crossed near grazing, the cascades' rays rather than the row's profile marched by a parabolic equation, for comparison, or as a fast mode ([Buildings around the microphones](#buildings-around-the-microphones)). |
+| `--path_radius` | With `--buildings`: the horizontal distance from a source or microphone within which buildings' edges and walls enter its rays. Default 150 m; less is a fast mode, at a cost in dB that depends on the layout ([Buildings around the microphones](#buildings-around-the-microphones)). |
 | `--gpu`, `--no-gpu` | With `--buildings`: form and sum each state's rays on the GPU (Metal, on a Mac), the default wherever there is one and the rays add `cone`, `coherent` or `energy` without `--phase_interval`; `measured` and the interval are the CPU's. `--gpu` asks for it and is refused where it cannot run; `--no-gpu` keeps the CPU. |
 | `--terrain` | A bare-earth elevation grid (netCDF, for example USGS 3DEP) ([Terrain](#terrain)). Needs the run's frame: `--origin` (with `--frame_bearing` for rotated axes; the AC tracks use 210), or a geodetic track. Not with `--refraction`. The three rows below are refused without it. |
 | `--terrain_offset` | Added to every terrain height to put the grid on the trajectory's vertical datum. Default 0. |
@@ -1276,6 +1277,11 @@ over a pass as it does in an exposure.
   coefficients cannot stand in for it -- the lower bands, and sources or microphones near the line
   between the edges -- at wavenumbers two thirds of an octave apart, and the cascade carries it in
   between and beyond. `--exact_shared_faces` takes the integral at every wavenumber.
+- **Fast modes.** Two options trade dB for time, and neither is the default. `--path_radius`
+  below its 150 m leaves out the buildings farther from each end, which pays where they spread
+  out and costs nothing where everything is near. `--no_profile_pe` takes the cascades' rays over
+  a row of roofs instead of the row's march, most of the time wherever such rows are crossed. What
+  each costs is measured in [FIDELITY](FIDELITY.md#the-point-source-model-in-a-run).
 - **Not with** `--urban_table`, `--terrain`, `--refraction`, `--propagation_table`,
   `--plate_table`, `--ground_classes`, `--atmosphere`, `--wind`, `--db_cutoff` or `--coverage_file`.
 

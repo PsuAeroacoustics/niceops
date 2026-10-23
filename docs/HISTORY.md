@@ -4,6 +4,15 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## The urban model's search made faster, and a fast mode (October 2026)
+
+Eleven exact changes to the point-source model's path search and band sum left every ray and band
+level as it was, to the bit, and cut the search's time 5.4-5.8x on a pitched suburb and about 2x
+on DigiCity. The largest was proving which part of an edge an image of two facades sees, where
+such images used to take the whole edge. `niceops --buildings` now takes `--path_radius`, the
+reach of each end's buildings, fixed at 150 m until now; below it is a fast mode, at a measured
+cost (FIDELITY), and `--diffuse_radius` follows it by default.
+
 ## A row's profile up to a size in wavelengths (October 2026)
 
 A row's profile field, the parabolic equation over a row of flat-roofed blocks, used to be taken at

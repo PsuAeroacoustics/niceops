@@ -1315,10 +1315,20 @@ add_test(NAME buildings_no_profile_pe_run COMMAND ${URBAN_RUN} --buildings tests
 set_tests_properties(buildings_no_profile_pe_run PROPERTIES FIXTURES_SETUP buildings_no_profile_runs)
 add_test(NAME buildings_no_profile_pe_reaches_no_row COMMAND golden_compare integrated/buildings_no_profile_pe.csv integrated/buildings_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_no_profile_pe_reaches_no_row PROPERTIES FIXTURES_REQUIRED "buildings_no_profile_runs;buildings_sampling_runs")
+# --path_radius is a fast mode: over the test district at 75 m (246 ft) rather than 150 the SEL moves by
+# 0.009 dB at most (0.014 at 100 m); the default-radius run is its reference.
+add_test(NAME buildings_path_radius_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --path_radius 246 --no-gpu -o integrated/buildings_path_radius.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_path_radius_run PROPERTIES FIXTURES_SETUP buildings_path_radius_runs)
+add_test(NAME buildings_path_radius_is_close COMMAND golden_compare integrated/buildings_path_radius.csv integrated/buildings_sampled.csv 0.03 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_path_radius_is_close PROPERTIES FIXTURES_REQUIRED "buildings_path_radius_runs;buildings_sampling_runs")
+add_test(NAME buildings_refuses_lone_path_radius COMMAND ${URBAN_RUN} --path_radius 246 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_refuses_lone_path_radius PROPERTIES PASS_REGULAR_EXPRESSION "--path_radius, --gpu and --no-gpu go with --buildings")
+add_test(NAME buildings_refuses_zero_path_radius COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --path_radius 0 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_refuses_zero_path_radius PROPERTIES PASS_REGULAR_EXPRESSION "--path_radius is a positive length")
 add_test(NAME buildings_refuses_no_spectra COMMAND niceops -d databases/S-76D_M3.nod -v databases/S-76D.json -t tracks/S-76D/197421AC.csv --frame_bearing 210 -b tests/data/urban_observers.csv -L warn --buildings tests/data/urban_buildings.csv -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_no_spectra PROPERTIES PASS_REGULAR_EXPRESSION "--buildings needs a database carrying per-band spectra")
 add_test(NAME buildings_refuses_lone_state_tolerance COMMAND ${URBAN_RUN} --state_tolerance 0.1 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(buildings_refuses_lone_state_tolerance PROPERTIES PASS_REGULAR_EXPRESSION "--exact_shared_faces, --no_profile_pe, --edge_source, --state_tolerance, --gpu and --no-gpu go with --buildings")
+set_tests_properties(buildings_refuses_lone_state_tolerance PROPERTIES PASS_REGULAR_EXPRESSION "--exact_shared_faces, --no_profile_pe, --edge_source, --state_tolerance, --path_radius, --gpu and --no-gpu go with --buildings")
 add_test(NAME buildings_refuses_lone_gpu COMMAND ${URBAN_RUN} --no-gpu -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_lone_gpu PROPERTIES PASS_REGULAR_EXPRESSION "--gpu and --no-gpu go with --buildings")
 # Each microphone's floor at its observer's z where it stands on no roof or wall: observers 5 ft up
@@ -1423,7 +1433,7 @@ set_tests_properties(buildings_near_edge_source_run buildings_near_utd_run PROPE
 add_test(NAME buildings_edge_source_is_wired COMMAND golden_compare integrated/buildings_near_edge_source.csv integrated/buildings_near_utd.csv 1e-7 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_edge_source_is_wired PROPERTIES FIXTURES_REQUIRED buildings_near_edge_source_runs PASS_REGULAR_EXPRESSION "mismatch at value")
 add_test(NAME buildings_refuses_lone_edge_source COMMAND ${URBAN_RUN} --edge_source -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(buildings_refuses_lone_edge_source PROPERTIES PASS_REGULAR_EXPRESSION "--edge_source, --state_tolerance, --gpu and --no-gpu go with --buildings")
+set_tests_properties(buildings_refuses_lone_edge_source PROPERTIES PASS_REGULAR_EXPRESSION "--edge_source, --state_tolerance, --path_radius, --gpu and --no-gpu go with --buildings")
 add_test(NAME buildings_refuses_edge_source_gpu COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --edge_source --gpu -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_edge_source_gpu PROPERTIES PASS_REGULAR_EXPRESSION "--edge_source is the CPU's; --gpu does not take it")
 # A ground model among the buildings (--ground_effect, point_paths.hpp FloorModel) replaces the floor's
