@@ -526,7 +526,8 @@ Not taken:
   `seeded_zero`'s fixed-point iteration, about 13% of what is left, but moves every zero's last
   bits, which reach V's lit side as above.
 - **The PE.** A propagation table's build is 96% `pade_step`, already interleaved and fused
-  (pe.md); the factorization's complex divides are the next 4%.
+  (pe.md); the factorization's complex divides are the next 4%. The profile PE's, 8.6% of a
+  terraced run, are written out (ground.md, the row of roofs).
 
 ### The propagation models, measured as a suite
 

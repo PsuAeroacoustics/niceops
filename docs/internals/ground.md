@@ -674,6 +674,16 @@ exactly. What to keep:
     only the layer and the rows to settle are factored. The sweep takes every pole a row at a
     time (`split_step<P>`, the count a template parameter), both fields in the one loop; that last
     was 12%.
+  - **Its complex divides are written out** (`divide`, `reciprocal`): `std::complex`'s is a call
+    to `__divdc3`, which rescales by a power of two (exact in range) and recovers NaN and infinity,
+    which cannot arise. The written form is compiler-rt's arithmetic with its build's contraction,
+    `fma(c, c, d*d)` and so on, so on Apple arm64 it is `__divdc3`'s bits: 0 of 4e7 random divides
+    and reciprocals differ, and the dump harness's band levels and ray amplitudes are byte-identical.
+    Swapping the denominator's operands differs in a sixth. libgcc's `__divdc3` is Smith's method,
+    so a GCC build moves, by 4.5e-10 of a part (4e-9 dB) over 180 parts, against 5.8e-8 between
+    the two compilers already. Terrace pairs' band levels (20 microphones, 52 profile rays, thread
+    CPU, best of 4 alternated): 8.67 -> 7.68 s, 11%. `CornerGreen::lit` and its `operator()` now
+    share one `angles` per point, which rides along in that.
   - **The domain grows as sqrt(8 lambda L) above 15 wavelengths**, L the march's length, for the
     reach and for the absorbing layer. With 15 of each a street's parts were 1.1 dB off their
     converged values at 3.15 kHz and 3 dB at 8 kHz: the layer, a fixed number of wavelengths,

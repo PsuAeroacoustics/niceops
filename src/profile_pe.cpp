@@ -87,17 +87,17 @@ struct CornerGreen
                 th = boundary + 1e-8;
         return {th, th0};
     }
-    // Which geometrical-optics waves reach R from Q: direct, off face 0, off
-    // face n.
-    std::array<bool, 3> lit(double qu, double qz) const
+    // Which geometrical-optics waves reach R from Q, given angles(Q):
+    // direct, off face 0, off face n.
+    static std::array<bool, 3> lit(const std::array<double, 2>& a)
     {
-        const auto [th, th0] = angles(qu, qz);
+        const auto [th, th0] = a;
         return {std::abs(th - th0) < pi, th + th0 < pi, th + th0 > (2.0 * n - 1.0) * pi};
     }
-    // G(Q, R) with the waves `lit` says reach R from Q.
-    complex operator()(double qu, double qz, const std::array<bool, 3>& waves) const
+    // G(Q, R), given angles(Q) and the waves `lit` says reach R from Q.
+    complex operator()(double qu, double qz, const std::array<double, 2>& a, const std::array<bool, 3>& waves) const
     {
-        const auto [th, th0] = angles(qu, qz);
+        const auto [th, th0] = a;
         const double rho0 = std::hypot(qu - cu, qz - cz), rho = std::hypot(ru - cu, rz - cz);
         complex out(0.0, 0.0);
         if (waves[0])
@@ -132,6 +132,29 @@ inline complex minus_mul(complex e, complex c, complex x)
     return complex(e.real() - c.real() * x.real() + c.imag() * x.imag(),
             e.imag() - c.real() * x.imag() - c.imag() * x.real());
 #endif
+}
+
+// w / z written out.  std::complex's divide is a call to __divdc3, which
+// scales the operands by a power of two (exact in range) and recovers NaN and
+// infinity, neither of which can arise here: the denominators are O(1) to
+// O(1e6).  This is compiler-rt's arithmetic with the contraction its build
+// applies, so on Apple arm64 the result is __divdc3's to the bit (checked on
+// 4e7 samples; the operand order matters, fma(d, d, c c) differing in a sixth
+// of them).  libgcc's __divdc3 is Smith's method, a ULP or so away.
+inline complex divide(complex w, complex z)
+{
+#if defined(__FMA__) || defined(__aarch64__) || defined(__ARM_FEATURE_FMA)
+    const double a = w.real(), b = w.imag(), c = z.real(), d = z.imag();
+    const double den = std::fma(c, c, d * d);
+    return complex(std::fma(a, c, b * d) / den, std::fma(b, c, -(a * d)) / den);
+#else
+    return w / z;
+#endif
+}
+
+inline complex reciprocal(complex z)
+{
+    return divide(complex(1.0, 0.0), z);
 }
 
 // The propagators for step_wavelengths, fitted once.  c, the second
@@ -190,7 +213,7 @@ Poles factor_from_top(const std::vector<complex>& poles, std::size_t layer_nodes
                 const double s = static_cast<double>(layer_nodes - k) / static_cast<double>(layer_nodes);
                 a = complex(0.0, s * s);
             }
-            const complex iv = 1.0 / (-2.0 * c + a - poles[j] - c * e_above);
+            const complex iv = reciprocal(-2.0 * c + a - poles[j] - c * e_above);
             const complex ev = c * iv;
             inv[j].push_back(iv);
             e[j].push_back(ev);
@@ -262,7 +285,7 @@ void split_step(const PadePropagator& propagator, const Poles& f, const std::vec
     for (std::size_t j = 0; j < P; j++)
     {
         const complex e1(f.e_re[above + j], f.e_im[above + j]);
-        const complex inv = 1.0 / (-2.0 * c + a[g] - propagator.poles[j] - 2.0 * c * e1);
+        const complex inv = reciprocal(-2.0 * c + a[g] - propagator.poles[j] - 2.0 * c * e1);
         const complex y0 = mul(f0[g] - 2.0 * c * complex(t[0][j], t[1][j]), inv);
         const complex y1 = mul(f1[g] - 2.0 * c * complex(t[2][j], t[3][j]), inv);
         y[0][j] = y0.real();
@@ -343,7 +366,7 @@ public:
         {
             const complex lower = j > 0 ? off : complex(0.0);
             const complex upper = j + 1 < m ? (j == 0 ? 2.0 * off : off) : complex(0.0);
-            const complex inverse = 1.0 / (1.0 + alpha_l * (-2.0 * c + a[g + j]) - lower * previous);
+            const complex inverse = reciprocal(1.0 + alpha_l * (-2.0 * c + a[g + j]) - lower * previous);
             inverse_[j] = inverse;
             chain_[j] = lower * inverse;
             back_[j] = upper * inverse;
@@ -403,13 +426,13 @@ public:
         multiplier_.resize(m);
         inverse_.resize(m);
         complex pivot = 1.0 + alpha * (-2.0 * c + a[g]);
-        inverse_[0] = 1.0 / pivot;
+        inverse_[0] = reciprocal(pivot);
         multiplier_[0] = 0.0;
         for (std::size_t j = 1; j < m; j++)
         {
-            multiplier_[j] = alpha * c / pivot;
+            multiplier_[j] = divide(alpha * c, pivot);
             pivot = 1.0 + alpha * (-2.0 * c + a[g + j]) - multiplier_[j] * upper_[j - 1];
-            inverse_[j] = 1.0 / pivot;
+            inverse_[j] = reciprocal(pivot);
         }
     }
     // x in place of rhs.
@@ -621,16 +644,18 @@ ProfileParts profile_parts(const ProfileProblem& p, double k)
             // shadow boundary passes between the neighbours: there the
             // diffraction cancels the wave's step only to O(1 / k rho), and
             // the remainder over 2 dl was a spike in the receiver's level.
-            const std::array<bool, 3> waves = green_w.lit(u, zj), plus = green_w.lit(u + dl, zj),
-                                      minus = green_w.lit(u - dl, zj);
-            const complex gq = green_w(u, zj, waves);
+            const std::array<double, 2> at = green_w.angles(u, zj), at_plus = green_w.angles(u + dl, zj),
+                                        at_minus = green_w.angles(u - dl, zj);
+            const std::array<bool, 3> waves = CornerGreen::lit(at), plus = CornerGreen::lit(at_plus),
+                                      minus = CornerGreen::lit(at_minus);
+            const complex gq = green_w(u, zj, at, waves);
             complex dgdu;
             if (plus == waves && minus == waves)
-                dgdu = (green_w(u + dl, zj, plus) - green_w(u - dl, zj, minus)) / (2.0 * dl);
+                dgdu = (green_w(u + dl, zj, at_plus, plus) - green_w(u - dl, zj, at_minus, minus)) / (2.0 * dl);
             else if (plus == waves)
-                dgdu = (green_w(u + dl, zj, plus) - gq) / dl;
+                dgdu = (green_w(u + dl, zj, at_plus, plus) - gq) / dl;
             else
-                dgdu = (gq - green_w(u - dl, zj, minus)) / dl;
+                dgdu = (gq - green_w(u - dl, zj, at_minus, minus)) / dl;
             for (int f = 0; f < 2; f++)
             {
                 const complex pu = psi[f][g + j] * phase;
