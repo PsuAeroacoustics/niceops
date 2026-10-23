@@ -588,15 +588,16 @@ int main(int argc, char** argv)
                 std::vector<std::complex<double>> factors;
                 if (options.edge_source)
                     factors = edge_source_factors(city, ray, centres);
+                // Each with the factors the band paths give it (weighted_amplitude),
+                // absorbed over the length it is summed at.
                 for (std::size_t b = 0; b < nb; b++)
                 {
                     const double kb = 2.0 * pi * bands[b] / sound_speed;
-                    const double a = (factors.empty()
-                                             ? std::abs(point_ray_amplitude(ray, band_reflection[b],
-                                                       centre_floor.reflection, kb))
-                                             : reflected_amplitude(ray, band_reflection[b], centre_floor.reflection)
-                                                     * std::abs(factors[b]))
-                            * std::abs(at_floor[b]) * std::exp(-band_air[b] * ray.length);
+                    const double reflected = reflected_amplitude(ray, band_reflection[b], centre_floor.reflection);
+                    const std::complex<double> own
+                            = factors.empty() ? point_ray_amplitude(ray, reflected, kb) : reflected * factors[b];
+                    const double a = std::abs(weighted_amplitude(ray, own, kb)) * std::abs(at_floor[b])
+                            * std::exp(-band_air[b] * summed_length(ray));
                     text << "," << 20.0 * std::log10(std::max(a, 1e-15));
                 }
                 text << ",";

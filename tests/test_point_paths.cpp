@@ -1733,6 +1733,38 @@ TEST_CASE("across the line through a stepped pair the field does not step", "[po
     }
 }
 
+// A ray's factors beside its own amplitude, the same on every path: what a
+// row's profile leaves it, a split's share and fade, and the split's carry's
+// phase.  niceops_point_field's --edge_source rays left the first two out,
+// and a ray a row's profile stood for kept its full strength there.
+TEST_CASE("weighted_amplitude is the facade overload's factors", "[point_paths]")
+{
+    PointRay ray;
+    ray.spreading = 0.05;
+    ray.length = 20.0;
+    ray.row_share = 0.6;
+    ray.row_extent = 100.0;
+    ray.jump_weight = -0.4;
+    ray.jump_x = 0.02;
+    ray.jump_delay = 0.3;
+    const std::vector<double> reflection;
+    for (double k : {10.0, 30.0, 50.0})
+    {
+        const std::complex<double> own = point_ray_amplitude(ray, reflected_amplitude(ray, reflection, 1.0), k);
+        const std::complex<double> a = weighted_amplitude(ray, own, k);
+        REQUIRE(a == point_ray_amplitude(ray, reflection, 1.0, k));
+        REQUIRE(ray_weight(ray, k) == row_profile_factor(ray, k) * jump_factor(ray, k));
+        REQUIRE(row_profile_factor(ray, k) < 1.0);
+        REQUIRE(jump_factor(ray, k) != 1.0);
+        const std::complex<double> expected = ray_weight(ray, k) * own * std::polar(1.0, k * ray.jump_delay);
+        REQUIRE(std::abs(a - expected) <= 1e-12 * std::abs(expected));
+    }
+    // A ray that is neither keeps its amplitude to the bit.
+    PointRay plain;
+    plain.spreading = 0.05;
+    REQUIRE(weighted_amplitude(plain, {0.3, -0.2}, 30.0) == std::complex<double>(0.3, -0.2));
+}
+
 // Blocks 40 m long and the source 15 m along them, so the pair's rays reach
 // microphones past the blocks' ends: the split goes on as far as they do,
 // not only where the microphone's foot is within the edges.  It stopped at

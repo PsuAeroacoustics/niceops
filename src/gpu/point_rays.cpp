@@ -90,12 +90,8 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
     set.cone = static_cast<float>(packing.cone);
     const std::vector<PointRay>& rays = field.rays();
     const std::size_t nb = bands.size(), facades = nb ? reflection.size() / nb : 0;
-    std::vector<std::size_t> order(rays.size());
-    for (std::size_t i = 0; i < order.size(); i++)
-        order[i] = i;
     // The order sub_band_problems sums them in.
-    std::sort(order.begin(), order.end(),
-            [&](std::size_t a, std::size_t b) { return summed_length(rays[a]) < summed_length(rays[b]); });
+    const std::vector<std::size_t> order = field.summation_order();
 
     // The problems, and every wavenumber an aperture is wanted at.
     std::vector<double> centres;
@@ -165,13 +161,11 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
                     floor_factor[j] *= field_factors[j];
             }
             // A ray the profile stands for, above and in its fade (a field
-            // with such a ray has its profile rays, and so takes this path).
-            if (ray.row_share > 0.0)
+            // with such a ray has its profile rays, and so takes this path),
+            // and a split's.
+            if (ray.row_share > 0.0 || ray.jump_weight != 0.0)
                 for (std::size_t j = 0; j < centres.size(); j++)
-                    floor_factor[j] *= row_profile_factor(ray, centres[j]);
-            if (ray.jump_weight != 0.0)
-                for (std::size_t j = 0; j < centres.size(); j++)
-                    floor_factor[j] *= jump_factor(ray, centres[j]);
+                    floor_factor[j] *= ray_weight(ray, centres[j]);
         }
         for (std::size_t band = 0; band < nb; band++)
         {

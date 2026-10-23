@@ -8,6 +8,7 @@
 #include <initializer_list>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
@@ -1334,15 +1335,7 @@ PointSourceField::PointSourceField(const Buildings& buildings, const Vec3& sourc
 {
     const PathEnd source_end(buildings, source, true, options, edges_near(buildings, microphone, options.radius));
     const PathEnd microphone_end(buildings, microphone, false, options, edges_near(buildings, source, options.radius));
-    trace(buildings, source_end, microphone_end, options);
-    const auto pairs = tilted_pairs();
-    apply_profile(buildings, source, microphone, options);
-    for (PointRay& ray : rays_)
-    {
-        ray.source_surface = source_end.surface();
-        ray.microphone_surface = microphone_end.surface();
-    }
-    split_tilted_steps(buildings, source_end, pairs, microphone, options);
+    finish(buildings, source_end, microphone_end, options);
 }
 
 PointSourceField::PointSourceField(const Buildings& buildings, const PathEnd& source, const PathEnd& microphone,
@@ -1354,8 +1347,14 @@ PointSourceField::PointSourceField(const Buildings& buildings, const PathEnd& so
     , reliefs_(options.reliefs)
     , edge_source_threads_(options.edge_source_threads)
 {
+    finish(buildings, source, microphone, options);
+}
+
+void PointSourceField::finish(const Buildings& buildings, const PathEnd& source, const PathEnd& microphone,
+        const PointPathOptions& options)
+{
     trace(buildings, source, microphone, options);
-    const auto pairs = tilted_pairs();
+    const auto pairs = options.tilted_step_split ? tilted_pairs() : std::vector<std::pair<std::size_t, std::size_t>>();
     apply_profile(buildings, source.point(), microphone.point(), options);
     for (PointRay& ray : rays_)
     {
@@ -3708,9 +3707,7 @@ void relief_factors(const PointRay& ray, const std::vector<const FacadeRelief*>&
 std::complex<double> point_ray_amplitude(const PointRay& ray, const std::vector<double>& reflection,
         double floor_reflection, double k)
 {
-    const std::complex<double> a
-            = row_profile_factor(ray, k) * point_ray_amplitude(ray, reflected_amplitude(ray, reflection, floor_reflection), k);
-    return ray.jump_weight != 0.0 ? a * jump_factor(ray, k) * std::polar(1.0, k * ray.jump_delay) : a;
+    return weighted_amplitude(ray, point_ray_amplitude(ray, reflected_amplitude(ray, reflection, floor_reflection), k), k);
 }
 
 double tilted_step_fade(double x)
@@ -4240,6 +4237,16 @@ std::vector<std::complex<double>> sampled_shared_face_factors(const PointRay& ra
 
 } // namespace
 
+std::vector<std::size_t> PointSourceField::summation_order() const
+{
+    std::vector<std::size_t> order(rays_.size());
+    for (std::size_t i = 0; i < order.size(); i++)
+        order[i] = i;
+    std::sort(order.begin(), order.end(),
+            [&](std::size_t a, std::size_t b) { return summed_length(rays_[a]) < summed_length(rays_[b]); });
+    return order;
+}
+
 void PointSourceField::sub_band_problems(const std::vector<double>& reflection, const FloorModel& floor,
         const std::vector<double>& bands, double sound_speed, const SubBandProblem& problem,
         const std::vector<double>& absorption, const double* weights, std::vector<std::size_t>* order_out) const
@@ -4251,11 +4258,7 @@ void PointSourceField::sub_band_problems(const std::vector<double>& reflection, 
     const double floor_reflection = floor.impedance() ? 1.0 : floor.reflection;
     // The rays in order of length, by index: band_averaged_energy wants them
     // sorted, and a ray carries its path.
-    std::vector<std::size_t> order(rays_.size());
-    for (std::size_t i = 0; i < order.size(); i++)
-        order[i] = i;
-    std::sort(order.begin(), order.end(),
-            [&](std::size_t a, std::size_t b) { return summed_length(rays_[a]) < summed_length(rays_[b]); });
+    const std::vector<std::size_t> order = summation_order();
     if (order_out != nullptr)
         *order_out = order;
     std::vector<double> length(order.size());
@@ -4370,7 +4373,7 @@ void PointSourceField::sub_band_problems(const std::vector<double>& reflection, 
                     amplitude[i] = shared_face_amplitude(ray, band_reflected[i], kc, shared[i][3 * band + part]);
                 else
                     amplitude[i] = plain[i * problems + 3 * band + part];
-                amplitude[i] *= row_profile_factor(ray, kc) * jump_factor(ray, kc);
+                amplitude[i] *= ray_weight(ray, kc);
             }
             for (std::size_t i = 0; i < floor_factor.size(); i++)
                 if (!floor_factor[i].empty())
@@ -4766,7 +4769,11 @@ void PointSourceField::split_tilted_steps(const Buildings& buildings, const Path
     plain.tilted_step_split = false;
     const auto& edges = buildings.edges();
     const Vec3& s = source.point();
-    std::vector<PointRay> added;
+    // The source traced again with a foot's edges near it, where the source's
+    // own end does not hold them, and the edges it was traced with: the two
+    // sides' feet usually have the same.
+    std::optional<PathEnd> retraced;
+    std::vector<std::size_t> retraced_near;
     for (const auto& [e1, e2] : pairs)
     {
         const Edge& g1 = edges[e1];
@@ -4865,42 +4872,41 @@ void PointSourceField::split_tilted_steps(const Buildings& buildings, const Path
         // On the line counts as above it, as the rays take it.
         const bool over = off > -1e-9;
         const double share = over ? -TiltedStepSplit::beta : 1.0 - TiltedStepSplit::beta;
+        // Both sides' rays or neither: the foot is in the open (in_open), so
+        // only a foot on an edge takes them back.
+        const std::size_t kept = rays_.size();
         for (int side = 0; side < 2; side++)
         {
             const Vec3 at = foot + ((side == 0 ? 1.0 : -1.0) * TiltedStepSplit::eps) * n;
-            if (!(at.z > 0.0) || buildings.buried(at))
-            {
-                added.clear();
-                break;
-            }
             try
             {
                 const PathEnd end(buildings, at, false, plain, source.near());
                 const std::vector<std::size_t> near_edges = joined(source.near(), end.near());
                 const bool shared = std::includes(source.candidates().begin(), source.candidates().end(),
                         near_edges.begin(), near_edges.end());
-                const PointSourceField field = shared
-                        ? PointSourceField(buildings, source, end, plain)
-                        : PointSourceField(buildings, PathEnd(buildings, s, true, plain, end.near()), end, plain);
-                for (PointRay ray : field.rays())
+                if (!shared && !(retraced && retraced_near == end.near()))
+                {
+                    retraced.emplace(buildings, s, true, plain, end.near());
+                    retraced_near = end.near();
+                }
+                PointSourceField field(buildings, shared ? source : *retraced, end, plain);
+                for (PointRay& ray : field.rays_)
                 {
                     ray.jump_weight = (side == 0 ? share : -share) * carry;
                     ray.jump_x = x;
                     ray.jump_delay = delay;
                     ray.tilted = false;
-                    added.push_back(std::move(ray));
                 }
+                rays_.insert(rays_.end(), std::make_move_iterator(field.rays_.begin()),
+                        std::make_move_iterator(field.rays_.end()));
             }
             catch (const std::invalid_argument&)
             {
                 // A foot on an edge, where no field is taken.
-                added.clear();
+                rays_.erase(rays_.begin() + static_cast<std::ptrdiff_t>(kept), rays_.end());
                 break;
             }
         }
-        for (PointRay& ray : added)
-            rays_.push_back(std::move(ray));
-        added.clear();
     }
 }
 

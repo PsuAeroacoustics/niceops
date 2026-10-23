@@ -737,6 +737,9 @@ public:
     void sub_band_problems(const std::vector<double>& reflection, const FloorModel& floor, const std::vector<double>& bands,
             double sound_speed, const SubBandProblem& problem, const std::vector<double>& absorption = {},
             const double* weights = nullptr, std::vector<std::size_t>* order = nullptr) const;
+    // The order sub_band_problems sums the rays in, by index in rays():
+    // ascending summed_length, for a caller that sums them elsewhere.
+    std::vector<std::size_t> summation_order() const;
 
 private:
     // An end's images and, per image, the edges the pair keeps, where each
@@ -753,6 +756,10 @@ private:
             return views[image][2 * at[image][kept] + floor];
         }
     };
+    // Both constructors' work once the ends are traced: the rays, a row's
+    // profile, the ends' surfaces and the tilted steps' split.
+    void finish(const Buildings& buildings, const PathEnd& source, const PathEnd& microphone,
+            const PointPathOptions& options);
     void trace(const Buildings& buildings, const PathEnd& source, const PathEnd& microphone,
             const PointPathOptions& options);
     // PointPathOptions::tilted_step_split: the foot fields' rays for each
@@ -912,6 +919,22 @@ double row_profile_fade(double k, double extent);
 inline double row_profile_factor(const PointRay& ray, double k)
 {
     return ray.row_share > 0.0 ? 1.0 - ray.row_share * row_profile_fade(k, ray.row_extent) : 1.0;
+}
+// The factors every path applies to a ray beside its own amplitude, at
+// wavenumber k: what a row's profile leaves it (row_profile_factor) times a
+// jump split's (jump_factor).  1 for a ray that is neither.
+inline double ray_weight(const PointRay& ray, double k)
+{
+    return row_profile_factor(ray, k) * jump_factor(ray, k);
+}
+// A ray's amplitude `a` at wavenumber k -- from its spreading, reflections
+// and wedges, point_ray_amplitude's or its reflected amplitude times its
+// edge-source factor -- with ray_weight and a split's carry's phase,
+// exp(i k jump_delay), for a caller that sums each ray at its own length.
+inline std::complex<double> weighted_amplitude(const PointRay& ray, std::complex<double> a, double k)
+{
+    a = ray_weight(ray, k) * a;
+    return ray.jump_weight != 0.0 ? a * std::polar(1.0, k * ray.jump_delay) : a;
 }
 
 // A row's profile ray's factor at each wavenumber, what point_ray_amplitude
