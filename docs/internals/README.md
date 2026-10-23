@@ -15,7 +15,7 @@ simplifications were tried and failed.
 | [`docs/THEORY.md`](../THEORY.md) | Users and reviewers who need the equations | The models as run: equations, conventions and references. A change to a model's equations updates it in the same commit. |
 | [`docs/FIDELITY.md`](../FIDELITY.md) | Anyone deciding how far to trust a model | Every measured and validation result, stated once; the other docs link to it. |
 | [`docs/HISTORY.md`](../HISTORY.md) | Anyone comparing with older results | The D original, the port, the departures from D, and every change that moved results. "Used to" and "before" wording belongs only here. |
-| `docs/internals/` (this directory) | Developers | Things to preserve, rationale, rejected designs, measured costs, guard tests. |
+| `docs/internals/` (this directory) | Developers | Things to preserve, rationale, rejected designs, measured costs, guard tests: one file per area (see the [module map](#module-map)), among them [`urban.md`](urban.md) for propagation among buildings and [`gpu.md`](gpu.md) for the GPU backends. |
 | [`CLAUDE.md`](../../CLAUDE.md) | AI coding agents | The rules and invariants, pointing here for detail. |
 
 Dates, commit hashes, harness paths and session narrative stay out of MANUAL and THEORY.
@@ -44,8 +44,9 @@ Sources are in `src/`; a name without an extension means its `.cpp` and `.hpp`.
 | Sphere database, Delaunay and exact predicates, the sphere lookup, `--blend` (including `nearest`/`aam`), legacy repair, broadband vs spectral | `sphere_database`, `predicates`, `delaunay`, `interpolator`, `condition_selection` | [database.md](database.md) |
 | ISO 9613-1, the `RayPath` seam, `--atmosphere`, `--wind`, the profile builder | `atmosphere`, `propagation.hpp`, `atmosphere_profile`, `atmosphere_builder` | [atmosphere.md](atmosphere.md) |
 | `--refraction linear` / `stratified`, shadow zones, `ShadowTransition`, ducts, `--tunneling` | `refraction`, `stratified`, `airy` | [refraction.md](refraction.md) |
-| Parabolic equation (split-step Padé, Crank–Nicolson), benchmark exact solutions, `--propagation_table` | `pe`, `pade_propagator`, `exact_solutions`, `propagation_table`, `pe_table`, `tools/` | [pe.md](pe.md) |
-| Receivers (plates, poles), ground effect, Faddeeva, weighting, `--terrain`, `--terrain_screening` | `ground_effect`, `faddeeva`, `weighting`, `terrain`, `screening`, `plate_receiver`, `terrain_ray` in `propagation.hpp` | [ground.md](ground.md) |
+| Parabolic equation (split-step Padé, Crank–Nicolson), benchmark exact solutions, `--propagation_table` | `pe`, `pade_propagator`, `exact_solutions`, `propagation_table`, `pe_table`, `util/lanes.hpp`, `tools/` | [pe.md](pe.md) |
+| Receivers (plates, poles, `--ground_classes`), ground effect, Faddeeva, weighting, `--terrain`, `--terrain_screening` | `ground_effect`, `ground_classes`, `faddeeva`, `weighting`, `terrain`, `screening`, `plate_receiver`, `terrain_ray` in `propagation.hpp` | [ground.md](ground.md) |
+| Propagation among buildings: `--urban_table`, `--buildings` and how its rays add, the edge-source integral, facade relief, the roof-row profile PE, turbulence scattering into shadows, the canyon solver and the FDTD reference (`niceops_fdtd_field`) | `urban`, `wedge`, `double_wedge`, `edge_source`, `canyon_wave`, `fdtd`, `buildings`, `building_paths`, `point_paths`, `edge_visibility`, `diffuse_facades`, `facade_relief`, `grating_paths`, `profile_pe`, `turbulence_scattering`, `geojson_buildings`, `building_input.hpp`, `urban_point`, `source_coherence`, `plan_grid.hpp` | [urban.md](urban.md) |
 | EPNL, reception-time band frames, LAmax/NAx/TA, DNL/Lden/CNEL, C-SEL | `pnl`, `band_frames`, `util/time_weighting.hpp` | [metrics.md](metrics.md) |
 | AC and geodetic tracks, smoothing spline, hover nose, lateral subtracks, `--nose`, `--speed_reference`, `niceops_procedure` | `trajectory`, `geodetic`, `smoothing_spline`, `util/csv.hpp`, `procedure`, `state_condition`, `tools/procedure.cpp` | [trajectory.md](trajectory.md) |
 | `--units`, input checking, the operations file (`--operations`) | `run()` in `niceops.cpp`, the readers, `operations` | [inputs.md](inputs.md) |
@@ -54,8 +55,9 @@ Sources are in `src/`; a name without an extension means its `.cpp` and `.hpp`.
 | Contour polygons (`--contour_file`) | `contour` | [metrics.md](metrics.md#contours) |
 | Gridded levels as CF netCDF (`--raster_file`) | `raster` | [metrics.md](metrics.md#raster) |
 | Energy by sphere (`--provenance_spheres`) | `sphere_energy` | [metrics.md](metrics.md#source-provenance) |
-| Build, link layout, shared helpers, the run manifest | `CMakeLists.txt`, `util/paths.hpp`, `util/netcdf.hpp`, `util/netcdf_write.hpp`, `util/constants.hpp`, `manifest`, `build_info`, `util/sha256.hpp`, `cmake/build_info.cmake` | [build.md](build.md) |
+| Build, link layout, shared helpers, the run manifest | `CMakeLists.txt`, `util/paths.hpp`, `util/netcdf.hpp`, `util/netcdf_write.hpp`, `util/constants.hpp`, `util/hermite.hpp`, `manifest`, `build_info.cpp`, `util/sha256.hpp`, `cmake/build_info.cmake` | [build.md](build.md) |
 | Plotting (pybind11-embedded matplotlib, created lazily, `Agg` backend) | `plotting`, `plotting_disabled.cpp` | [build.md](build.md#plotting) |
+| GPU backends, the kernel dialect, band energies and point rays on the GPU (`niceops --buildings`, `niceops_point_field`), the canyon solver's and the FDTD's marches | `gpu/gpu.hpp`, `gpu/gpu_metal.mm`, `gpu/gpu_disabled.cpp`, `gpu/band_energy`, `gpu/point_rays`, `gpu/band_stream`, `gpu/kernels/`, `cmake/embed_kernels.cmake` | [gpu.md](gpu.md) |
 
 ## Repository layout
 
@@ -90,15 +92,23 @@ The C++ tools in `tools/` are built alongside `niceops` and link `niceops_core`:
 | Executable | Source | Purpose |
 | --- | --- | --- |
 | `niceops_propagation_table` | `tools/propagation_table.cpp` | Builds `--propagation_table` files, by the PE (`--method pe`, the default) or by straight rays with the ground model (`--method ground_model`). |
+| `niceops_urban_table` | `tools/urban_table.cpp` | Builds `--urban_table` files for microphones in ideal street canyons or among LoD1 buildings. |
+| `niceops_point_field` | `tools/point_field.cpp` | The field of a point source among LoD1 and LoD2 (pitched-roof) buildings at microphones, band by band. |
+| `niceops_fdtd_field` | `tools/fdtd_field.cpp` | The full-wave (FDTD) field of a point source among rigid buildings, with the same inputs and output as `niceops_point_field`: the reference that tool is held to. |
 | `niceops_pe_compare` | `tools/pe_compare.cpp` | The refraction models against the parabolic equation on one path. |
 | `niceops_pe_field` | `tools/pe_field.cpp` | The PE's whole field on one vertical plane, for plotting. |
 | `niceops_ray_geometry` | `tools/ray_geometry.cpp` | The refracted ray's geometry for a batch of source–receiver pairs, so ground models outside `niceops` can be evaluated on the same rays. |
 | `niceops_benchmark` | `tools/benchmark.cpp` | The Attenborough et al. (1995) benchmark cases by the PE and, where one exists, the exact solution. |
 | `niceops_build_atmosphere` | `tools/build_atmosphere.cpp` | `--atmosphere` profiles from measured columns (`build`), and a site roughness length from wind profiles (`fit_z0`); see [atmosphere.md](atmosphere.md#the-profile-builder-niceops_build_atmosphere). |
 
-The manual covers the four that users run:
+`niceops_procedure` (`tools/procedure.cpp`) is described with the trajectories in
+[trajectory.md](trajectory.md). The manual covers the eight that users run:
+[niceops_procedure](../MANUAL.md#niceops_procedure),
 [niceops_propagation_table](../MANUAL.md#niceops_propagation_table),
 [niceops_build_atmosphere](../MANUAL.md#niceops_build_atmosphere),
+[niceops_urban_table](../MANUAL.md#niceops_urban_table),
+[niceops_point_field](../MANUAL.md#niceops_point_field),
+[niceops_fdtd_field](../MANUAL.md#niceops_fdtd_field),
 [niceops_pe_compare](../MANUAL.md#niceops_pe_compare),
 [niceops_benchmark](../MANUAL.md#niceops_benchmark).
 
@@ -108,6 +118,14 @@ The Python scripts:
   `niceops_benchmark` output in the layout of the Attenborough et al. figures.
 - `pnl_reference.py` generates the PNL/EPNL reference values that `tests/test_pnl.cpp` embeds,
   from panam's own functions (it needs a panam checkout).
+- `thick_barrier_bem.py` solves a rigid block on rigid ground by boundary elements, for a line
+  source: the reference values `tests/test_point_paths.cpp`, `tests/test_pitched_roofs.cpp` and
+  `tests/test_profile_pe.cpp` embed (it needs NumPy and SciPy).
+- `profile_scattering.py` computes a facade relief's scattering coefficient and grating orders
+  per band by the same boundary elements: the files `--facade_relief` reads
+  ([urban.md](urban.md)).
+- `urban_scattering_study.py` measures how far street microphones' SEL depends on the facades'
+  scattering coefficient, over synthetic districts built with `niceops_urban_table`.
 - `score_fidelity_frames.py`, `build_hover_candidate.py`, `export_emission_samples.py` and
   `regrid_emission_samples.py` are experimental source-model studies. They need NumPy, and all
   but `score_fidelity_frames.py` read the validation harness (`--harness`); each writes only to
@@ -124,3 +142,7 @@ Atmospheric and Urban Propagation Options".
 a snapshot of it. The internals files name roadmap items by what they are (the
 linear refraction model, the stratified rays, the PE, the propagation tables) and link here
 rather than citing step numbers.
+
+The urban model's next steps -- the paths it misses, ground and receivers, cost, drone and AAM
+sources, and the validation still open -- are in
+[`reports/NICEOPS Urban Propagation Next Steps.md`](../../reports/NICEOPS%20Urban%20Propagation%20Next%20Steps.md).

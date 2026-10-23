@@ -27,6 +27,7 @@
 #include "ground_effect.hpp"
 #include "plate_receiver.hpp"
 #include "propagation.hpp"
+#include "source_coherence.hpp"
 #include "util/constants.hpp"
 #include "vec3.hpp"
 
@@ -547,6 +548,13 @@ public:
             const double* extra_loss = nullptr, const double* ground_weight = nullptr,
             double* band_levels = nullptr) const;
 
+    // The sphere's band levels at its own radius along `direction`, the unit
+    // vector leaving the source: what a ray launched that way carries before
+    // its spreading and absorption (--buildings, urban_point.hpp).  Only bands
+    // in [first_band, last_band) are written; `levels` holds band_count().
+    void spectrum_along(const SourceState& state, const Vec3& direction, double* levels, std::size_t first_band = 0,
+            std::size_t last_band = static_cast<std::size_t>(-1), const PackedSpectra* packed = nullptr) const;
+
     // Band centers carried by the database, empty when it has no spectra.
     const std::vector<double>& band_centers() const
     {
@@ -601,6 +609,10 @@ public:
         double tip_speed = std::numeric_limits<double>::quiet_NaN();
         double rotor_radius = std::numeric_limits<double>::quiet_NaN();
         double vehicle_weight_newtons = std::numeric_limits<double>::quiet_NaN();
+        // The main rotor's speed, which the coherence model's rotor delay
+        // takes; unset where the source recorded none.
+        std::optional<double> rotor_rpm;
+        CoherenceRecord coherence;
         std::vector<double> phis;
         std::vector<double> thetas;
         // Row-major over (phi, theta): cells[i_phi * thetas.size() + i_theta].
@@ -661,6 +673,12 @@ public:
     const std::optional<double>& rotor_rpm() const
     {
         return rotor_rpm_;
+    }
+    // What the file records of the vehicle's coherence between emission
+    // directions (source_coherence.hpp); empty for a file that says nothing.
+    const CoherenceRecord& coherence_record() const
+    {
+        return coherence_record_;
     }
 
     SpeedReference speed_reference() const
@@ -891,6 +909,7 @@ private:
     bool upper_hemisphere_measured_ = false;
     std::optional<BuildAtmosphere> build_atmosphere_;
     std::optional<double> rotor_rpm_;
+    CoherenceRecord coherence_record_;
     // Per grid cell and condition, parallel to grid, the share of the cell
     // that was measured: with spectra, of its A-weighted band energy at the
     // sphere; with channel coverage, 1 or 0.  Empty without coverage.

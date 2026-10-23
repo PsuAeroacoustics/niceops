@@ -14,6 +14,10 @@ Sources: `src/pe.{hpp,cpp}`, `src/pade_propagator.{hpp,cpp}`, `src/pe_table.{hpp
 `src/exact_solutions.{hpp,cpp}`, `src/airy.{hpp,cpp}`, `src/propagation_table.{hpp,cpp}`,
 and the tools `tools/pe_compare.cpp` (`niceops_pe_compare`), `tools/benchmark.cpp`
 (`niceops_benchmark`) and `tools/propagation_table.cpp` (`niceops_propagation_table`).
+`src/profile_pe` (the 2-D field over a row of roofs, `--buildings`) fits its own split-step Padé
+propagators with `pade_propagator` and uses `exact_solutions`; it is described in
+[urban.md](urban.md), so a change to either shared file is checked against its tests too
+(`tests/test_profile_pe.cpp`).
 
 ## Scheme and starter
 
@@ -83,17 +87,17 @@ and the tools `tools/pe_compare.cpp` (`niceops_pe_compare`), `tools/benchmark.cp
   because it is normalized with k_a, and reads high for a source aloft in a refracting column
   (by how much: [FIDELITY](../FIDELITY.md#parabolic-equation-against-exact-solutions)). Do not
   take an offset of that size against a stored run made with the Gaussian for a regression. The
-  Gaussian
-  runs only for a source within a grid point of the ground on the second-order ground row
+  Gaussian runs only for a source within a grid point of the ground on the second-order ground row
   (which has no psi_0 to share the delta with), or when the starter's fit is refused even at a
   quarter of the step; `PeResult::self_started` says which ran.
 - **Normalization:** Salomons' second-order Gaussian starter times sqrt(i k_a) makes
   p = psi exp(i k_a r)/sqrt(r) a unit point source. `tests/test_pe.cpp` holds it to the exact
   two-ray field (rigid) and to Weyl–van der Pol through NICEOPS's own
   `spherical_reflection_coefficient` (grass), which checks the ground condition's sign too.
-- **The kernel pairs terms into two-lane vectors by hand** (`Lanes`, as `Pair` in
-  `sphere_database.cpp`), with the term count a template parameter. From scalar source the
-  compiler ran one term at a time: 11.7 ns a row against 5.9 (second order, eight terms). Each
+- **The kernel pairs terms into two-lane vectors by hand** (`Lanes`, `src/util/lanes.hpp`, which
+  `urban.cpp`'s band-averaged pair sum shares; `sphere_database.cpp` has its own `Pair` of the
+  same kind), with the term count a template parameter. From scalar source the compiler ran one
+  term at a time: 11.7 ns a row against 5.9 (second order, eight terms). Each
   solve stores one complex number per row (e_r = a / pivot; the off-diagonals are all a, so the
   forward and back coefficients coincide), which halves what a step streams through the cache.
 - **Not twisted.** Eight interleaved terms are throughput-bound (16 cycles of arithmetic a row
@@ -154,6 +158,29 @@ and the tools `tools/pe_compare.cpp` (`niceops_pe_compare`), `tools/benchmark.cp
   cost goes as f^2 and a band at a time left the 2 kHz band on a 2-thread share. A five-band
   `pe_compare` case went from 194 s to 14 s that way under Crank–Nicolson. Summing is in
   frequency order afterwards, so any thread count gives the same bits, under either scheme.
+- **Single precision costs too much accuracy at the default step, and the cure costs the
+  speed** (measured for a GPU port; Apple's GPUs have no double). With the march's stored
+  values rounded to float -- the factors once, the sweeps' running values row by row, the field
+  every step -- against double, on the upward-refraction shadow of `test_pe_shadow` (rigid,
+  250 Hz to 1 kHz, to 47 dB down), still air over grass (500 Hz and 1 kHz, 2 km) and downward
+  refraction over grass (125 Hz, 5 km):
+
+  | Range step | Padé terms | Lit field, worst | To −47 dB, worst | Cost |
+  | --- | --- | --- | --- | --- |
+  | 8 wavelengths (default) | 8–11 | 0.41 dB | 5.6 dB | 1 |
+  | 2 | 6 | 0.057 dB | 0.45 dB | 2.4 |
+  | 1 | 5 | 0.017 dB | 0.15 dB | 4.6 |
+  | 0.5 | 5 | 0.006 dB | 0.08 dB | 9 |
+  | Crank–Nicolson | 1 | 0.020 dB | 0.14 dB | 23 |
+
+  Rounding the factors alone and the march alone each cost about as much as both: a long
+  step's partial fractions are large and cancel, so whatever float drops from any of them shows.
+  Shorter steps need fewer, smaller terms. In a deep shadow 115 dB down (upward refraction over
+  grass, unphysical without `--gamma_t`) float loses the field altogether, by 30–70 dB. Accurate float
+  therefore costs four times the arithmetic or more, and a march is a chain of tridiagonal
+  recurrences, sequential in height, whose only parallelism is across terms and marches: a
+  GPU would need thousands of marches at once (a table's sources and frequencies, a turbulent
+  ensemble) to fill it. Not done.
 
 ## Crank–Nicolson, the independent check
 
@@ -161,8 +188,7 @@ and the tools `tools/pe_compare.cpp` (`niceops_pe_compare`), `tools/benchmark.cp
 independent check: Padé(1,1) at ten steps a wavelength, good to about 30 degrees. How closely
 it agrees with the split-step, and its own error against the exact still-air field, are in
 [FIDELITY](../FIDELITY.md#parabolic-equation-against-exact-solutions). PE runs stored before the
-split-step reproduce to
-their printed digits under `--scheme cn`.
+split-step reproduce to their printed digits under `--scheme cn`.
 
 - **Its left-hand tridiagonal matrix is factored once per run, and the sweep is shaped for
   latency** (2.7 ns per point per step, from 9.0). The Thomas sweep is a recurrence; each row
@@ -173,17 +199,19 @@ their printed digits under `--scheme cn`.
   - That multiply-add is written as two explicit `std::fma` per part (`minus_mul`). Left to
     itself the compiler contracts inside the multiply and leaves a subtract at the end, which
     puts 11 cycles of latency on the chain where 8 will do; that alone was 5.1 -> 2.7 ns.
+    Only where the target has a fused multiply-add (`__FMA__`, AArch64): on x86-64 without
+    `-mfma`, which is how CI's GCC builds, each `std::fma` is a call into libm on the chain, so
+    there it is the plain products, and the results differ from an FMA build by round-off.
 
   Output matches the plain Thomas sweep to about 1e-9 dB (the same arithmetic reordered).
-- **Crank–Nicolson's grid is 20 points per wavelength in height and 10 in range.** Ten in
-  height was too coarse for a receiver 1.2 m up; 20 costs twice as much
+- **Crank–Nicolson's grid is 20 points per wavelength in height and 10 in range.** Ten in height was
+  too coarse for a receiver 1.2 m up; 20 costs twice as much
   ([FIDELITY](../FIDELITY.md#parabolic-equation-against-exact-solutions)). Rerunning the stored
-  calibration cases at 20 did not move the shadow-edge calibration fitted against them, so the
-  fits stand. The turbulent mean-field test
-  runs at 10 in height with 1000 realizations; at 20 its tolerance was too tight for its sample
-  size. Halving Crank–Nicolson's range steps costs most cases only 0.02–0.03 dB, but fails
-  `test_benchmark` by 0.2–0.4 dB at long range. Do not coarsen its range step to buy speed;
-  that is what the split-step is for.
+  calibration cases at 20 did not move the shadow-edge calibration fitted against them, so the fits
+  stand. The turbulent mean-field test (`pe_turbulent_mean_field_decays`) runs at 10 in height with
+  1000 realizations; at 20 its tolerance was too tight for its sample size. Halving Crank–Nicolson's
+  range steps costs most cases only 0.02–0.03 dB, but fails `test_benchmark` by 0.2–0.4 dB at long
+  range. Do not coarsen its range step to buy speed; that is what the split-step is for.
 - **Cost.** PE time for a five-band `pe_compare` case (125 Hz–2 kHz, 100 m source to 1.5 km,
   14 cores; the ray models' columns take another 0.4 s):
 
@@ -214,10 +242,10 @@ their printed digits under `--scheme cn`.
   `max_angle` depends on the step. `pe_turbulent_mean_field_decays` takes its still field with
   `gamma_t = 1e-30` for that reason; with 0 the two differed by 8% before any turbulence.
 - **`tests/test_pe_turbulence.cpp` checks:**
-  - the screens' variance, 0.782 k^2 dx (gamma_t/4) L0^(5/3), to 0.06%, less the 4% the finite
-    column leaves out;
+  - the screens' variance, 0.782 k^2 dx (gamma_t/4) L0^(5/3), less the 4% the finite column
+    leaves out (found to 0.06%; the test's tolerance is 8%);
   - the ensemble-mean field's exp(-sigma^2/2) decay with range, within the sampling noise of
-    300 realizations, which checks the screens and the march together;
+    1000 realizations, which checks the screens and the march together;
   - single scattering: three times the strength puts 10 lg 3 more into a deep shadow;
   - `ShadowScattering` against the PE.
 - **`ShadowScattering` (`--scattering`) is fitted to it**, a + 10 lg gamma_t + b lg f +
@@ -340,9 +368,9 @@ model; the format is the specification, so other methods can write it. The compo
   (`path_gains` in the bound setup), since a pair may take either.
   `propagation_table_windowed_is_exact` holds it; the PE table was checked the same way by hand.
 - **`lookup` finds an even axis's cell by arithmetic and corrects it against the knots**
-  (`AxisLocator`), so it is the cell a binary search gives, bit for bit; the fmod on the bearing
-  is skipped inside [0, 360). -20% CPU on a table run, output byte-identical.
-  `lookup finds the same cell on even and uneven axes` sweeps knots, midpoints and a hair either
+  (`AxisLocator`), so it is the cell a binary search gives, bit for bit; the fmod on the bearing is
+  skipped inside [0, 360). -20% CPU on a table run, output byte-identical. `lookup finds the same
+  cell on even and uneven axes, at the knots and between` sweeps knots, midpoints and a hair either
   side of them against a plain search. The four-band lookup and the rejected height cache are in
   [performance.md](performance.md#measured-and-rejected-optimizations).
 - **`BandMap` is per run, not in the table**, because the table is loaded once
@@ -371,26 +399,25 @@ model; the format is the specification, so other methods can write it. The compo
     line up with bare ground's, can need it.
   - **Flush microphones are not checked against the table's receiver heights**, since they read
     its lowest row. Checking them refused every plate run whose table had no row at 0; the
-    warning above replaces that. **With `--refraction` the table takes the pairs it covers and
-  the ray model the rest** (`table_level` first in `refracted_level`); that run evaluates every
-  state, since its bounds were not built for both geometries.
+    warning above replaces that.
+- **With `--refraction` the table takes the pairs it covers and the ray model the rest**
+  (`table_level` first in `refracted_level`); that run evaluates every state, since its bounds
+  were not built for both geometries.
 - **Turbulence and roughness are baked into the table, not applied on it.** A ground-model table
   takes `--turbulence`, `--gamma_t` (HARMONOISE) and `--roughness` into the ground model it
   tabulates, and records them (`record_coherence`: `turbulence_model`, `turbulence` or `gamma_t`,
-  `roughness_m`, at full precision); a turbulent PE table records `phase_screens` and its
-  `gamma_t` the same way. The run reads them back (`table_coherence`) and warns when its own
-  settings differ, since table pairs ignore them.
-  Applying the run's coherence on top of a table would need the direct and reflected fields
-  apart (a still PE table holds only their sum, a turbulent one has it already), which is a new
-  file format; building the table with the run's settings needs none, and a ground-model table
-  so built reproduces `--ground_effect` with them (`propagation_table_carries_turbulence`,
-  `propagation_table_carries_harmonoise`). A table that records nothing is still air, which every
-  table built before the record was unless it says `gamma_t` with no `turbulence_model`; that one
-  wrote it to six decimals, so it is compared at that precision, and "0.000000" counts as
-  turbulent. The check runs either
-  way round: a still run on a turbulent table is warned too, since its uncovered pairs and the
-  plate offset's bare ground are still (`a run's turbulence and roughness are held to its
-  table's, either way round`).
+  `roughness_m`, at full precision); a turbulent PE table records `phase_screens` and its `gamma_t`
+  the same way. The run reads them back (`table_coherence`) and warns when its own settings differ,
+  since table pairs ignore them. Applying the run's coherence on top of a table would need the
+  direct and reflected fields apart (a still PE table holds only their sum, a turbulent one has it
+  already), which is a new file format; building the table with the run's settings needs none, and a
+  ground-model table so built reproduces `--ground_effect` with them
+  (`propagation_table_carries_turbulence`, `propagation_table_carries_harmonoise`). A table that
+  records nothing is still air, as every table built before the record was, unless it says `gamma_t`
+  with no `turbulence_model`: such a table wrote it to six decimals, so it is compared at that
+  precision, and "0.000000" counts as turbulent. The check runs either way round: a still run on a
+  turbulent table is warned too, since its uncovered pairs and the plate offset's bare ground are
+  still (`a run's turbulence and roughness are held to its table's, either way round`).
 - **Thread count is invisible.** `-j` (or `NICEOPS_THREADS`, which only the PE tools read) gives
   the same bits at any count, turbulent tables included, because each march's seeds are fixed
   before the work is dealt out (`pe_tools_thread_count_is_invisible`).

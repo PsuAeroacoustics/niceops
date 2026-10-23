@@ -1,0 +1,309 @@
+// The FDTD's step (fdtd.cpp's march) in float, over the cells of `box`.
+// Needs fdtd_types.h before it.  `coefficient` holds the CPML's per-axis a and b at the cells' centres
+// and at their low faces: a_cx[nx], b_cx[nx], a_fx[nx], b_fx[nx], then the
+// same for y and z.  Each slab's auxiliary field is indexed with the slab's
+// cells along its own axis innermost for x, and in place of that axis's
+// index for y and z (fdtd.cpp's slab_index).
+
+NK_FN uint fdtd_slab(uint i, uint n, uint lo, uint hi)
+{
+    return i < lo ? i : i - (n - hi) + lo;
+}
+
+// v at every open face on a cell's low sides, from the pressures either side,
+// and at a solid's face, where it absorbs, from the air's pressure.
+NK_KERNEL(fdtd_velocity)(NK_IN(FdtdGridGpu, grid, 0), NK_IN(nk_u8, flags, 1), NK_IN(float, coefficient, 2),
+        NK_IN(float, p, 3), NK_OUT(float, vx, 4), NK_OUT(float, vy, 5), NK_OUT(float, vz, 6),
+        NK_OUT(float, psi_x, 7), NK_OUT(float, psi_y, 8), NK_OUT(float, psi_z, 9),
+        NK_VALUE(FdtdBox, box, 10) NK_GROUP_ARGS)
+{
+    const FdtdGridGpu g = grid[0];
+    const uint t = NK_GROUP * NK_THREADS + NK_THREAD;
+    if (t >= box.ni * box.nj * box.nk)
+        return;
+    const uint line = t / box.ni, layer = line / box.nj;
+    const uint i = box.i + t - line * box.ni, j = box.j + line - layer * box.nj, k = box.k + layer;
+    const uint row = k * g.ny + j, c = row * g.nx + i;
+    const uint f = flags[c];
+    if ((f & FDTD_FACES) == 0u)
+        return;
+    const uint plane = g.nx * g.ny;
+    NK_GLOBAL_IN float* a_fx = coefficient + 2u * g.nx;
+    NK_GLOBAL_IN float* b_fx = a_fx + g.nx;
+    NK_GLOBAL_IN float* a_fy = coefficient + 4u * g.nx + 2u * g.ny;
+    NK_GLOBAL_IN float* b_fy = a_fy + g.ny;
+    NK_GLOBAL_IN float* a_fz = coefficient + 4u * (g.nx + g.ny) + 2u * g.nz;
+    NK_GLOBAL_IN float* b_fz = a_fz + g.nz;
+    const float pc = p[c];
+    if ((f & FDTD_OPEN_X) != 0u)
+    {
+        float d = pc - p[c - 1u];
+        if (i < g.x0 || i >= g.nx - g.x1)
+        {
+            const uint s = row * (g.x0 + g.x1) + fdtd_slab(i, g.nx, g.x0, g.x1);
+            const float psi = b_fx[i] * psi_x[s] + a_fx[i] * d;
+            psi_x[s] = psi;
+            d += psi;
+        }
+        vx[c] -= g.push_v * d;
+    }
+    else if (g.walls != 0u && (f & FDTD_WALL_X) != 0u)
+        vx[c] = (f & FDTD_AIR) != 0u ? g.keep * vx[c] - g.push_wall * pc : g.keep * vx[c] + g.push_wall * p[c - 1u];
+    if ((f & FDTD_OPEN_Y) != 0u)
+    {
+        float d = pc - p[c - g.nx];
+        if (j < g.y0 || j >= g.ny - g.y1)
+        {
+            const uint s = (k * (g.y0 + g.y1) + fdtd_slab(j, g.ny, g.y0, g.y1)) * g.nx + i;
+            const float psi = b_fy[j] * psi_y[s] + a_fy[j] * d;
+            psi_y[s] = psi;
+            d += psi;
+        }
+        vy[c] -= g.push_v * d;
+    }
+    else if (g.walls != 0u && (f & FDTD_WALL_Y) != 0u)
+        vy[c] = (f & FDTD_AIR) != 0u ? g.keep * vy[c] - g.push_wall * pc : g.keep * vy[c] + g.push_wall * p[c - g.nx];
+    if ((f & FDTD_OPEN_Z) != 0u)
+    {
+        float d = pc - p[c - plane];
+        if (k < g.z0 || k >= g.nz - g.z1)
+        {
+            const uint s = fdtd_slab(k, g.nz, g.z0, g.z1) * plane + j * g.nx + i;
+            const float psi = b_fz[k] * psi_z[s] + a_fz[k] * d;
+            psi_z[s] = psi;
+            d += psi;
+        }
+        vz[c] -= g.push_v * d;
+    }
+    else if (g.walls != 0u && (f & FDTD_WALL_Z) != 0u)
+        vz[c] = (f & FDTD_AIR) != 0u ? g.keep * vz[c] - g.push_wall * pc : g.keep * vz[c] + g.push_wall * p[c - plane];
+}
+
+// p in every air cell, from the velocities on its six faces.
+NK_KERNEL(fdtd_pressure)(NK_IN(FdtdGridGpu, grid, 0), NK_IN(nk_u8, flags, 1), NK_IN(float, coefficient, 2),
+        NK_OUT(float, p, 3), NK_IN(float, vx, 4), NK_IN(float, vy, 5), NK_IN(float, vz, 6),
+        NK_OUT(float, phi_x, 7), NK_OUT(float, phi_y, 8), NK_OUT(float, phi_z, 9),
+        NK_VALUE(FdtdBox, box, 10) NK_GROUP_ARGS)
+{
+    const FdtdGridGpu g = grid[0];
+    const uint t = NK_GROUP * NK_THREADS + NK_THREAD;
+    if (t >= box.ni * box.nj * box.nk)
+        return;
+    const uint line = t / box.ni, layer = line / box.nj;
+    const uint i = box.i + t - line * box.ni, j = box.j + line - layer * box.nj, k = box.k + layer;
+    const uint row = k * g.ny + j, c = row * g.nx + i;
+    if ((flags[c] & FDTD_AIR) == 0u)
+        return;
+    const uint plane = g.nx * g.ny;
+    NK_GLOBAL_IN float* a_cx = coefficient;
+    NK_GLOBAL_IN float* b_cx = a_cx + g.nx;
+    NK_GLOBAL_IN float* a_cy = coefficient + 4u * g.nx;
+    NK_GLOBAL_IN float* b_cy = a_cy + g.ny;
+    NK_GLOBAL_IN float* a_cz = coefficient + 4u * (g.nx + g.ny);
+    NK_GLOBAL_IN float* b_cz = a_cz + g.nz;
+    float dx = (i + 1u < g.nx ? vx[c + 1u] : 0.0f) - vx[c];
+    if (i < g.x0 || i >= g.nx - g.x1)
+    {
+        const uint s = row * (g.x0 + g.x1) + fdtd_slab(i, g.nx, g.x0, g.x1);
+        const float phi = b_cx[i] * phi_x[s] + a_cx[i] * dx;
+        phi_x[s] = phi;
+        dx += phi;
+    }
+    float dy = (j + 1u < g.ny ? vy[c + g.nx] : 0.0f) - vy[c];
+    if (j < g.y0 || j >= g.ny - g.y1)
+    {
+        const uint s = (k * (g.y0 + g.y1) + fdtd_slab(j, g.ny, g.y0, g.y1)) * g.nx + i;
+        const float phi = b_cy[j] * phi_y[s] + a_cy[j] * dy;
+        phi_y[s] = phi;
+        dy += phi;
+    }
+    float dz = (k + 1u < g.nz ? vz[c + plane] : 0.0f) - vz[c];
+    if (k < g.z0 || k >= g.nz - g.z1)
+    {
+        const uint s = fdtd_slab(k, g.nz, g.z0, g.z1) * plane + j * g.nx + i;
+        const float phi = b_cz[k] * phi_z[s] + a_cz[k] * dz;
+        phi_z[s] = phi;
+        dz += phi;
+    }
+    p[c] -= g.push_p * (dx + dy + dz);
+}
+
+// The source's share of step `step` into each of its cells (distinct).
+NK_KERNEL(fdtd_inject)(NK_OUT(float, p, 0), NK_IN(uint, cells, 1), NK_IN(float, weights, 2), NK_IN(float, pulse, 3),
+        NK_VALUE(uint, count, 4), NK_VALUE(uint, step, 5) NK_GROUP_ARGS)
+{
+    const uint t = NK_GROUP * NK_THREADS + NK_THREAD;
+    if (t < count)
+        p[cells[t]] += weights[t] * pulse[step];
+}
+
+// Each receiver's pressure, from its `per` cells, into row `step`.
+NK_KERNEL(fdtd_record)(NK_IN(float, p, 0), NK_IN(uint, cells, 1), NK_IN(float, weights, 2), NK_OUT(float, recording, 3),
+        NK_VALUE(uint, receivers, 4), NK_VALUE(uint, step, 5), NK_VALUE(uint, per, 6) NK_GROUP_ARGS)
+{
+    const uint r = NK_GROUP * NK_THREADS + NK_THREAD;
+    if (r >= receivers)
+        return;
+    float v = 0.0f;
+    for (uint t = 0u; t < per; t++)
+        v += weights[per * r + t] * p[cells[per * r + t]];
+    recording[step * receivers + r] = v;
+}
+
+// Fourth order (fdtd.cpp's pressure_difference and velocity_difference): the
+// far value beyond a closed face is the mirror's, even for the pressure and
+// odd for the velocity.
+NK_FN float fdtd_dp4(NK_GLOBAL_IN float* p, NK_GLOBAL_IN nk_u8* flags, uint c, uint stride, uint i, uint n, uint open)
+{
+    const float near = p[c] - p[c - stride];
+    const float high = (i + 1u < n && (flags[c + stride] & open) != 0u) ? p[c + stride] : p[c];
+    const float low = (flags[c - stride] & open) != 0u ? p[c - 2u * stride] : p[c - stride];
+    return 1.125f * near - (high - low) * (1.0f / 24.0f);
+}
+
+NK_FN float fdtd_dv4(NK_GLOBAL_IN float* v, NK_GLOBAL_IN nk_u8* flags, uint c, uint stride, uint i, uint n, uint open)
+{
+    const float v0 = v[c], v1 = i + 1u < n ? v[c + stride] : 0.0f;
+    const bool open0 = (flags[c] & open) != 0u, open1 = i + 1u < n && (flags[c + stride] & open) != 0u;
+    const float v2 = open1 ? (i + 2u < n ? v[c + 2u * stride] : 0.0f) : 2.0f * v1 - v0;
+    const float vm = open0 ? v[c - stride] : 2.0f * v0 - v1;
+    return 1.125f * (v1 - v0) - (v2 - vm) * (1.0f / 24.0f);
+}
+
+// fdtd.cpp's wall_pressure at fourth order: what an absorbing face sees from
+// the air on its high side (`above`) or its low side.
+NK_FN float fdtd_wall_p4(NK_GLOBAL_IN float* p, NK_GLOBAL_IN nk_u8* flags, uint c, uint stride, uint i, uint n,
+        uint open, bool above)
+{
+    if (above)
+        return i + 1u < n && (flags[c + stride] & open) != 0u ? (25.0f / 24.0f) * p[c] - (1.0f / 24.0f) * p[c + stride]
+                                                                : p[c];
+    return (flags[c - stride] & open) != 0u ? (25.0f / 24.0f) * p[c - stride] - (1.0f / 24.0f) * p[c - 2u * stride]
+                                             : p[c - stride];
+}
+
+NK_KERNEL(fdtd_velocity4)(NK_IN(FdtdGridGpu, grid, 0), NK_IN(nk_u8, flags, 1), NK_IN(float, coefficient, 2),
+        NK_IN(float, p, 3), NK_OUT(float, vx, 4), NK_OUT(float, vy, 5), NK_OUT(float, vz, 6),
+        NK_OUT(float, psi_x, 7), NK_OUT(float, psi_y, 8), NK_OUT(float, psi_z, 9),
+        NK_VALUE(FdtdBox, box, 10) NK_GROUP_ARGS)
+{
+    const FdtdGridGpu g = grid[0];
+    const uint t = NK_GROUP * NK_THREADS + NK_THREAD;
+    if (t >= box.ni * box.nj * box.nk)
+        return;
+    const uint line = t / box.ni, layer = line / box.nj;
+    const uint i = box.i + t - line * box.ni, j = box.j + line - layer * box.nj, k = box.k + layer;
+    const uint row = k * g.ny + j, c = row * g.nx + i;
+    const uint f = flags[c];
+    if ((f & FDTD_FACES) == 0u)
+        return;
+    const uint plane = g.nx * g.ny;
+    NK_GLOBAL_IN float* a_fx = coefficient + 2u * g.nx;
+    NK_GLOBAL_IN float* b_fx = a_fx + g.nx;
+    NK_GLOBAL_IN float* a_fy = coefficient + 4u * g.nx + 2u * g.ny;
+    NK_GLOBAL_IN float* b_fy = a_fy + g.ny;
+    NK_GLOBAL_IN float* a_fz = coefficient + 4u * (g.nx + g.ny) + 2u * g.nz;
+    NK_GLOBAL_IN float* b_fz = a_fz + g.nz;
+    if ((f & FDTD_OPEN_X) != 0u)
+    {
+        float d = fdtd_dp4(p, flags, c, 1u, i, g.nx, FDTD_OPEN_X);
+        if (i < g.x0 || i >= g.nx - g.x1)
+        {
+            const uint s = row * (g.x0 + g.x1) + fdtd_slab(i, g.nx, g.x0, g.x1);
+            const float psi = b_fx[i] * psi_x[s] + a_fx[i] * d;
+            psi_x[s] = psi;
+            d += psi;
+        }
+        vx[c] -= g.push_v * d;
+    }
+    else if (g.walls != 0u && (f & FDTD_WALL_X) != 0u)
+    {
+        const bool above = (f & FDTD_AIR) != 0u;
+        const float pw = fdtd_wall_p4(p, flags, c, 1u, i, g.nx, FDTD_OPEN_X, above);
+        vx[c] = above ? g.keep * vx[c] - g.push_wall * pw : g.keep * vx[c] + g.push_wall * pw;
+    }
+    if ((f & FDTD_OPEN_Y) != 0u)
+    {
+        float d = fdtd_dp4(p, flags, c, g.nx, j, g.ny, FDTD_OPEN_Y);
+        if (j < g.y0 || j >= g.ny - g.y1)
+        {
+            const uint s = (k * (g.y0 + g.y1) + fdtd_slab(j, g.ny, g.y0, g.y1)) * g.nx + i;
+            const float psi = b_fy[j] * psi_y[s] + a_fy[j] * d;
+            psi_y[s] = psi;
+            d += psi;
+        }
+        vy[c] -= g.push_v * d;
+    }
+    else if (g.walls != 0u && (f & FDTD_WALL_Y) != 0u)
+    {
+        const bool above = (f & FDTD_AIR) != 0u;
+        const float pw = fdtd_wall_p4(p, flags, c, g.nx, j, g.ny, FDTD_OPEN_Y, above);
+        vy[c] = above ? g.keep * vy[c] - g.push_wall * pw : g.keep * vy[c] + g.push_wall * pw;
+    }
+    if ((f & FDTD_OPEN_Z) != 0u)
+    {
+        float d = fdtd_dp4(p, flags, c, plane, k, g.nz, FDTD_OPEN_Z);
+        if (k < g.z0 || k >= g.nz - g.z1)
+        {
+            const uint s = fdtd_slab(k, g.nz, g.z0, g.z1) * plane + j * g.nx + i;
+            const float psi = b_fz[k] * psi_z[s] + a_fz[k] * d;
+            psi_z[s] = psi;
+            d += psi;
+        }
+        vz[c] -= g.push_v * d;
+    }
+    else if (g.walls != 0u && (f & FDTD_WALL_Z) != 0u)
+    {
+        const bool above = (f & FDTD_AIR) != 0u;
+        const float pw = fdtd_wall_p4(p, flags, c, plane, k, g.nz, FDTD_OPEN_Z, above);
+        vz[c] = above ? g.keep * vz[c] - g.push_wall * pw : g.keep * vz[c] + g.push_wall * pw;
+    }
+}
+
+NK_KERNEL(fdtd_pressure4)(NK_IN(FdtdGridGpu, grid, 0), NK_IN(nk_u8, flags, 1), NK_IN(float, coefficient, 2),
+        NK_OUT(float, p, 3), NK_IN(float, vx, 4), NK_IN(float, vy, 5), NK_IN(float, vz, 6),
+        NK_OUT(float, phi_x, 7), NK_OUT(float, phi_y, 8), NK_OUT(float, phi_z, 9),
+        NK_VALUE(FdtdBox, box, 10) NK_GROUP_ARGS)
+{
+    const FdtdGridGpu g = grid[0];
+    const uint t = NK_GROUP * NK_THREADS + NK_THREAD;
+    if (t >= box.ni * box.nj * box.nk)
+        return;
+    const uint line = t / box.ni, layer = line / box.nj;
+    const uint i = box.i + t - line * box.ni, j = box.j + line - layer * box.nj, k = box.k + layer;
+    const uint row = k * g.ny + j, c = row * g.nx + i;
+    if ((flags[c] & FDTD_AIR) == 0u)
+        return;
+    const uint plane = g.nx * g.ny;
+    NK_GLOBAL_IN float* a_cx = coefficient;
+    NK_GLOBAL_IN float* b_cx = a_cx + g.nx;
+    NK_GLOBAL_IN float* a_cy = coefficient + 4u * g.nx;
+    NK_GLOBAL_IN float* b_cy = a_cy + g.ny;
+    NK_GLOBAL_IN float* a_cz = coefficient + 4u * (g.nx + g.ny);
+    NK_GLOBAL_IN float* b_cz = a_cz + g.nz;
+    float dx = fdtd_dv4(vx, flags, c, 1u, i, g.nx, FDTD_OPEN_X);
+    if (i < g.x0 || i >= g.nx - g.x1)
+    {
+        const uint s = row * (g.x0 + g.x1) + fdtd_slab(i, g.nx, g.x0, g.x1);
+        const float phi = b_cx[i] * phi_x[s] + a_cx[i] * dx;
+        phi_x[s] = phi;
+        dx += phi;
+    }
+    float dy = fdtd_dv4(vy, flags, c, g.nx, j, g.ny, FDTD_OPEN_Y);
+    if (j < g.y0 || j >= g.ny - g.y1)
+    {
+        const uint s = (k * (g.y0 + g.y1) + fdtd_slab(j, g.ny, g.y0, g.y1)) * g.nx + i;
+        const float phi = b_cy[j] * phi_y[s] + a_cy[j] * dy;
+        phi_y[s] = phi;
+        dy += phi;
+    }
+    float dz = fdtd_dv4(vz, flags, c, plane, k, g.nz, FDTD_OPEN_Z);
+    if (k < g.z0 || k >= g.nz - g.z1)
+    {
+        const uint s = fdtd_slab(k, g.nz, g.z0, g.z1) * plane + j * g.nx + i;
+        const float phi = b_cz[k] * phi_z[s] + a_cz[k] * dz;
+        phi_z[s] = phi;
+        dz += phi;
+    }
+    p[c] -= g.push_p * (dx + dy + dz);
+}

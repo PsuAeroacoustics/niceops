@@ -1,0 +1,504 @@
+{
+ "findings": {
+  "family": "Engineering, standardized and semi-analytical urban propagation and shielding models (CNOSSOS-EU, Harmonoise, Nord2000, ISO 9613-2, barrier diffraction formulas, canyon reverberation and facade corrections, NoiseModelling), and what aircraft-noise practice (ECAC Doc 29, SAE AIR5662/AIR6501, FAA AEDT/ACRP 02-79, Empa sonAIR) does about buildings.\n\nSEARCH-BUDGET CAVEAT: the session's WebSearch budget (200 calls shared across agents) ran out partway through, and Consensus returned only rate-limit or monthly-quota errors, so it contributed nothing. After that I could only fetch URLs I already had. The parts that suffered are the Hadden-Pierce and Kurze-Anderson formula checks, the Nord2000 urban/validation statistics, ONERA's Malbequi UAM canyon test cases, and the text of ECAC Doc 29 itself. Formulas and numbers given from background knowledge are labelled [unverified] in the text, and their references carry verified_by_search=false.\n\nBOTTOM LINE FOR NICEOPS: none of the standardized point-to-point methods is a drop-in urban model for an elevated, moving source. Their building handling (vertical image sources, Fresnel-number diffraction over horizontal and vertical edges, Fresnel-zone ground) was derived and validated for sources near the ground. CNOSSOS-EU's ground term is described by the Dutch RIVM working group as 'fundamentally incorrect for a high source and low receiver'. The parts worth borrowing are the elementary formulas: Pierce/Hadden-Pierce wedge and thick-barrier diffraction (or Maekawa/Kurze-Anderson as a cheap bound), the image-source reflection with Heutschi's scattered-reflection model, and Wei et al.'s fitted canyon multiple-reflection term Acan. These are closed forms costing microseconds per path, so they are ideal for BUILDING the roadmap's per-receiver reciprocity tables (transfer function vs arrival direction and band). They are not meant to be evaluated in the 1e8 loop. Aircraft-noise practice agrees on the geometry: buildings matter little under direct overflight but strongly at grazing incidence and in courtyards. Measured shielding is 8-14.6 dB(A), and facade reflection gain up to 3-4 dB. The FAA's chosen route (ACRP 02-79) is the same architecture the roadmap already names: precompute building gain/loss grids per third-octave band with a separate model, and add them to the integrated prediction.",
+  "models": [
+   {
+    "name": "ISO 9613-2 (1996; revised 2024) general method: Dz barrier term, lateral diffraction, Agr, facade reflections as image sources",
+    "physics_captured": "Octave-band energetic point-to-point model under moderately downwind conditions. Barrier attenuation Dz = 10 lg(3 + C2/λ · C3 · z · Kmet), a Maekawa-type function of the path-length difference z. Double diffraction over thick barriers via C3. Lateral (vertical-edge) paths. Specular reflections from vertical surfaces as image sources with a reflection-coefficient loss. Coarse ground factor G in three regions.",
+    "limitations": "Validated for near-ground sources: [unverified, from memory] the stated accuracy is about ±3 dB for mean source/receiver height up to 30 m and distances up to 1 km. No canyon multiple-reflection or reverberant term beyond the explicit image order. Dz is capped [unverified: 20 dB single / 25 dB double edge]. The 2024 revision changed the Dz formula (Formula 18) and Kmet (Formula 21) to remove a residual ~5 dB barrier effect at long range with low barriers, and has drawn 'serious concerns' (Euracoustics FA2026). Wei et al. (2014) found that the ISO diffraction formula 'underestimates the attenuation considerably' for rooftop diffraction compared with FDTD and long-term measurements. Octave bands only; no turbulence-scattering floor into shadows.",
+    "cost": "A few transcendental calls per path; nanoseconds to sub-microsecond per path. The dominant cost in practice is path finding over the building database, not the formulas.",
+    "elevated_moving_source_suitability": "Formally outside scope for aircraft at 30-1500 m. The ACRP 02-79 benchmark nevertheless ran it (CadnaA) for source heights up to 800 m and distances up to 2000 m. Against 566 measured airport SEL events at LAX/LGB, adding an ISO 9613-2 building offset to AEDT removed the mean bias (all ops: Measured-AEDT -1.9 ± 4.8 dB -> +0.1 ± 4.4 dB). For departures it over-corrected shielded sites (-5.8 -> +2.1 dB mean, 5.2 dB s.d.). No source-motion treatment, which is fine for energy SEL with a quasi-static state loop.",
+    "frequency_range_and_scale": "Octave bands 63 Hz - 8 kHz; building-scale geometry.",
+    "niceops_fit": "Use only as a cross-check or a cheap per-path shielding estimate when building a per-receiver table. Too coarse (octave, G-factor ground) to replace NICEOPS's own ground and refraction models, and its ground term would double-count panam's ega. Not for the hot loop.",
+    "references": [
+     {
+      "citation": "ISO 9613-2:2024, Acoustics - Attenuation of sound during propagation outdoors - Part 2: Engineering method for the prediction of sound pressure levels outdoors",
+      "supports_claim": "Current revision (approved Jan 2024), with changes to the meteorological correction, ground effect, and terrain/obstacle modelling; a 3rd edition (ISO/AWI 9613-2) is in preparation",
+      "url_or_doi": "https://online.standard.no/en/iso-9613-2-2024",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Euracoustics Forum Acusticum 2026 paper no. 643 (critique of the ISO 9613-2:2024 Dz formula 18 and Kmet formula 21)",
+      "supports_claim": "The revised Dz removes the residual ~5 dB barrier effect at long range with low barriers; it raises receiver levels in some industrial cases; serious concerns about the revisions",
+      "url_or_doi": "https://dael.euracoustics.org/confs/fa2026/data/articles/000643.pdf",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Downing, J.M., Calton, M.F. (Blue Ridge Research), Page, J.A. (Volpe), Rochat, J.L. (Cross-Spectrum). Effects of Terrain and Manmade Structures on Aircraft Noise Prediction (ACRP 02-79 presentation)",
+      "supports_claim": "Benchmark source heights 1.5-800 m with ISO 9613-2, Nord2000, TNM, AAM; measured-vs-AEDT SEL offsets with TNM and ISO 9613-2 building corrections (566 events, LAX/LGB)",
+      "url_or_doi": "https://rosap.ntl.bts.gov/view/dot/57382/dot_57382_DS1.pdf",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "CNOSSOS-EU (Directive 2015/996, amended 2021) propagation method, plus ISO/TR 17534-4 interpretation",
+    "physics_captured": "Derived from the French NMPB-2008. Third-octave/octave paths found by a 'rubber-band' convex hull in the vertical plane through source and receiver. Diffraction via path-length difference (Maekawa-like Δdif with a Ch factor). Lateral diffraction around vertical edges. Specular reflections on 'nearly vertical' obstacles with 'retrodiffraction' loss for finite reflectors; surface absorption entered separately as 10 lg(1-α). Homogeneous and favourable (curved-ray, modified-height) conditions combined by occurrence probability.",
+    "limitations": "The RIVM-led EU working group found real errors as well as ambiguities (Kok, ICA 2019). Under favourable conditions, multiple diffraction can give much less attenuation than a single diffraction, even 0 dB. The Rayleigh criterion is undefined. 'The ground attenuation formulas in particular are fundamentally incorrect for a high source and low receiver', and no fix was found. ISO/TR 17534-4:2020 was needed to fix interpretations of lateral diffraction, reflection on nearly vertical objects and retrodiffraction. It is a 2.5-D vertical-plane method with no canyon reverberation term. Wei et al. 2014 found END (CNOSSOS-type) maps underestimate shielded-facade levels by more than 14 dBA at one Ghent inner yard.",
+    "cost": "Cheap per path. NoiseModelling uses an R-tree to make path finding over city building footprints tractable.",
+    "elevated_moving_source_suitability": "Poor. Its ground model is invalid for high sources (Kok 2019), and it was never designed for aircraft: CNOSSOS's aircraft part is a Doc 29-style segment method with no buildings. A 2025 EAA paper nevertheless used NoiseModelling for drone noise over Madrid, and NLR validated a CNOSSOS-based model against a drone campaign in a simulated city, citing a 'great lack of experimental measurement data'.",
+    "frequency_range_and_scale": "63 Hz - 8 kHz octaves (third-octaves allowed); city scale.",
+    "niceops_fit": "Borrow the reflection-on-vertical-surface and retrodiffraction formulas only. Do not adopt its ground or favourable-condition machinery, which is worse than what NICEOPS already has (WvdP/ega, stratified eigenrays, PE).",
+    "references": [
+     {
+      "citation": "Kephalopoulos, S., Paviotti, M., Anfosso-Ledee, F. (2012). Common noise assessment methods in Europe (CNOSSOS-EU). JRC Reference Report EUR 25379 EN, Publications Office of the EU",
+      "supports_claim": "Origin and scope of CNOSSOS-EU (road, rail, aircraft, industry); mandatory from 31 Dec 2018",
+      "url_or_doi": "https://publications.jrc.ec.europa.eu/repository/handle/JRC72550",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Kok, A. (2019). Flaws in the Cnossos calculation method and proposed solutions. Proc. 23rd ICA, Aachen",
+      "supports_claim": "Multiple diffraction under favourable conditions can give ~0 dB; Rayleigh criterion undefined; ground attenuation fundamentally incorrect for a high source and low receiver, unresolved",
+      "url_or_doi": "https://pub.dega-akustik.de/ICA2019/data/articles/000072.pdf",
+      "verified_by_search": true
+     },
+     {
+      "citation": "ISO/TR 17534-4:2020, Acoustics - Software for the calculation of sound outdoors - Part 4: Recommendations for a quality assured implementation of the method of CNOSSOS-EU",
+      "supports_claim": "Agreed interpretations (incl. lateral diffraction 5.13, reflection on nearly vertical objects, retrodiffraction) and TC test cases with reference solutions",
+      "url_or_doi": "https://standards.govt.nz/shop/isotr-17534-42020",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "NoiseModelling (Universite Gustave Eiffel / CNRS Lab-STICC), open-source CNOSSOS-EU implementation",
+    "physics_captured": "CNOSSOS-EU emission and propagation in Java on H2GIS/PostGIS. Rubber-band path finding with R-tree acceleration; rays heading back toward the source or receiver are ignored, so a receiver in a U-shaped building gets only diffraction over horizontal edges. The ISO/TR 17534-4 TC test cases are in its unit tests. Users can supply their own LW.",
+    "limitations": "Inherits CNOSSOS's limits (above). The fetched documentation does not describe reflection order, vertical-edge treatment, 3-D source directivity or elevated/moving sources, and searches did not establish native aircraft support. Licensed GPL v3, which matters for linking into MIT NICEOPS (it could be run as a separate tool, not linked).",
+    "cost": "Designed for city-to-national maps; the per-receiver cost is dominated by path finding. No per-evaluation figures were found.",
+    "elevated_moving_source_suitability": "Not native. It has been coupled to drone flight mechanics and source models (EAA FA2025, Madrid parcel delivery), so a point source at altitude is possible. The ground term is still the CNOSSOS one.",
+    "frequency_range_and_scale": "Octave/third-octave, 63 Hz - 8 kHz.",
+    "niceops_fit": "Best used as an external geometry engine or cross-check: read building footprints, find canyon receivers, and verify NICEOPS reciprocity tables on test cases. GPL v3 rules out vendoring it.",
+    "references": [
+     {
+      "citation": "Bocher, E., Guillaume, G., Picaut, J., Petit, G., Fortin, N. (2019). NoiseModelling: An open source GIS based tool to produce environmental noise maps. ISPRS Int. J. Geo-Inf. 8(3), 130",
+      "supports_claim": "Open-source GIS noise mapping implementing CNOSSOS-EU; GPL v3",
+      "url_or_doi": "https://doi.org/10.3390/ijgi8030130",
+      "verified_by_search": true
+     },
+     {
+      "citation": "NoiseModelling documentation, Numerical Model and Validation pages",
+      "supports_claim": "Rubber-band path finding, R-tree, rays toward source/receiver ignored; TC test cases from ISO/TR 17534-4 implemented",
+      "url_or_doi": "https://noisemodelling.readthedocs.io/en/latest/Validation.html",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Forum Acusticum 2025 paper 609 (drone noise toolchain: flight mechanics + source emission + NoiseModelling urban propagation; DJI Matrice 600, Madrid)",
+      "supports_claim": "NoiseModelling has been used for elevated drone sources in a city",
+      "url_or_doi": "https://dael.euracoustics.org/confs/fa2025/data/articles/000609.pdf",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Harmonoise / Imagine point-to-point engineering model",
+    "physics_captured": "A 2-D vertical cross-section with the terrain as straight segments. Excess attenuation is built from a Fresnel-weighted combination of ground and multiple-edge diffraction (convex-hull path, with a 'Fresnel-zone' treatment of ground segments). Refraction via a linear effective-sound-speed profile represented by curved-terrain transformation. Meteorological classes and turbulence. Third-octave bands. Calibrated against reference PE/BEM models from the Harmonoise reference model.",
+    "limitations": "Like CNOSSOS it is 2.5-D: facades are 'twisted' normal to the source-receiver line, and canyon multiple reflections are not modelled (the motivation for Wei et al. 2014). Designed for road and rail sources near the ground. The scanned DGMR overview could not be decoded, and accuracy numbers versus reference were not retrieved this session.",
+    "cost": "Per path, tens of microseconds to milliseconds with many edges and ground segments.",
+    "elevated_moving_source_suitability": "More physically general than CNOSSOS (proper Fresnel-weighted ground and refraction), so better for high sources. No aircraft validation was found. Its refraction and ground physics are already superseded inside NICEOPS by the stratified eigenrays and the PE.",
+    "frequency_range_and_scale": "Third-octave 25 Hz - 10 kHz; km scale.",
+    "niceops_fit": "Mainly a reference for how to combine multiple-edge diffraction with ground segments, the 'Fresnel-weighting' idea. NICEOPS would gain little from porting the refraction or ground parts.",
+    "references": [
+     {
+      "citation": "Salomons, E., van Maercke, D., Defrance, J., de Roo, F. (2011). The Harmonoise sound propagation model. Acta Acustica united with Acustica 97(1), 62-74",
+      "supports_claim": "Step-by-step point-to-point Harmonoise engineering model with improvements; comparison with Nord2000 and reference results",
+      "url_or_doi": "https://www.ingentaconnect.com/contentone/dav/aaua/2011/00000097/00000001/art00008",
+      "verified_by_search": true
+     },
+     {
+      "citation": "van Maercke, D., Defrance, J. (2007). Development of an analytical model for outdoor sound propagation within the Harmonoise project. Acta Acustica united with Acustica 93, 201-212",
+      "supports_claim": "Theoretical basis of the Harmonoise engineering model",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Defrance, J., Salomons, E., Noordhoek, I., et al. (2007). Outdoor sound propagation reference model developed in the European Harmonoise project. Acta Acustica united with Acustica 93, 213-227",
+      "supports_claim": "Harmonoise reference (PE/BEM-class) model with statistical atmosphere, validated against long-term measurements",
+      "url_or_doi": "https://research.chalmers.se/publication/64932",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Jonsson, G.B., Jacobsen, F. (2007). A comparison of two models for outdoor sound propagation: Harmonoise and Nord2000. Proc. 19th ICA, Madrid",
+      "supports_claim": "Head-to-head comparison exists (numbers not retrieved)",
+      "url_or_doi": "https://orbit.dtu.dk/en/publications/a-comparison-of-two-models-for-outdoor-sound-propagation-harmonoi/",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Nord2000 (DELTA/FORCE, Plovsing and Kragh)",
+    "physics_captured": "Geometrical ray theory in third-octave bands. The terrain cross-section is a chain of straight segments, each contributing to ground and screen effects through Fresnel-zone weighting. Part 2 adds refraction (circular rays in a linearized effective sound speed) and turbulence scattering. Thin and thick screens, valleys and reflections from obstacles. A point-to-point validation covers 544 cases.",
+    "limitations": "The validation reports 'small differences on average', but the largest discrepancies are for thin screens on flat ground. No street-canyon reverberation term. It is 2-D per path and needs heavy path finding in cities. The urban-specific validation statistics could not be retrieved (the report URL returned 404 and searches were exhausted).",
+    "cost": "Heavier than ISO/CNOSSOS per path (Fresnel-zone integration over segments), yet routinely used for national road maps (Denmark) and wind-turbine studies.",
+    "elevated_moving_source_suitability": "The best of the standardized models for elevated sources: it has been validated and used for wind turbines (hub heights ~100 m), and ACRP 02-79 ran it (SoundPLAN) for elevated aircraft sources and terrain (Narvik, Grand Canyon datasets). ACRP's later 'blended method' nonetheless chose TNM 3.0 for buildings and AAM for terrain.",
+    "frequency_range_and_scale": "Third-octave 25 Hz - 10 kHz; up to several km.",
+    "niceops_fit": "The Fresnel-zone screen/ground combination is a candidate for per-receiver table generation where a building edge sits on the path. Too costly and too 2-D for the hot loop.",
+    "references": [
+     {
+      "citation": "Plovsing, B. (2006). Nord2000. Comprehensive outdoor sound propagation model. Part 1: Propagation in an atmosphere without significant refraction; Part 2: Propagation in an atmosphere with refraction. DELTA reports AV 1849/00, AV 1851/00 (rev. 2006)",
+      "supports_claim": "Ray-based third-octave model with segment-wise Fresnel-zone ground and screen effects; refraction handling",
+      "url_or_doi": "https://forcetechnology.com/da/-/media/force-technology-media/pdf-files/projects/nord2000/nord2000-comprehensive-outdoor-sound-propagation",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Plovsing, B. (2006). Nord2000. Validation of the propagation model. DELTA report AV 1117/06",
+      "supports_claim": "544 point-to-point validation cases; small average differences, largest for thin screens on flat ground",
+      "url_or_doi": "https://forcetechnology.com/-/media/force-technology-media/pdf-files/projects/nord2000/nord2000-validation-of-the-propagation-model-av-1117-06.pdf",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Thin- and thick-barrier diffraction formulas: Maekawa, Kurze-Anderson, Pierce wedge / three-sided barrier, Hadden-Pierce finite-impedance wedge",
+    "physics_captured": "Maekawa (1968): empirical insertion loss vs Fresnel number N = 2δ/λ, commonly IL ≈ 10 lg(3 + 20N). Kurze-Anderson (1971): analytic fit [unverified] IL = 5 + 20 lg(sqrt(2πN)/tanh sqrt(2πN)). Pierce (1974): asymptotic (geometrical theory of diffraction with Fresnel-integral transition functions) diffraction by a rigid wedge, plus an approximate double-edge expression for a thick three-sided barrier, i.e. a building with flat roof. Hadden and Pierce extended this to wedges whose faces have large but finite impedance. These are the building blocks for rooftop and corner diffraction into canyons and courtyards.",
+    "limitations": "Pierce's paper concludes that Maekawa's equivalent-thin-screen approximation 'may lead to sizeable errors in some instances', notably for thick barriers and double edges. Maekawa and Kurze-Anderson fit point-source data, and line-source curves sit 3-5 dB lower. All are high-frequency asymptotics (kr >> 1). For building-scale geometry (10-50 m) that is satisfied above ~50 Hz, but near shadow boundaries only the Fresnel-integral (uniform) forms are continuous. They ignore ground interaction behind the edge unless combined with image sources (4 paths per edge with ground), and they ignore turbulence scattering, which sets a floor in deep shadow (Wei et al. needed a turbulence term to match high-frequency inner-yard spectra). Wei et al.'s fitted gabled-roof correction: Abar,roof = 0.27·Abar,flat - 2.9 dB, 3.0 dB rms over 1788 FDTD cases.",
+    "cost": "Maekawa/Kurze-Anderson: one log, a few flops. Pierce/Hadden-Pierce: a few Fresnel-integral evaluations per edge per band, ~0.1-1 µs.",
+    "elevated_moving_source_suitability": "Valid for arbitrary source position, including a high source over a roof edge. For a helicopter at grazing elevation over a building row the receiver is in the shadow of one or two edges, which is exactly the regime of these formulas. For a source high above, the canyon receiver is mostly lit and the diffracted term is secondary.",
+    "frequency_range_and_scale": "Broadband to 10 kHz; accuracy degrades below ~100 Hz for small obstacles (N small, 3 dB deviation at N = 0 for the simplified forms per Wei et al.).",
+    "niceops_fit": "Recommended core of a per-receiver table builder. For each receiver and arrival direction (θ, φ) on a coarse sky grid, and each band, compute direct + image + edge-diffracted contributions with the uniform Pierce/Hadden-Pierce forms. Sum energetically (or coherently below ~250 Hz near facades) into a gain table G_r(f, θ, φ). That table drops into the existing band loop as one more per-band multiply. The table must also feed the peak search's bound: the gain is bounded by the largest table entry, analogous to the ground bound.",
+    "references": [
+     {
+      "citation": "Pierce, A.D. (1974). Diffraction of sound around corners and over wide barriers. J. Acoust. Soc. Am. 55, 943-955",
+      "supports_claim": "Rigid-wedge and three-sided thick-barrier diffraction formulas, double-edge approximation; Maekawa's thin-screen approximation can give sizeable errors",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Maekawa, Z. (1968). Noise reduction by screens. Applied Acoustics 1(3), 157-173",
+      "supports_claim": "Empirical Fresnel-number barrier chart; used in sonAIR's barrier module",
+      "verified_by_search": false
+     },
+     {
+      "citation": "Kurze, U.J., Anderson, G.S. (1971). Sound attenuation by barriers. Applied Acoustics 4, 35-53",
+      "supports_claim": "Analytic fit of point-source barrier attenuation vs Fresnel number",
+      "verified_by_search": false
+     },
+     {
+      "citation": "Hadden, W.J., Pierce, A.D. (1981). Sound diffraction around screens and wedges for arbitrary point source locations. J. Acoust. Soc. Am. 69, 1266-1276",
+      "supports_claim": "Wedge diffraction with arbitrary source location and finite-impedance faces",
+      "verified_by_search": false
+     }
+    ]
+   },
+   {
+    "name": "Street-canyon multiple-reflection / reverberation models: Heutschi lookup tables and urban reflections, Bullen-Fricke modal, Davies, Lyon statistical, Kang radiosity, Picaut diffusion equation, Kuttruff",
+    "physics_captured": "Heutschi (1995): look-up tables from many ray-tracing runs give the level increase due to reflections in a long straight street. Inputs are street width, facade height, receiver distance to the lane, and the width and position of gaps; agreement with field measurements was good. Heutschi (2009): coherent-reflection and scattered (Lambert-like) reflection solutions for urban facades. In sonAIR's REFLECT module this is implemented with visibility checks only and energy exchange up to 3rd order. Bullen & Fricke (1976): modal analysis of the street as a waveguide with scattering surfaces, agreeing with scale models. Davies (1978): mixed specular/diffuse multiple reflection. Lyon (1974): statistical urban acoustics, with discrepancies between theory and experiment for single streets but good agreement 'for sources above the street'; aircraft noise 'slightly amplified' in urban areas by channeling. Kang (2000): diffuse (radiosity) and specular (image) walls give considerably different fields; specular gives weaker along-street decay and longer RT30. Picaut et al.: a diffusion equation for energy density in long enclosures and streets, with analytic attenuation and reverberation.",
+    "limitations": "Almost all are formulated for sources IN the street (traffic). Lyon is the exception: he treats sources above the street, and finds agreement and a small channeling gain. The specular/diffuse choice changes results by several dB (one particle-tracing study: -2 to +4 dB from diffuse reflection). Heutschi 1995 tables are for long straight streets only. Diffusion and radiosity models need a diffuse-field assumption that fails for the first-order, strongly directional arrivals that dominate under an elevated source.",
+    "cost": "Table lookups (Heutschi) cost nanoseconds. A 2-D infinite image series for a long canyon is closed-form, microseconds. Radiosity and diffusion solves take seconds per geometry, but run only once per receiver geometry.",
+    "elevated_moving_source_suitability": "For an elevated source, sound enters the canyon through its open top. When the receiver sees the sky in the source direction, the field is direct plus a few facade images, and the number of images grows as the elevation angle falls and with canyon H/W. When it does not, the field is rooftop diffraction plus multiple reflections (Wei Acan) plus turbulence scattering. Reverberant tails matter for LAmax/SEL only in the shielded case. sonAIR measurements and simulations put reflection gains at +3-4 dB near facades facing the source, larger in otherwise shielded spots. Lyon's channeling gain for aircraft is 'slight'.",
+    "frequency_range_and_scale": "Ray/image methods above ~100-200 Hz. Low-frequency canyon resonances (standing waves between facades, e.g. ~10-20 Hz for 10-20 m spacing, and their harmonics) need a modal or full-wave treatment. The arXiv paper on the open roof treats low frequencies specifically.",
+    "niceops_fit": "For per-receiver tables in a canyon: model the canyon as two parallel reflecting planes plus the ground (2-D image lattice; closed form for a plane-wave arrival from direction (θ, φ)), with Heutschi's coherent/scattered split for facade roughness. Truncate the image order by the open-top escape condition. This captures the dominant elevated-source physics at microsecond cost per table entry.",
+    "references": [
+     {
+      "citation": "Heutschi, K. (1995). A simple method to evaluate the increase of traffic noise emission level due to buildings, for a long straight street. Applied Acoustics 44(3), 259-274",
+      "supports_claim": "Ray-tracing-derived lookup tables for the level increase in street canyons; inputs W, H, receiver distance, gaps; good agreement with measurements",
+      "url_or_doi": "https://trid.trb.org/View/425170",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Heutschi, K. (2009). Calculation of reflections in an urban environment. Acta Acustica united with Acustica 95(4)",
+      "supports_claim": "Coherent and scattering reflection solutions; basis of sonAIR REFLECT module",
+      "url_or_doi": "https://www.research-collection.ethz.ch/entities/journal/8d0b3f9f-2b3f-4eb5-8aa5-4697d28d5d25",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Bullen, R., Fricke, F. (1976). Sound propagation in a street. J. Sound Vib. 46, 33-42",
+      "supports_claim": "Modal analysis of street propagation with scattering surfaces",
+      "url_or_doi": "https://trid.trb.org/View/46533",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Davies, H.G. (1978). Multiple-reflection diffuse-scattering model for noise propagation in streets. J. Acoust. Soc. Am. 64(2), 517-521",
+      "supports_claim": "Mixed specular/diffuse multiple-reflection street model",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Lyon, R.H. (1974). Role of multiple reflections and reverberation in urban noise propagation. J. Acoust. Soc. Am. 55(3), 493-503",
+      "supports_claim": "Good agreement for sources above the street; aircraft noise slightly amplified in urban areas by channeling; 10-15 dB unexplained shielding factor for background noise",
+      "url_or_doi": "https://trid.trb.org/View/138963",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Kang, J. (2000). Sound propagation in street canyons: Comparison between diffusely and geometrically reflecting boundaries. J. Acoust. Soc. Am. 107, 1394-1404",
+      "supports_claim": "Considerable differences between diffuse and specular boundary fields (attenuation along street, RT30)",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Picaut, J., Simon, L., Polack, J.-D. (1998). Sound field in long enclosures with diffusely reflecting boundaries (diffusion-equation model)",
+      "supports_claim": "Diffusion-equation prediction of attenuation and reverberation in long enclosures/streets",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Canyon-to-canyon shielding engineering model (Wei, Botteldooren, Van Renterghem, Hornikx, Forssén, Salomons, Ögren 2014) and per-canyon excess attenuation (Schiff, Hornikx, Forssén 2010)",
+    "physics_captured": "Lpdb = LW - Afree - Adiffr - Ainter, where Adiffr = max-like combination of Abar (a direct diffraction path with an improved Fresnel-integral barrier formula in place of ISO 9613-2) and Acan, the multiple-reflection term for source and receiver canyons. Acan is fitted to 20,740 FDTD runs with facade reflection ρ = 0.97, H/W, roughness and roof shape (2.7 dB s.d.). Gabled roof: -5 dB with two canyons, -2.5 dB with one. Ainter: about 1 dB per 100 m of intermediate canyons, capped at 5 dB. A turbulence-scattering contribution is added energetically. Schiff et al.: each intermediate open canyon adds -1 to -4 dB wideband excess attenuation, fairly flat with frequency.",
+    "limitations": "Source near the ground in a source canyon; 2.5-D with facades twisted; still atmosphere apart from the Ainter heuristic. For an aircraft there is no 'source canyon', and the relevant part is the receiver-canyon half of Acan. Validated on Lday at 9 Ghent facades: END maps underestimated a shielded yard by more than 14 dBA, and the model strongly improved shielded positions. It improved low frequencies, while high frequencies needed the turbulence term.",
+    "cost": "Closed-form algebra per path: nanoseconds to sub-microsecond.",
+    "elevated_moving_source_suitability": "Partial. The receiver-canyon multiple-reflection and roof-shape corrections and the turbulence floor are exactly what an aircraft source grazing over rooftops into a courtyard needs. The fit's source-height range does not cover high sources, so it would need refitting against NICEOPS's own PE/FDTD with an elevated source.",
+    "frequency_range_and_scale": "Octave/third-octave ~63 Hz - 4 kHz; city blocks.",
+    "niceops_fit": "A strong template for a cheap shielded-receiver correction. Refit Acan for plane-wave incidence from above at elevation angle β (the far-field elevated-source limit), using the existing CN-PE (2-D cross-canyon) or a 2-D FDTD as the reference. Store it as a function of (β, H/W, f) and fold it into the reciprocity table.",
+    "references": [
+     {
+      "citation": "Wei, W., Botteldooren, D., Van Renterghem, T., Hornikx, M., Forssén, J., Salomons, E., Ögren, M. (2014). Urban background noise mapping: the general model. Acta Acustica united with Acustica 100(6), 1098-1111",
+      "supports_claim": "Acan fit (20,740 FDTD runs, 2.7 dB s.d.); ISO diffraction underestimates rooftop attenuation; END map underestimates shielded yard by >14 dBA; Ainter 1 dB/100 m up to 5 dB; turbulence term needed at high frequency",
+      "url_or_doi": "https://doi.org/10.3813/AAA.918789",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Schiff, M.T., Hornikx, M., Forssén, J. (2010). Excess attenuation for sound propagation over an urban canyon. Applied Acoustics 71(6), 510-517",
+      "supports_claim": "-1 to -4 dB wideband excess attenuation per intermediate canyon (PE + equivalent sources), fairly frequency-independent",
+      "url_or_doi": "https://doi.org/10.1016/j.apacoust.2010.01.005",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Salomons, E., Polinder, H., Lohman, W., Zhou, H., Borst, H., Miedema, H. (2009). Engineering modeling of traffic noise in shielded areas in cities. J. Acoust. Soc. Am. (author list per query, not fully confirmed in results)",
+      "supports_claim": "BEM canyon-to-canyon calculations distilled into an engineering multiple-reflection algorithm; large differences for shielded buildings in Amsterdam",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Aircraft-noise practice: ECAC Doc 29 / ICAO Doc 9911, SAE AIR5662 lateral attenuation, SAE AIR6501 line-of-sight blockage, FAA AEDT and the ACRP 02-79 blended building method, Empa sonAIR/sonX",
+    "physics_captured": "Doc 29 and AEDT: NPD-based segment integration with a lateral attenuation term (SAE AIR5662, an empirical ground-plus-installation effect over soft ground) and no buildings. Ramseier et al. 2023: 'currently, neither shielding from buildings nor reflections ... are included'. AEDT terrain: line-of-sight blockage per SAE AIR6501. ACRP 02-79 (Blue Ridge Research, Volpe, Cross-Spectrum) evaluated ISO 9613-2, Nord2000, TNM, AAM/NoiseMap and a barrier reflection tool on a benchmark (sources 1.5-800 m high, 25-2000 m from the facade; buildings 8-64 m) and on legacy datasets, including an NYC urban helicopter dataset. It recommended a 'blended method': TNM 3.0 (modified) computes third-octave building gain/loss grids once per unique trajectory, and AEDT adds them to its output. sonAIR: per-time-step spectral simulation with Doppler and flight effect. Its sonX propagation has a BASIC module (Maekawa barriers, spherical-wave ground, ISO 9613-1), REFLECT (Heutschi 2009 scattering, visibility only, up to 3rd order), FOREST and METEO.",
+    "limitations": "SAE AIR5662 explicitly excludes helicopter sound, ground with many large structures, hard surfaces (ice, water, compacted soil) and undulating terrain. ACRP measured validation at LAX/LGB (566 SEL events, one- to ten-storey buildings): AEDT alone gave -1.9 ± 4.8 dB, AEDT+TNM +0.9 ± 3.9 dB, AEDT+ISO +0.1 ± 4.4 dB. In the shielded-departure group AEDT alone was -5.8 ± 4.6 dB and TNM over-corrected to +2.0 ± 5.0 dB. Reflection-group biases were already small (+0.3/+0.6 dB). The 3.9-5 dB scatter is the realistic floor for engineering building corrections against field SEL. Doc 29 4th edition's own text on buildings was not retrieved this session.",
+    "cost": "ACRP: one-time TNM gain/loss library per trajectory, applied as a grid add, so it is cheap at run time. sonAIR (Meiringen, i7, 32 GB): a few minutes per flight with BASIC with or without building shielding, +10-20 min with building reflections, ~2 h with FOREST. Schalcher et al. 2025 (Geneva): buildings improve local estimates via shielding but add 'substantial computational effort', 'impractical for large-scale noise mapping'.",
+    "elevated_moving_source_suitability": "These are the only methods actually built for elevated moving sources. The consistent finding is geometric. Schlatter et al. 2018 (Zurich, three departures): buildings have a minor effect for direct fly-overs. At grazing incidence barrier effects 'substantially reduce' exposure, and reflections add relevant gains mainly at already-shielded receivers. Ramseier 2023: building shielding gives large-area reductions of more than 2 dB and up to 12 dB on facades facing away from the runway. Reflections add up to 3-4 dB locally on facades facing the runway. Effects are negligible under air routes away from the airfield. ACRP: reflection gains up to 3 dB near a facade, decaying rapidly with distance. Shielding is larger and decays more slowly; the region of influence is defined by a <0.5 dBA shielding effect, driven by arrivals below 152 m AGL.",
+    "frequency_range_and_scale": "Third-octave 50 Hz - 10 kHz (TNM, sonAIR). Airport-scale grids, with building effects localized to the built area.",
+    "niceops_fit": "The ACRP blended method is the same architecture as NICEOPS's roadmap 'per-receiver urban reciprocity tables', so precedent exists. NICEOPS can do better than a per-trajectory TNM grid: a per-receiver, per-direction, per-band gain table is independent of trajectory and is reused across all ~6500 states and every track. Helicopters operate at the low elevation angles (approach and departure at 30-300 m, urban heliports) where the Empa and ACRP results say buildings matter most. An NYC urban helicopter dataset exists in the ACRP legacy data and is a candidate validation set.",
+    "references": [
+     {
+      "citation": "National Academies of Sciences, Engineering, and Medicine (2019). Improving AEDT Modeling for Aircraft Noise Reflection and Diffraction from Terrain and Manmade Structures. ACRP Web-Only Document 43 (Project 02-79)",
+      "supports_claim": "Reflection gains up to 3 dB near facades, decreasing rapidly; shielding larger and slower to diminish; building effects localized; TNM-based blended gain/loss grids for AEDT",
+      "url_or_doi": "https://doi.org/10.17226/26897",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Downing, J.M., Calton, M.F., Page, J.A., Rochat, J.L. ACRP 02-79 presentation: Effects of Terrain and Manmade Structures on Aircraft Noise Prediction",
+      "supports_claim": "Benchmark matrix; 566 measured SEL events; offset table (AEDT vs +TNM vs +ISO 9613-2); blended-method extent (<0.5 dBA, 152 m AGL, 2621 m/2200 m); NYC urban helicopter legacy dataset",
+      "url_or_doi": "https://rosap.ntl.bts.gov/view/dot/57382/dot_57382_DS1.pdf",
+      "verified_by_search": true
+     },
+     {
+      "citation": "SAE AIR5662 (2006; reaffirmed 2025). Method for Predicting Lateral Attenuation of Airplane Noise",
+      "supports_claim": "Lateral attenuation method; excludes helicopters, ground with many large structures, hard surfaces, undulating terrain; soft ground; mics at 1.2 m",
+      "url_or_doi": "https://saemobilus.sae.org/content/AIR5662",
+      "verified_by_search": true
+     },
+     {
+      "citation": "SAE AIR6501. Method for Modeling Line-of-Sight Blockage of Aircraft Noise",
+      "supports_claim": "Terrain shielding of aircraft noise used for AEDT terrain line-of-sight blockage",
+      "url_or_doi": "https://saemobilus.sae.org/content/AIR6501",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Ramseier, T., Schalcher, S., Wunderli, J.M., Schäffer, B. (2023). Influence of buildings, forests and cliffs on aircraft noise exposure mapping - a case study. Forum Acusticum 2023, Turin. DOI 10.61782/fa.2023.0587",
+      "supports_claim": "Building shielding >2 dB large-scale and up to 12 dB on averted facades; reflections up to 3-4 dB locally; run-time costs of sonX modules; buildings currently excluded from aircraft noise mapping",
+      "url_or_doi": "https://dael.euracoustics.org/confs/fa2023/data/articles/000587.pdf",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Schlatter, F., Köpfli, M., Wunderli, J.M. (2018). Relevance of buildings in aircraft noise predictions. Proc. Inter-Noise 2018, vol. 258, 3042-3051",
+      "supports_claim": "Minor building effect for direct fly-overs; substantial barrier reduction at grazing incidence; reflections matter mostly at shielded receivers",
+      "url_or_doi": "https://ince.publisher.ingentaconnect.com/content/ince/incecp/2018/00000258/00000004/art00007",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Schalcher, S., et al. (Empa / n-Sphere) (2025). Sensitivity of aircraft noise calculations to ground cover, buildings and meteorology (Geneva). Acta Acustica",
+      "supports_claim": "Buildings improve local estimates through shielding but add substantial computational effort; impractical for large-scale mapping",
+      "url_or_doi": "https://doi.org/10.1051/aacus/2025035",
+      "verified_by_search": true
+     },
+     {
+      "citation": "ECAC Doc 29, Report on Standard Method of Computing Noise Contours around Civil Airports, 4th ed. (2016)",
+      "supports_claim": "Standard aircraft contour method (no building effects); its text was not checked this session",
+      "verified_by_search": false
+     }
+    ]
+   },
+   {
+    "name": "Measured aircraft noise in courtyards / street canyons (Lugten et al., Schiphol container field lab)",
+    "physics_captured": "A full-scale field lab of shipping containers forming three courtyards, with ten microphones, aircraft positions from radar and meteorological data. It measures the shielded-vs-exposed facade difference and the effect of facade shape for real overflights.",
+    "limitations": "Fixed-wing jets, one site, container geometry. This is measurement, not a model, but it gives the target numbers an urban model must reproduce.",
+    "cost": "N/A (measurement).",
+    "elevated_moving_source_suitability": "Directly relevant: aircraft overflights at a mean elevation angle of about 37 degrees. Position-to-position ranges were 8-9 dB(A) in a straight-facade courtyard and up to 14 dB(A) with a slanted facade and building inset, with up to 14.6 dB(A) between shielded and unshielded sides. A follow-up (Wuite et al. 2025) uses this to expect courtyard ASEL shielding of 8.1-11.6 dB(A). Slanted or overhanging roofs lower the levels compared with vertical flat facades.",
+    "frequency_range_and_scale": "A-weighted SEL/LAmax; courtyard scale ~10-30 m.",
+    "niceops_fit": "A validation target for NICEOPS urban tables: courtyard shielding of ~8-15 dB(A) at moderate elevation angles, which straight-ray-plus-ground cannot produce.",
+    "references": [
+     {
+      "citation": "Lugten, M. (2022). Assessing the influence of street canyon shape on aircraft noise: results from measurements in courtyards near Amsterdam Schiphol Airport. Proc. Inter-Noise 2022, 6474-6485",
+      "supports_claim": "8/9 dB(A) range in straight-facade courtyard; up to 14 dB(A) with slanted facade and inset",
+      "url_or_doi": "https://doi.org/10.3397/IN_2022_0976",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Lugten, M., Wuite, F.G.E., Peng, Z., Tenpierik, M. (2024). Assessing the influence of street canyon shape on aircraft noise ... Building and Environment 255, 111400",
+      "supports_claim": "Journal version of the Schiphol courtyard measurements",
+      "url_or_doi": "https://doi.org/10.1016/j.buildenv.2024.111400",
+      "verified_by_search": true
+     }
+    ]
+   }
+  ],
+  "key_quantitative_findings": [
+   "The aircraft-noise community's consensus (verified this session) is geometric. Buildings have a minor effect under direct overflight but a large one at grazing incidence (Schlatter et al., Inter-Noise 2018, Zurich departures, sonAIR). Building shielding gives >2 dB large-area reductions and up to 12 dB on facades facing away from the runway; reflections add up to 3-4 dB locally on facing facades (Ramseier et al., FA2023, Meiringen).",
+   "ACRP 02-79 / ACRP WOD 43 (2019): reflection gains up to 3 dB near a facade, decaying rapidly with distance; shielding is larger and diminishes more slowly. The blended-method region of influence is set by a <0.5 dBA shielding effect, driven by arrivals below 152 m AGL (2621 m along the extended centerline, 2200 m lateral).",
+   "ACRP 02-79 measured SEL, 566 events at LAX/LGB/El Segundo: Measured minus AEDT = -1.9 ± 4.8 dB (all ops). With the TNM building offset +0.9 ± 3.9 dB; with the ISO 9613-2 offset +0.1 ± 4.4 dB. Departures at shielded sites went from -5.8 ± 4.6 dB to +2.0 ± 5.0 dB (TNM) and +2.1 ± 5.2 dB (ISO): the engineering building corrections over-correct and leave ~4-5 dB scatter.",
+   "Schiphol courtyard field lab (Lugten 2022/2024): 8-9 dB(A) position spread in a straight-facade courtyard, up to 14 dB(A) with a slanted facade and inset, and up to 14.6 dB(A) shielded vs unshielded. 8.1-11.6 dB(A) courtyard ASEL shielding is expected for flights at a ~37 degree mean elevation angle.",
+   "Wei et al. 2014: END/CNOSSOS-type maps underestimated an enclosed inner yard by more than 14 dBA. The fitted canyon multiple-reflection term Acan reproduces 20,740 FDTD runs to 2.7 dB s.d., and the gabled-roof barrier fit has 3.0 dB rms over 1788 runs. Gabled roof: -5 dB (two canyons), -2.5 dB (one). Intermediate canyons: ~1 dB per 100 m, capped at 5 dB. The ISO 9613-2 diffraction formula underestimates rooftop attenuation considerably. A turbulence-scattering term is required to match high-frequency levels in shielded yards.",
+   "Schiff, Hornikx & Forssén 2010: each intermediate urban canyon adds -1 to -4 dB wideband excess attenuation, fairly constant with frequency (PE + equivalent sources).",
+   "Kok (ICA 2019, RIVM-led EU working group): CNOSSOS-EU's ground attenuation is 'fundamentally incorrect for a high source and low receiver', with no fix found. Multiple diffraction under favourable conditions can give much less attenuation than single diffraction, even 0 dB.",
+   "ISO 9613-2:2024 changed Dz (Formula 18) to remove a residual ~5 dB barrier effect at large distance with low barriers, and changed Kmet (Formula 21). Both are criticized at FA2026.",
+   "Line-source barrier attenuation is 3-5 dB below Maekawa's point-source chart (scale-model data). Pierce 1974: Maekawa's equivalent thin screen can give sizeable errors for wide (thick) barriers.",
+   "sonAIR run times (Intel i7, 32 GB): a few minutes per flight for propagation with building shielding, +10-20 min with 3rd-order building reflections (visibility-only, no diffraction), ~2 h with forest reflections. Empa (Acta Acustica 2025) judges building effects impractical for large-scale aircraft mapping. NICEOPS avoids this cost by precomputing per-receiver direction tables once.",
+   "Lyon 1974: for sources above the street, field, laboratory and theory agree well, and aircraft noise is 'slightly amplified' in urban areas by channeling. This is the only classical canyon work found that treats elevated sources.",
+   "Near-facade coherence: the energy-doubling (+3 dB) assumption holds only above ~200 Hz for a microphone 2 m from a facade (Salford review). Within 20 cm of a wall Wei et al. subtract 3 dB, reflecting coherent pressure doubling (+6 dB) at low frequency. Specular vs diffuse facades change canyon levels by roughly -2 to +4 dB (particle-tracing study) and change RT30 and along-street decay considerably (Kang 2000).",
+   "SAE AIR5662 explicitly does not apply to helicopter sound or to ground with many large structures. No aircraft-noise standard (Doc 29, AEDT, AIR5662) models buildings today. AEDT handles only terrain line-of-sight blockage (SAE AIR6501), and ACRP 02-79 proposes building gain/loss grids as an add-on."
+  ],
+  "open_questions": [
+   "What is a per-receiver urban gain table's validity for a source that is not in the far field of the canyon? A plane-wave (direction-only) table is exact as range/H tends to infinity. At 30-100 m altitude above 20-30 m buildings the arrival is spherical, and image and diffracted paths depend on range too. Is a (θ, φ, r) table needed, or a (θ, φ) table with a 1/r image correction?",
+   "Should facade reflections combine coherently or energetically in third-octave bands? The SEL loop is band-energetic. Near facades (<2 m) and below ~250 Hz the coherent direct-plus-image interference is several dB, and Doppler differences between paths from a moving source decorrelate them over a flyover. This needs testing against the CN-PE or an FDTD with a moving source.",
+   "Can Wei et al.'s Acan be refitted for plane-wave incidence from elevation angle β (aircraft) rather than a ground source in a source canyon? The existing 2-D CN-PE could serve as the reference for the cross-canyon section, but not for 3-D courtyards (it would need a 3-D FDTD/PSTD or BEM).",
+   "How should the urban table interact with the peak-search bound and the db_cutoff? Reflections add gain (up to +3-6 dB), so a max-over-directions gain per receiver has to enter the bound, as the ground term's +6 dB already does. Shielding is a loss and can be ignored in the bound.",
+   "Validation data: ACRP 02-79's legacy 'NYC Urban Helicopter' dataset and the LAX/LGB airport measurements (566 SEL events) are the only aircraft/building measurements found with model comparisons. Is the NYC helicopter data obtainable? The Schiphol container courtyards give fixed-wing data at ~37 degree elevation.",
+   "Turbulence scattering into shielded courtyards sets the high-frequency floor (Wei et al.). NICEOPS already has a ShadowScattering fit for refractive shadows, so can a similar gamma_t-scaled term be fitted for building shadows?",
+   "For the inverse problem (de-propagating flight-test data into source spheres), how large are building and facade effects at typical test microphones (1.2 m poles, flush plates near hangars or houses)? sonAIR found a concrete-ground reflection feature near 3.5 kHz in hangar-roof helicopter measurements; facade images within ~10-20 m of a mic would contaminate directivity at low elevation angles.",
+   "Searches were exhausted before these could be retrieved: Nord2000's own urban/multiple-reflection validation statistics; ONERA's (Malbequi) assessment of road-noise ray codes on corner and canyon test cases for UAM; Harmonoise vs reference accuracy numbers; and the exact Hadden-Pierce and Kurze-Anderson expressions. They are worth a follow-up pass."
+  ]
+ },
+ "verdict": {
+  "family": "Engineering, standardized and semi-analytical urban propagation and shielding models (CNOSSOS-EU, Harmonoise, Nord2000, ISO 9613-2, barrier diffraction, canyon reflection models, NoiseModelling, aircraft-noise practice: Doc 29, AEDT/ACRP 02-79, sonAIR). Review note: the shared WebSearch budget was already used up when this review started (every search was refused), so all checks here come from direct fetches of known URLs and DOIs, PDFs converted to text, and Crossref DOI metadata. Abstracts behind paywalls (Elsevier, Ingenta, EDP) were not reachable, so several numbers stay unverifiable.",
+  "checked": [
+   {
+    "item": "Kok, A. (2019). Flaws in the Cnossos calculation method and proposed solutions, ICA 2019 Aachen. Claims: multiple diffraction under favourable conditions can give much less attenuation than a single diffraction, even 0; Rayleigh criterion undefined; ground attenuation 'fundamentally incorrect for a high source and low receiver', no solution found",
+    "status": "confirmed",
+    "correction": "All three quotes appear verbatim in the abstract (RIVM, Kok sole author). Context matters: the 'high source' is an industrial source, from NMPB never being meant for industrial noise. It is not an aircraft finding, though the implication carries over."
+   },
+   {
+    "item": "ACRP 02-79 presentation (Downing, Calton, Page, Rochat): benchmark source heights 1.5-800 m, distances 25-2000 m, buildings 8-64 m; ISO 9613-2 run in CadnaA up to 800 m; NYC Urban Helicopter legacy dataset",
+    "status": "confirmed",
+    "correction": "The benchmark table lists source heights 1.5/12.5/50/100/400/800 m and distances 25/100/400/2000 m. Slides 8-10 show CadnaA ISO 9613-2 at 800 m. Slide 17 lists 'NYC Urban Helicopter' under the manmade-structure datasets."
+   },
+   {
+    "item": "ACRP 02-79: 566 SEL events; Measured-AEDT all ops -1.9±4.8, +TNM 0.9±3.9, +ISO 0.1±4.4; shielded departures -5.8±4.6 -> +2.0±5.0 (TNM), +2.1±5.2 (ISO); reflection groups +0.3/+0.6",
+    "status": "confirmed",
+    "correction": "Every number matches slide 27 exactly. The sites were one-storey houses (El Segundo), a four-storey apartment block (Playa del Oro) and 2-10 storey buildings (hotel district), at LGB, El Segundo, Kittyhawk and Playa del Oro."
+   },
+   {
+    "item": "ACRP blended method: TNM 3.0 (modified) third-octave gain/loss grids per unique trajectory; region of influence <0.5 dBA shielding, 152 m AGL, 2621 m along the centerline, 2200 m lateral",
+    "status": "confirmed",
+    "correction": "Slides 30-35 confirm it, with a 1000 ft linear transition region. The 'reflection gains up to 3 dB near facade' figure is not in the slides and was not checked against WOD 43."
+   },
+   {
+    "item": "Ramseier et al. (2023) FA2023: building shielding >2 dB large-scale and up to 12 dB on averted facades; reflections up to 3-4 dB; buildings not in current mapping; sonX run times (minutes; +10-20 min reflections; ~2 h forest; i7 / 32 GB); REFLECT = Heutschi 2009 scattering, visibility only, up to 3rd order; BASIC = Maekawa barriers",
+    "status": "confirmed",
+    "correction": "All confirmed verbatim. Caveats the findings omit: the case is an F/A-18 jet fighter at the Meiringen military airbase, in a steep alpine valley. The metric is the annual rating level Lr, not single-event SEL. The paper recommends against including these effects in standard mapping, and sonAIR's band range is 25 Hz-5 kHz."
+   },
+   {
+    "item": "Wei et al. (2014). Urban background noise mapping: the general model. Acta Acustica 100(6), 1098-1111",
+    "status": "confirmed",
+    "correction": "The paper exists, with the listed authors and Ghent validation at 9 facades, 3 in inner yards. The specific numbers (20,740 FDTD runs, 2.7 dB s.d., >14 dBA underestimate, 1788 runs at 3.0 dB, Ainter 1 dB/100 m capped at 5, the claim that ISO diffraction underestimates rooftop attenuation, the turbulence term) are NOT in the abstract and could not be checked."
+   },
+   {
+    "item": "Wei et al. 2014 quantitative details (Acan 20,740 FDTD / 2.7 dB; gabled roof -5/-2.5 dB; Abar,roof = 0.27*Abar,flat - 2.9; END underestimate >14 dBA)",
+    "status": "unverifiable"
+   },
+   {
+    "item": "Schiff, Hornikx, Forssén (2010). Excess attenuation for sound propagation over an urban canyon. Applied Acoustics 71(6), 510-517",
+    "status": "confirmed",
+    "correction": "Crossref confirms the bibliographic details. The '-1 to -4 dB per canyon, fairly frequency-independent' figure could not be checked (paywall)."
+   },
+   {
+    "item": "Hadden, W.J., Pierce, A.D. (1981). Sound diffraction around screens and wedges for arbitrary point source locations. JASA 69(5), 1266-1276 (marked verified_by_search=false)",
+    "status": "confirmed",
+    "correction": "Crossref (10.1121/1.385809) confirms it. However, the claim attached to it ('finite-impedance faces') is probably misattributed. As I recall, the finite-impedance wedge is Pierce & Hadden (1978), 'Plane wave diffraction by a wedge with finite impedance', JASA 63, 17-27; the 1981 paper is the arbitrary-point-source (rigid) extension. I could not verify this by search."
+   },
+   {
+    "item": "Pierce, A.D. (1974). Diffraction of sound around corners and over wide barriers. JASA 55, 943-955",
+    "status": "corrected",
+    "correction": "The pages are 941-955, JASA 55(5) (Crossref 10.1121/1.1914668)."
+   },
+   {
+    "item": "Maekawa, Z. (1968). Noise reduction by screens. Applied Acoustics 1(3), 157-173 (verified_by_search=false); used in sonAIR's barrier module",
+    "status": "confirmed",
+    "correction": "Ramseier et al. 2023 cite it with exactly these details as the basis of sonX BASIC's barrier effect."
+   },
+   {
+    "item": "Kurze, U.J., Anderson, G.S. (1971). Sound attenuation by barriers. Applied Acoustics 4, 35-53; IL = 5 + 20 lg(sqrt(2πN)/tanh sqrt(2πN))",
+    "status": "unverifiable",
+    "correction": "Could not be fetched (search budget exhausted, DOI guess 404). The citation and formula match the standard, widely reproduced form from background knowledge, but this review did not verify them."
+   },
+   {
+    "item": "ECAC Doc 29, 4th ed. (2016) (verified_by_search=false)",
+    "status": "confirmed",
+    "correction": "Its existence is confirmed: Ramseier 2023 cites 'ECAC Doc.29 ... Volume 1: Applications Guide, 4th ed., 2016'. That Doc 29 has no building effects is supported indirectly by Ramseier ('currently neither shielding from buildings nor reflections ... are included'); the Doc 29 text itself was not read."
+   },
+   {
+    "item": "Euracoustics FA2026 paper 643: ISO 9613-2:2024 Formula 18 (Dz) and Formula 21 (Kmet) raise 'serious concerns'; the Dz change removes a residual 5 dB Abar at large distances with low barriers",
+    "status": "confirmed",
+    "correction": "Confirmed verbatim. The author is Wolfgang Probst (DataKustik, convener of ISO/TC43/SC1 WG 56 and 61). The paper counts about fifteen significant changes in the 2024 revision, and the Kmet change came from road/rail practice."
+   },
+   {
+    "item": "Forum Acusticum 2025 paper 609: drone toolchain with NoiseModelling over Madrid, DJI Matrice 600",
+    "status": "confirmed",
+    "correction": "Confirmed. The authors are LeGriffon, Ruaud (ONERA), Kuljanin and Ganic. The study area is 10 km² of Madrid, with parcel delivery from five distribution centres."
+   },
+   {
+    "item": "Lyon, R.H. (1974). Role of multiple reflections and reverberation in urban noise propagation. JASA 55(3), 493-503: good agreement for sources above the street; aircraft noise slightly amplified by channeling; 10-15 dB shielding factor",
+    "status": "confirmed",
+    "correction": "All three points are in the abstract (TRID)."
+   },
+   {
+    "item": "Heutschi, K. (1995). Applied Acoustics 44(3), 259-274: ray-tracing lookup tables; inputs W, H, receiver distance, gaps; good agreement",
+    "status": "confirmed"
+   },
+   {
+    "item": "Kang, J. (2000). JASA 107, 1394-1404",
+    "status": "confirmed",
+    "correction": "Crossref confirms it, issue 3."
+   },
+   {
+    "item": "Salomons et al. (2009). Engineering modeling of traffic noise in shielded areas in cities (author list 'not fully confirmed')",
+    "status": "confirmed",
+    "correction": "The full author list is confirmed: Salomons, Polinder, Lohman, Zhou, Borst, Miedema. JASA 126(5), 2340-2349 (Crossref 10.1121/1.3238238)."
+   },
+   {
+    "item": "Lugten et al. (2024), Building and Environment 255, 111400, and Lugten (2022), Inter-Noise: 8-9 dB(A) straight-facade range, up to 14 dB(A) slanted/inset, 14.6 dB(A) shielded vs unshielded, ~37 degree mean elevation, 8.1-11.6 dB(A) expected (Wuite 2025)",
+    "status": "unverifiable",
+    "correction": "Both DOIs resolve (Elsevier pii S0360132324002427; Ingenta IN_2022_0976), so the papers exist. The landing pages returned 403, so none of the numbers could be checked."
+   },
+   {
+    "item": "Schalcher et al. (2025), Acta Acustica, doi 10.1051/aacus/2025035: buildings add substantial computational effort and are impractical for large-scale mapping",
+    "status": "unverifiable",
+    "correction": "The DOI resolves to Acta Acustica, but the page returned 403. Ramseier 2023 independently makes the same 'hardly possible for large-scale mapping' point."
+   },
+   {
+    "item": "ISO 9613-2 stated accuracy ±3 dB up to 30 m mean height and 1 km; Dz capped at 20 dB single / 25 dB double",
+    "status": "unverifiable",
+    "correction": "Not checked by search. Background knowledge agrees: Table 5 gives ±1 dB at <100 m and ±3 dB at 100 m-1 km for heights 5-30 m, and ±3 dB at both ranges for 0-5 m."
+   }
+  ],
+  "overstated_or_wrong_claims": [
+   "sonAIR's frequency range is given as 'Third-octave 50 Hz - 10 kHz (TNM, sonAIR)'. Ramseier et al. 2023 state that sonAIR covers 25 Hz to 5 kHz. That falls short of the 10 kHz NICEOPS wants, which matters if sonAIR is a reference.",
+   "The Ramseier 2023 numbers (shielding >2 dB large-area and up to 12 dB; reflections 3-4 dB) are presented as general aircraft-noise practice. They come from one military-jet (F/A-18) case at an alpine-valley airbase, in the annual rating level Lr. The paper explicitly recommends NOT including buildings in standard noise mapping, and calls the reflection effect 'rather weak' there because the buildings are low and sparse.",
+   "Kok's 'fundamentally incorrect for a high source and low receiver' is used as if it addressed elevated aircraft sources. In the paper it concerns industrial sources (NMPB was never meant for industrial noise). The inference to aircraft is reasonable but is the reviewer's extrapolation.",
+   "The Hadden-Pierce 1981 paper is credited with finite-impedance wedge faces. That extension appears to be Pierce & Hadden 1978 (JASA 63, 17-27, plane-wave diffraction by a finite-impedance wedge); the 1981 paper is the arbitrary-point-source extension. This attribution is likely wrong, though not verified by search this session.",
+   "Pierce 1974's page range is given as 943-955; the correct range is 941-955.",
+   "Every detailed Wei et al. 2014 figure is presented as 'verified this session' in the key findings: 20,740 FDTD runs at 2.7 dB s.d., 1788 runs at 3.0 dB, the gabled-roof -5/-2.5 dB, Ainter 1 dB per 100 m capped at 5 dB, the >14 dBA END underestimate, and the claim that ISO diffraction underestimates rooftop attenuation. None of them appears in the abstract, and I could not confirm them. Treat them as unverified until the full text is checked.",
+   "ACRP's 'reflection gains up to 3 dB near a facade' is attributed to the presentation in one reference list. The slides do not contain it; it would have to come from WOD 43 itself.",
+   "The ISO 9613-2 entry says the ISO building offset 'removed the mean bias'. That holds for all operations together (0.1 dB), but for shielded arrivals the ISO offset made the bias worse (-0.9 -> -1.8 dB) and widened the scatter (3.5 -> 5.3 dB s.d.). The picture is mixed rather than a clean improvement.",
+   "Lyon 1974 is called 'the only classical canyon work found that treats elevated sources'. That is an artefact of the search, not a property of the literature: the open-roof/top-of-canyon coupling literature (e.g. Hornikx & Forssén, Van Renterghem) treats sound arriving from above the canyon, albeit for ground sources in a neighbouring canyon.",
+   "For Kurze-Anderson IL = 5 + 20 lg(sqrt(2πN)/tanh sqrt(2πN)), Maekawa 10 lg(3+20N), and the ISO 9613-2 caps (20/25 dB) and accuracy table: these are standard forms and plausibly right, but none was verified this session (marked [unverified] in the original, correctly)."
+  ],
+  "important_omissions": [
+   "Exact and uniform edge-diffraction theory for table building: the Biot-Tolstoy-Medwin exact time-domain edge diffraction (Medwin 1981; Svensson, Fred & Vanderkooy 1999, discrete BTM with secondary sources) and Kouyoumjian-Pathak UTD. These are the standard accurate engines for finite-edge, multiple-edge rooftop and corner diffraction, more appropriate than Maekawa/Kurze-Anderson for a per-receiver reciprocity table.",
+   "Pierce & Hadden (1978) plane-wave diffraction by a finite-impedance wedge (JASA 63, 17-27). It is the actual finite-impedance reference, and a plane-wave (far-field, direction-only) formulation is exactly what a direction-indexed reciprocity table needs.",
+   "Hornikx & Forssén's urban work: 2.5-D equivalent-sources method, PSTD for canyon-to-canyon (openPSTD), 'noise abatement schemes for shielded canyons', and the urban-canyon PE and ESM coupling. It is the reference-model base that Wei 2014 and Schiff 2010 rest on, and the natural reference for refitting Acan to elevated incidence. Only Schiff 2010 is cited.",
+   "Van Renterghem, Salomons & Botteldooren's work on canyon reference models (FDTD with turbulence and wind in canyons, 'efficient FDTD-PE model', meteorological effects at shielded facades). Also the Hornikx-Van Renterghem-Forssén-Botteldooren comparisons of full-wave methods for urban canyons. Wind flow over canyons changes the shielded level by several dB.",
+   "ONERA UAM urban propagation work (LeGriffon, Malbequi), the closest analogue to an elevated rotorcraft source over a city. The FA2025 Madrid paper verified here is ONERA's, yet ONERA is not named as a group. NASA UAM urban-propagation efforts (ray tracing and urban canyon studies for eVTOL) are absent too.",
+   "FHWA TNM 3.0 itself: the model ACRP chose for buildings has no model entry. Its barrier/building diffraction and ground formulation (and the 'modified' version for elevated sources) should be described, since it is the U.S. precedent for exactly this architecture.",
+   "Other national engineering methods with building reflection and diffraction rules: German RLS-19 / Schall 03 / VDI 2714/2720, UK CRTN/CRN, Nord2000 Road, and the 2021 amendment to the CNOSSOS annex (Commission Delegated Directive (EU) 2021/1226), which incorporated the Kok/RIVM fixes. Also ISO/TR 17534-3 (ISO 9613-2 interpretation) alongside 17534-4.",
+   "Facade scattering and diffusion parameterisation: Ögren & Kropp, and Embleton-style facade roughness, plus measured scattering coefficients of facades. These are needed to set Heutschi's coherent/scattered split credibly. Also the radiosity/ray hybrids for courtyards (Kang 2002; Meng, Kang).",
+   "Rotorcraft-specific urban measurements: helicopter noise measured in city streets and at urban heliports (e.g. the NYC helicopter data behind ACRP's legacy set, and FAA/Volpe rotorcraft measurements). The NYC dataset is mentioned only in passing; no helicopter-specific building study is reviewed.",
+   "Ray/beam-tracing and image-source acceleration methods used in practice for city-scale path finding (beam tracing, BVH ray tracing, e.g. the commercial engines in CadnaA, SoundPLAN and IMMI), and the open-source pyroomacoustics/I-Simpa (Picaut's SPPS particle tracing, which is the 'particle-tracing study' alluded to but not cited).",
+   "Moving-source and Doppler decorrelation of multipath: works on the coherence of reflected paths from moving sources (e.g. the ground-reflection coherence and turbulence-decorrelation literature, Daigle; Salomons' coherence factors). This bears directly on the open question of coherent vs energetic summation of facade images in third-octave bands."
+  ]
+ }
+}

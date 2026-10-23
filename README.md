@@ -8,7 +8,7 @@ grid (or a scattered observer set) from a flight trajectory and a rotor-noise "s
    flight path angle, thrust coefficient), and read the level toward each observer.
 2. Carry it to the ground: a broadband database uses its own excess-attenuation factor; a
    database with spectra is propagated band by band, with ISO 9613-1 absorption, ground
-   reflection and, optionally, refraction through a stratified, windy atmosphere.
+   reflection, and optionally a stratified, windy atmosphere's refraction, terrain and buildings.
 3. Integrate each observer's level history into a sound exposure level (SEL), and a set of
    operations into a day-night level (DNL). Lden, CNEL, LAmax, NAx, time above, C-weighted SEL
    and EPNL are available on request.
@@ -39,6 +39,7 @@ cmake --build build -j8
 | `-DNICEOPS_BUNDLE_PYTHON=OFF` | Keep plotting, but use the system interpreter's packages instead of the build's own environment. |
 | `-DNICEOPS_ASSERTS=ON` | Keep `assert()` live in an optimized build. The default Release build compiles the asserts out. |
 | `-DNICEOPS_LTO=OFF` | Turn off link-time optimization, which is otherwise on wherever the toolchain supports it. |
+| `-DNICEOPS_GPU=OFF` | Build without a GPU backend. The default takes Metal on macOS with Clang; a run then uses the GPU wherever it applies, unless `--no-gpu`. |
 
 On macOS with Command Line Tools but no full Xcode, add
 `-DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path)`. Run the
@@ -95,6 +96,5 @@ sphere databases and four vehicle files; see [Shipped databases](docs/MANUAL.md#
 ## License
 
 NICEOPS is under the MIT License; see [`LICENSE`](LICENSE). Every third-party component it
-builds against is permissive (BSD, MIT or the Boost Software License), and none carries a
-reciprocal or source-disclosure obligation. A binary distribution must carry their notices,
-which `THIRD_PARTY_NOTICES.md` reproduces.
+builds against is permissive (BSD, MIT or the Boost Software License), with no reciprocal
+obligation; `THIRD_PARTY_NOTICES.md` reproduces the notices a binary distribution must carry.

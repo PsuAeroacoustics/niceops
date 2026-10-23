@@ -11,7 +11,9 @@
 #include <utility>
 
 #include "pade_propagator.hpp"
+#include "util/complex_fma.hpp"
 #include "util/constants.hpp"
+#include "util/lanes.hpp"
 #include "util/parallel.hpp"
 
 namespace niceops {
@@ -19,6 +21,8 @@ namespace niceops {
 namespace {
 
 using complex = std::complex<double>;
+using complex_fma::minus_mul;
+using complex_fma::mul;
 
 double speed_at(const PeSetup& s, double z)
 {
@@ -187,6 +191,8 @@ March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
     const double a = op.a;
     const complex g1 = op.g1, g2 = op.g2;
     const std::size_t m = op.m;
+    if (m < 3)
+        throw std::invalid_argument("solve_pe: the grid is too small");
     const complex i(0.0, 1.0);
     const complex alpha_lhs = 0.25 - i * k_a * dr / 4.0;
     const complex alpha_rhs = 0.25 + i * k_a * dr / 4.0;
@@ -209,8 +215,9 @@ March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
     const complex upper_0 = off_lhs + off_lhs * g2;
     auto lower_of = [&](std::size_t row) { return row > 0 ? off_lhs : complex(0.0); };
     auto upper_of = [&](std::size_t row) { return row + 1 < m ? (row == 0 ? upper_0 : off_lhs) : complex(0.0); };
-    if (m < 3)
-        throw std::invalid_argument("solve_pe: the grid is too small");
+    // With m >= 3 the meeting row has a row on either side (0 < p < m - 1),
+    // and the downward chain is never the longer: p rows go down, m - 1 - p,
+    // the same or one more, go up.
     const std::size_t p = (m - 1) / 2;
     // Downward, rows r < p:  w_r = b_r inv_r - lower_r inv_r w_{r-1},
     // x_r = w_r - (upper_r inv_r) x_{r+1}.  Upward, rows r > p: the mirror.
@@ -238,8 +245,7 @@ March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
         }
     }
     // The meeting row takes both.
-    inv[p] = 1.0 / (main[p] - lower_of(p) * (p > 0 ? back[p - 1] : complex(0.0))
-                    - upper_of(p) * (p + 1 < m ? back[p + 1] : complex(0.0)));
+    inv[p] = 1.0 / (main[p] - lower_of(p) * back[p - 1] - upper_of(p) * back[p + 1]);
     const complex lower_p = lower_of(p), upper_p = upper_of(p);
     const complex rhs_off = alpha_rhs * a;
     std::vector<complex> rhs_main(m);
@@ -250,18 +256,6 @@ March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
 
     std::vector<complex> w(m);
     return [=](std::vector<complex>& psi) mutable {
-        // Complex arithmetic written out: std::complex's multiply carries a branch
-        // for NaN and infinity that cannot arise here, and it sits in the chain.
-        auto mul = [](complex x, complex y) {
-            return complex(x.real() * y.real() - x.imag() * y.imag(), x.real() * y.imag() + x.imag() * y.real());
-        };
-        // e - c x, as two dependent fused multiply-adds per part: the recurrences
-        // run at their latency, and the compiler otherwise leaves a subtract at the
-        // end of each.
-        auto minus_mul = [](complex e, complex c, complex x) {
-            return complex(std::fma(c.imag(), x.imag(), std::fma(-c.real(), x.real(), e.real())),
-                    std::fma(-c.imag(), x.real(), std::fma(-c.real(), x.imag(), e.imag())));
-        };
         // Right side [1 + alpha_rhs Q] psi at a row, psi_0 from the ground
         // condition and psi_n = 0.
         auto rhs = [&](std::size_t row) {
@@ -271,9 +265,8 @@ March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
                 return mul(rhs_off, psi[m - 2]) + mul(rhs_main[m - 1], psi[m - 1]);
             return mul(rhs_off, psi[row - 1] + psi[row + 1]) + mul(rhs_main[row], psi[row]);
         };
-        const std::size_t down = p;         // rows 0 .. p-1
-        const std::size_t up = m - 1 - p;   // rows m-1 .. p+1
-        const std::size_t both = std::min(down, up);
+        const std::size_t both = p;         // rows 0 .. p-1 down, and as many up
+        const std::size_t up = m - 1 - p;   // rows m-1 .. p+1: p, or p + 1
         // Eliminate: both chains a row at a time, from the ends inward.  The
         // end rows carry the boundary conditions and go first; inside, the
         // right side is the plain three-point stencil.
@@ -291,16 +284,13 @@ March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
             w[rt] = top;
             w[rb] = bottom;
         }
-        for (std::size_t k = both; k < down; k++)
-            w[k] = top = minus_mul(mul(rhs(k), inv[k]), chain[k], top);
         for (std::size_t k = both; k < up; k++)
         {
             const std::size_t rb = m - 1 - k;
             w[rb] = bottom = minus_mul(mul(rhs(rb), inv[rb]), chain[rb], bottom);
         }
         // The meeting row, then substitute back outward, again two chains.
-        const complex x_p = mul(rhs(p) - mul(lower_p, p > 0 ? w[p - 1] : complex(0.0))
-                        - mul(upper_p, p + 1 < m ? w[p + 1] : complex(0.0)), inv[p]);
+        const complex x_p = mul(rhs(p) - mul(lower_p, w[p - 1]) - mul(upper_p, w[p + 1]), inv[p]);
         psi[p] = x_p;
         top = x_p;
         bottom = x_p;
@@ -311,11 +301,6 @@ March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
             bottom = minus_mul(w[rb], back[rb], bottom);
             psi[rt] = top;
             psi[rb] = bottom;
-        }
-        for (std::size_t k = both; k < down; k++)
-        {
-            const std::size_t rt = p - 1 - k;
-            psi[rt] = top = minus_mul(w[rt], back[rt], top);
         }
         for (std::size_t k = both; k < up; k++)
         {
@@ -337,51 +322,9 @@ March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
 // as there are terms -- throughput-bound, where Crank-Nicolson's single solve
 // waits on its own latency.  Storage is term-innermost to match, two doubles
 // of factor and two of w per term per row.
-// Two terms' worth of one real quantity.  The compiler would not vectorize the
-// march across terms from scalar code -- it came out one term at a time, a
-// third as fast -- so the pairing is explicit: the GCC/Clang vector type where
-// there is one, and a plain struct that says the same thing where there is not.
-#if defined(__GNUC__)
-
-typedef double Lanes __attribute__((vector_size(2 * sizeof(double))));
-
-#else
-
-struct Lanes
-{
-    double v[2];
-
-    double operator[](std::size_t lane) const
-    {
-        return v[lane];
-    }
-    double& operator[](std::size_t lane)
-    {
-        return v[lane];
-    }
-};
-
-inline Lanes operator+(Lanes a, Lanes b)
-{
-    return Lanes {{a.v[0] + b.v[0], a.v[1] + b.v[1]}};
-}
-
-inline Lanes operator-(Lanes a, Lanes b)
-{
-    return Lanes {{a.v[0] - b.v[0], a.v[1] - b.v[1]}};
-}
-
-inline Lanes operator*(Lanes a, Lanes b)
-{
-    return Lanes {{a.v[0] * b.v[0], a.v[1] * b.v[1]}};
-}
-
-#endif
-
-inline Lanes both(double value)
-{
-    return Lanes {value, value};
-}
+// Two terms' worth of one real quantity: util/lanes.hpp.  The compiler would
+// not vectorize the march across terms from scalar code -- it came out one term
+// at a time, a third as fast -- so the pairing is explicit.
 
 constexpr std::size_t max_pade_pairs = 12;
 
@@ -863,9 +806,9 @@ PeResult solve_pe_impl(const PeSetup& s, bool keep_field)
     const complex denominator = 3.0 - 2.0 * i * k_a * s.admittance * dz;
     const complex g1 = 4.0 / denominator;
     const complex g2 = -1.0 / denominator;
-    const std::size_t m = n - 1; // unknowns psi_1 .. psi_{n-1}
-    if (m < 3)
+    if (n < 4)
         throw std::invalid_argument("solve_pe: the grid is too small");
+    const std::size_t m = n - 1; // unknowns psi_1 .. psi_{n-1}
     op.a = a;
     op.g1 = g1;
     op.g2 = g2;

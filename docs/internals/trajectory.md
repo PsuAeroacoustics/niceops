@@ -202,7 +202,8 @@ descent has a constant dz/dt with no variance to correlate, and must still decid
 time column, and its states once kept `State::utcsec`'s default of 0, so the day-night metrics
 read every hold as UTC midnight and the clockless refusal in `process_trajectory` could not
 fire. NaN is what makes that refusal work, so the reader must keep setting `utcsec` itself rather
-than leave `State`'s default. The `static_hold_dnl_needs_a_clock` CTests pin both sides.
+than leave `State`'s default. The CTests `static_hold_dnl_needs_a_clock` and
+`static_hold_dnl_with_start_utc` pin both sides.
 
 ## Hover nose and `--nose`
 
@@ -214,12 +215,11 @@ than leave `State`'s default. The `static_hold_dnl_needs_a_clock` CTests pin bot
   turns from the heading to the velocity on a smoothstep weight, the horizontal angle the short
   way round, so there is no step. A hard switch at 5 kt stepped the level by 2.2–4.4 dB for a
   nose rotated 30–90 degrees.
-- The AC format's column 9 (`State::heading`, compass; a WGS84 track's `heading` column, NaN
-  without one) is turned
-  into the local frame by `--frame_bearing` (or east under a settled geodetic frame) whenever
-  the run knows one. Only otherwise is it turned by an offset inferred from the track's states
-  over 20 kt: the circular mean of the velocity's angle plus the heading, which folds in the INS
-  heading's few degrees off the ground track and the mean crab (see below for why the frame
+- The AC format's column 9 (`State::heading`, compass; a WGS84 track's `heading` column, NaN without
+  one) is turned into the local frame by `--frame_bearing` (or east under a settled geodetic frame)
+  whenever the run knows one. Only otherwise is it turned by an offset inferred from the track's
+  states over 20 kt: the circular mean of the velocity's angle plus the heading, which folds in the
+  INS heading's few degrees off the ground track and the mean crab (see below for why the frame
   wins). With neither, the nose follows the drift, with a warning.
 - **A WGS84 heading is unwrapped as it is read and interpolated linearly**, never by spline (a
   heading through a sharp turn would overshoot), and wrapped back into [0, 360). Unwrapping as it

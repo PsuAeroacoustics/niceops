@@ -168,6 +168,13 @@ std::vector<double> reflection_coefficient_bounds(const GroundModel& ground,
 std::array<double, 2> spherical_reflection_coefficient(double cos_grazing, double kappa,
         std::complex<double> admittance, bool boundary_loss = true);
 
+// The share of a diffuse field's energy the ground reflects: 1 less Paris's
+// statistical absorption coefficient, the plane-wave |R_p|^2 averaged over
+// incidence weighted by sin 2 theta.  For a model that carries energy alone
+// (the diffuse facades and the turbulence fill among buildings,
+// urban_point.hpp), where a ray's bounces take Q.
+double diffuse_reflection(std::complex<double> admittance);
+
 // Per band, what `bounces` earlier reflections at grazing angle `grazing`
 // (radians) take off a ray that arrives after them, dB: -10 lg |R_p|^2 each,
 // the plane-wave coefficient.  Added into `loss` for bands in

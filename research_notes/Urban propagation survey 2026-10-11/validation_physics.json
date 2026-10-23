@@ -1,0 +1,547 @@
+{
+ "findings": {
+  "family": "Urban-canyon physics beyond specular multipath, plus the benchmark and validation data, and open-source codes, for an elevated moving rotorcraft source",
+  "models": [
+   {
+    "name": "Diffuse facade reflection: radiosity, the diffusion equation and transport theory (Kang; Picaut and co-workers), and ray or particle tracing with a scattering coefficient",
+    "physics_captured": "Facade roughness from balconies, window recesses, ornament and signage, treated as an energy fraction s that is reflected diffusely (Lambert) rather than specularly. Kang (JASA 2000) compared radiosity with diffuse boundaries against image sources with specular boundaries. With diffuse facades the level falls off faster along the street and the reverberation time is shorter, and air and vegetation absorption add more attenuation. When the street width is smaller than the building height the two give similar results. Picaut et al. treat a partly diffuse canyon as a diffusion process, with a diffusion coefficient set by street width and facade reflection behaviour; there are analytical solutions for a single street and FEM for complex layouts. ISO 17497-1 measures the random-incidence scattering coefficient, in full scale or in a scale-model reverberation room.",
+    "limitations": "Energy-only, so no interference. That is acceptable above roughly 500 Hz once turbulence and roughness have decorrelated the reflections, but it misses canyon resonances and the comb filtering at low frequency. The scattering coefficient is a single random-incidence number. ISO 17497-1 says outright that it does not describe the spatial distribution of the scattered energy, and that distribution matters for an elevated source at grazing or steep incidence. I found few measured s values for real facades, so in practice they are assigned by judgement (for example 0.1-0.5).",
+    "cost": "Diffusion equation: one FEM solve per band per geometry, after which the energy field is available everywhere. Radiosity and particle tracing: seconds to minutes per source position per band. Neither is a per-evaluation cost if it is precomputed into tables.",
+    "niceops_fit": "This is the natural high-frequency half of the per-receiver urban reciprocity table. Trace energy from each canyon receiver out to a sky hemisphere (by reciprocity), with a diffuse fraction at every facade hit, and store the gain G(band, azimuth, elevation) re free field on the hemisphere's directional grid. In the hot loop that is one bilinear lookup per band, the same pattern as the sphere database's lookup, so it stays within the ~1 us spectral budget. The table depends only on direction for a far source. The 30 m case needs a few source heights or a range term.",
+    "elevated_moving_source_suitability": "Good. For an overhead source the canyon is excited from its open top, which is the regime the diffuse-field canyon models were built for. Motion is quasi-static at helicopter Mach numbers, so table lookup per emission time works.",
+    "frequency_range_and_scale": "Valid where the wavelength is much smaller than the features: above about 250-500 Hz for street canyons 10-30 m wide.",
+    "references": [
+     {
+      "citation": "Kang, J. (2000). Sound propagation in street canyons: Comparison between diffusely and geometrically reflecting boundaries. J. Acoust. Soc. Am. 107(3)",
+      "supports_claim": "Radiosity (diffuse) vs image source (specular). Diffuse facades give more attenuation along the street, shorter reverberation, and more benefit from absorption. The two are similar when width < height (the last point as summarised by others).",
+      "url_or_doi": "https://sonicfield.org/library/sound-propagation-in-street-canyons-comparison-between-diffusely-and-geometrical",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Picaut, J., Colle, Bérengier (2006). Sound field modeling in a street canyon with partially diffusely reflecting boundaries by the transport theory / diffusion equation (JASA)",
+      "supports_claim": "Diffusion-equation model of a partly diffuse canyon, with analytical and FEM solutions",
+      "url_or_doi": "https://sonicfield.org/library/sound-field-modeling-in-a-street-canyon-with-partially-diffusely-reflecting-boun",
+      "verified_by_search": true
+     },
+     {
+      "citation": "ISO 17497-1:2004 (confirmed 2024). Sound-scattering properties of surfaces, Part 1: random-incidence scattering coefficient in a reverberation room",
+      "supports_claim": "Standard measurement of the scattering coefficient in full scale or scale model. It does not characterise spatial uniformity.",
+      "url_or_doi": "https://www.iso.org/standard/31397.html",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Picaut, J., Hossam Eldien, H., Billon, A. (2010). Scale model (1:10) street with and without acoustic diffusers, Internoise 2010; and Picaut & Scouarnec, numerical study of diffusers to reduce urban noise (IOA)",
+      "supports_claim": "Well-designed facade diffusers reduce road-traffic noise in a 1:10 scale street",
+      "url_or_doi": "https://www.ioa.org.uk/system/files/proceedings/j_picaut_d_scouarnec_a_numerical_study_of_the_use_of_acoustic_diffusers_to_reduce_noise_in_urban_areas.pdf",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Engineering multiple-reflection and facade-roughness corrections (Ghent and Chalmers: Thomas et al. 2013; Hornikx et al. 2014; Wei et al. 2014)",
+    "physics_captured": "Reverberant build-up from multiple facade reflections in a canyon and inner yard, building height variation, canyon width, facade roughness, roof shape, and facade impedance. Wei et al. fitted the model to 565 FDTD canyon configurations (20,740 results), with facade normalized impedances Zn = 77 for windows and Zn = 10 for brick and a rigid road. Thomas et al. fitted a regression on street width, facade height and roughness, using the reflection ratio, to mobile measurements in 99 Ghent streets.",
+    "limitations": "Fitted for a ground-level road-traffic source and canyon-to-canyon propagation, not for an elevated source. The coefficients would have to be refitted for sources above the roofs. The canyon fit's standard deviation is 2.7 dB against FDTD. A gabled roof is a flat -5 dB term.",
+    "cost": "Closed form, a few flops. Effectively free.",
+    "niceops_fit": "Two uses. (1) A quick first-order canyon correction added per receiver as dB terms. (2) More valuable: a template for how to compress full-wave or GA results into a few fitted parameters per receiver, which is exactly the reciprocity-table compression problem.",
+    "elevated_moving_source_suitability": "Moderate. The physics carries over (multiple reflections near the receiver), but the published fits use a street-level source.",
+    "frequency_range_and_scale": "Octave bands 63 Hz-4 kHz, A-weighted totals",
+    "references": [
+     {
+      "citation": "Wei, W., Botteldooren, D., Van Renterghem, T., et al. (2014). Urban Background Noise Mapping: The General Model. Acta Acustica united with Acustica 100(6), 1098-1111",
+      "supports_claim": "Model including multiple reflections, height variation, canyon width, facade roughness and roof shape, fitted to FDTD (sd 2.7 dB). Windows Zn = 77, brick Zn = 10. Gabled roof about -5 dB. A standard END noise map underestimated a shielded facade by more than 14 dBA (position 9).",
+      "url_or_doi": "https://doi.org/10.3813/aaa.918789",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Thomas, P., Van Renterghem, T., De Boeck, E., Dragonetti, L., Botteldooren, D. (2013). Reverberation-based urban street sound level prediction. J. Acoust. Soc. Am. 133(6)",
+      "supports_claim": "Regression model of street reverberation from width, facade height and roughness, built on mobile measurements in 99 Ghent streets",
+      "url_or_doi": "https://labs.sonicfield.org/library/reverberation-based-urban-street-sound-level-prediction",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Hornikx, M., et al. (2014). Urban background noise mapping: The multiple-reflection correction term. Acta Acustica united with Acustica 100(2), 293-305",
+      "supports_claim": "Multiple-reflection correction term for shielded canyons",
+      "url_or_doi": "https://research.chalmers.se/en/publication/194530",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Schiff, M.T., Hornikx, M., Forssén, J. (2010). Excess attenuation for sound propagation over an urban canyon. Applied Acoustics 71(6), 510-517",
+      "supports_claim": "Wideband excess attenuation of -1 to -4 dB per intermediate canyon, roughly frequency-independent. Covers absorption, rooftop height and wind gradient.",
+      "url_or_doi": "https://doi.org/10.1016/j.apacoust.2010.01.005",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Turbulence scattering into shielded zones (Forssén et al. 2014 engineering model; Van Renterghem et al. 2013 measurements)",
+    "physics_captured": "Single scattering by homogeneous isotropic turbulence (Kolmogorov), with a von Karman saturation correction, sets a floor on the level behind buildings. The model adds a canyon correction dL = gamma1 + gamma2 log10(H_I/H_0), where gamma1 = 7 dB for a single canyon and 14 dB for a double canyon, and gamma2 = 2H_I/W per side. Inputs are geometry, frequency, C_v^2 and C_T^2. Long-term measurements show that scattering dominates the level at shielded facades even below 1 kHz, that periods of strong turbulence dominate L_eq, and that noise maps should use rather high turbulence strengths.",
+    "limitations": "2-D geometry, used 2.5-D. Error sd is under 3 dB without canyons and about 4 dB(A) with canyons, at C_v^2 = 1 m^(4/3)/s^2. Turbulence in the urban roughness sublayer is inhomogeneous, with high turbulence intensity in shear layers at roof level, and the model ignores that.",
+    "cost": "Closed form per source-receiver pair, a few log10 calls",
+    "niceops_fit": "NICEOPS already has ShadowScattering (a fit to its PE with phase screens) for refractive shadows. An analogous geometric-shadow floor, behind roofs and in deep courtyards, would be a per-band additive energy term in the reciprocity table, scaled by gamma_t. The project's PE turbulence machinery could produce it directly.",
+    "elevated_moving_source_suitability": "For a high source most canyon receivers have line of sight, so scattering matters only in courtyards and behind tall buildings at low elevation angles. It is relevant on approach and departure at low elevation angles and for 30 m operations.",
+    "frequency_range_and_scale": "Octave bands 63 Hz-4 kHz. Scattering grows with frequency.",
+    "references": [
+     {
+      "citation": "Forssén, J., Hornikx, M., Botteldooren, D., Wei, W., Van Renterghem, T., Ögren, M. (2014). A Model of Sound Scattering by Atmospheric Turbulence for Use in Noise Mapping Calculations. Acta Acustica united with Acustica 100(5), 810-815",
+      "supports_claim": "Engineering scattering model. Canyon correction gamma1 = 7 dB (single) or 14 dB (double). Error sd under 3 dB without canyons and about 4 dB(A) with canyons. C_v^2 = 1 m^(4/3)/s^2 used for the error estimate.",
+      "url_or_doi": "https://doi.org/10.3813/aaa.918760",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Van Renterghem, T., Wei, W., Forssén, J., Hornikx, M., Ögren, M., Botteldooren, D., Salomons, E. (2013). Improving the accuracy of engineering models at shielded building facades: experimental analysis of turbulence scattering. INTER-NOISE 2013, Innsbruck",
+      "supports_claim": "Long-term measurements show turbulence scattering contributes significantly at shielded facades below 1 kHz, strong-turbulence periods dominate L_eq, and high turbulence strengths are recommended",
+      "url_or_doi": "https://research.chalmers.se/en/publication/185369",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Coherence loss of facade reflections from turbulence and roughness (Ögren & Forssén 2004; Van Renterghem & Botteldooren 2010 field experiment)",
+    "physics_captured": "Turbulence decorrelates the direct path from the reflected paths, so the interference nulls fill in. In a 2-D canyon equivalent-source model with mutual coherences, turbulence raised the expected level by a negligible amount at low frequency and by about 2-5 dB at 1.6 kHz. A months-long loudspeaker experiment from a courtyard into a street canyon found coherence loss rising strongly with wind speed and frequency. Vertical temperature gradients had no measurable effect over the short path, and refraction into the canyon rose only slightly with downwind speed.",
+    "limitations": "These are mean-level effects. Variability statistics (for example L_max scatter) need a stochastic treatment.",
+    "cost": "It argues for a cheaper model: above a crossover frequency, sum the facade paths incoherently (energy). Below it, sum coherently with a partial-coherence factor exp(-sigma^2) per path (Clifford-Lataitis style, as in Harmonoise/Nord2000).",
+    "niceops_fit": "It decides whether a reciprocity table can store energy (real gains) or must store complex transfer functions. Storing a coherence-weighted energy gain per band is much smaller and smoother in direction, so it interpolates well. The existing PE phase-screen code can calibrate the coherence factor.",
+    "elevated_moving_source_suitability": "High. Long slant paths through the boundary layer have larger phase variance than street-level paths, so coherence loss among canyon reflections is if anything stronger. Doppler differences between paths (the moving source) further smear interference in band levels.",
+    "frequency_range_and_scale": "Important from roughly 500 Hz-1 kHz upward",
+    "references": [
+     {
+      "citation": "Ögren, M., Forssén, J. (2004). Modelling of a city canyon problem in a turbulent atmosphere using an equivalent sources approach. Applied Acoustics 65(6), 629-642",
+      "supports_claim": "Turbulence raises the expected canyon level by about 2-5 dB at 1.6 kHz and negligibly at low frequency",
+      "url_or_doi": "https://research.chalmers.se/en/publication/305",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Van Renterghem, T., Botteldooren, D. (2010). Meteorological influence on sound propagation between adjacent city canyons: A real-life experiment. J. Acoust. Soc. Am.",
+      "supports_claim": "Coherence loss rises with wind speed and frequency. No measurable temperature-gradient effect. Wind-induced refraction into the canyon is small.",
+      "url_or_doi": "https://sonicfield.org/library/meteorological-influence-on-sound-propagation-between-adjacent-city-canyons-a-re",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Urban boundary-layer meteorology: wind over and in canyons (RANS-CFD then PSTD; linearised Euler; EM2PAU PE)",
+    "physics_captured": "Rooftop shear layer, canyon recirculation vortex, and downward refraction over the urban canopy. Hornikx et al. (2018) computed RANS-CFD wind fields over generic urban sections and fed them to PSTD. Downward refraction raised levels by 15-23 dB(A) relative to no wind, more at high frequency, with strong sensitivity to the layout near source and receiver; vegetated roofs gave under 2 dB(A) in downward refraction. Heimann (2007), with 3-D linearised Euler, found upwind facades slightly louder in parallel-street layouts. EM2PAU combined a 1/2-scale canyon (9 sonic anemometers, 48 thermocouples) with a PE that includes micrometeorology.",
+    "limitations": "These results are for ground sources propagating across many blocks, where refraction over the roofs is decisive. For a helicopter at 100-1500 m overhead, the propagation is steep and short inside the canopy. The canopy flow mainly changes the last 10-30 m of the path and the turbulence near the receiver, not refraction to the receiver. The 15-23 dB(A) figure should not be transferred to elevated sources.",
+    "cost": "CFD is hours per wind direction. PSTD is minutes to hours per 2-D section.",
+    "niceops_fit": "Low priority for overhead flight. The existing stratified and linear eigenray code handles the above-canopy profile, and a log law with displacement height d of about 0.7 H and roughness length z0 of about 0.1 H above the canopy is the standard urban form. Inside the canopy, treat the canyon as still air with elevated turbulence (feeding coherence loss and scattering), rather than modelling mean-flow refraction.",
+    "elevated_moving_source_suitability": "Above-canopy profile: yes, through the existing ray models. In-canyon mean flow: minor for steep paths, but relevant at low elevation angles (approach, departure, distant passes).",
+    "frequency_range_and_scale": "Effect grows with frequency. PSTD studies go up to about 1-2 kHz.",
+    "references": [
+     {
+      "citation": "Hornikx, M., Dohmen, M., Conen, K., van Hooff, T., Blocken, B. (2018). The wind effect on sound propagation over urban areas: Predictions for generic urban sections. Building and Environment",
+      "supports_claim": "RANS-CFD wind fields into PSTD. Wind effect 15-23 dB(A) in downward refraction, larger at high frequency. Vegetated roofs under 2 dB(A).",
+      "url_or_doi": "https://researchportal.hw.ac.uk/en/publications/the-wind-effect-on-sound-propagation-over-urban-areas-predictions/",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Heimann, D. (2007). Three-dimensional linearised Euler model simulations of sound propagation in idealised urban situations with wind effects. Applied Acoustics 68, 217-237",
+      "supports_claim": "3-D LEE with wind in idealised urban layouts. Upwind facades slightly louder in parallel-street configurations.",
+      "url_or_doi": "https://elib.dlr.de/46076/",
+      "verified_by_search": true
+     },
+     {
+      "citation": "EM2PAU project. A numerical and experimental study of micrometeorological effects on urban sound propagation (HAL hal-00906938, hal-00636931)",
+      "supports_claim": "1/2-scale street canyon with 9 sonic anemometers and 48 thermocouples, and a PE adapted to micrometeorology",
+      "url_or_doi": "https://hal.archives-ouvertes.fr/hal-00906938",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Vegetation and absorptive facade or roof treatment (HOSANNA: green roofs, green facades, low vegetated barriers)",
+    "physics_captured": "Absorption and scattering by substrate and foliage on roofs and facades, at mid and high frequency. Green roofs gave about 3 dBA for flat roofs and up to 8 dBA for ridged roofs, for sound reaching inner yards over roofs. Green facades in a 19 m street canyon gave 2-3 dB(A) at 1.5-4 m height when all facades are covered (about 1 dB(A) for the upper halves, about 2 for the lower halves), more in narrow canyons. Combined measures add less than linearly.",
+    "limitations": "Mostly numerical (FDTD and PSTD) predictions for road-traffic sources. For an overhead source, roof greening acts mainly on diffraction over the roof edge into shielded yards. Facade greening acts through the impedance of each reflection.",
+    "cost": "Enters as boundary impedance or absorption in whatever canyon solver is used. No hot-loop cost.",
+    "niceops_fit": "Per-facade absorption coefficient alpha(f) and scattering coefficient s(f) in the GA tracer, and impedance in the wave solver. Panam-style impedance models (Miki, Delany-Bazley) already exist for the ground and can be reused for green substrates.",
+    "elevated_moving_source_suitability": "Moderate. It mainly reduces the reverberant build-up.",
+    "frequency_range_and_scale": "Effective mainly above about 500 Hz",
+    "references": [
+     {
+      "citation": "Van Renterghem, T., et al. The potential of building envelope greening to achieve quietness (Building and Environment, HOSANNA)",
+      "supports_claim": "Green roofs have the highest potential for quietness in courtyards. Combined measures add less than linearly.",
+      "url_or_doi": "https://research.chalmers.se/en/publication/175378",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Toolbox from the EC FP7 HOSANNA project for the reduction of road and rail traffic noise in the outdoor environment",
+      "supports_claim": "Green roofs may significantly reduce noise at the quiet side. Green roof about 3 dBA (flat) to 8 dBA (ridged). Green facades 2-3 dB(A) in a 19 m canyon.",
+      "url_or_doi": "https://research.chalmers.se/en/publication/207780",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Van Renterghem, Botteldooren, Hornikx, Forssén et al. (2012). Road traffic noise reduction by vegetated low noise barriers in urban streets. EURONOISE 2012",
+      "supports_claim": "FDTD, PSTD, BEM and a combined ray-radiosity model on a 19.2 m canyon with a realistic facade profile. Barrier absorption was essential.",
+      "url_or_doi": "https://research.chalmers.se/en/publication/164281",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Facade geometry: balconies, inclined facades, self-shielding windows",
+    "physics_captured": "Local shielding and redirection at the receiver facade. By pyramid tracing (Hossam El Dien & Woloszyn), balcony depth reduced facade SPL by 4-11 dB(A), increasing with floor height, and inclined balcony ceilings were most effective on upper floors. Literature summaries quote 5-8 dB from absorptive balcony ceilings (Hothersall et al. 1996) and up to about 7 dB insertion loss full scale (Hong Kong). A 2024 DTU study found balconies can screen or amplify by -3.5 to +6.3 dB depending on source location. Self-shielding windows tilted toward the sky (Van Renterghem & Thomas 2025, scale model plus 3-D full-wave) give the largest reductions on upper floors and make the canyon field more diffuse.",
+    "limitations": "Every result above is for street-level sources. For a source overhead, sky-facing windows and balcony geometry tuned against street noise may increase exposure to the aircraft: the sign flips with source elevation. The DTU 'road and rooftop noises' study is the only one I found that addresses elevated sources.",
+    "cost": "Requires geometry at decimetre resolution, so wave methods become expensive above 1 kHz. GA with diffraction is feasible.",
+    "niceops_fit": "Belongs in a per-receiver table only if the receiver is a facade microphone. NICEOPS's plate receiver model already shows how a local receiver structure becomes a per-band, per-azimuth K table, and a facade or balcony K(f, azimuth, elevation) is the same construct.",
+    "elevated_moving_source_suitability": "Directly relevant to facade exposure from helicopters, but the published numbers do not transfer and the effect can change sign.",
+    "frequency_range_and_scale": "Mid and high frequency, above about 250 Hz",
+    "references": [
+     {
+      "citation": "Hossam El Dien, H., Woloszyn, P. (2003). Balcony form: an approach to reduce sound pressure level into the building facade. WIT Transactions on the Built Environment 69",
+      "supports_claim": "Balcony depth reduces facade SPL by 4-11 dB(A), increasing with floor",
+      "url_or_doi": "https://witpress.com/elibrary/wit-transactions-on-the-built-environment/69/1838",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Impact of building facade design on road and rooftop noises (DTU Orbit, 2024)",
+      "supports_claim": "Balconies screen or amplify by -3.5 to +6.3 dB depending on source location, including rooftop (elevated) sources",
+      "url_or_doi": "https://orbit.dtu.dk/en/publications/impact-of-building-fa%C3%A7ade-design-on-road-and-rooftop-noises-using/",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Van Renterghem, T., Thomas, P. (2025). Self-shielding windows: scale model measurements and numerical simulations. Forum Acusticum / EAA 2025, Málaga",
+      "supports_claim": "Triangular facade elements, scale model and 3-D full-wave. Largest reduction on upper floors. Promotes a diffuse canyon field.",
+      "url_or_doi": "https://dael.euracoustics.org/confs/fa2025/data/articles/000764.pdf",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Road and pavement ground impedance in canyons",
+    "physics_captured": "Road surfaces are acoustically hard but not rigid. Effective flow resistivity for asphalt is 5000-15000 cgs rayls new and about 30000 aged (FHWA TNM). Porous asphalt is much softer. The ground effect near the road matters below about 250 Hz. In-situ methods: Nordtest NT ACOU 104, the two-height level-difference method, and an impedance tube on the pavement. Full-wave canyon studies (Wei et al.) usually treat the road as perfectly reflecting.",
+    "limitations": "For an elevated source and a receiver at 1.2-1.5 m, the road reflection gives the usual comb/+6 dB behaviour. In a canyon, the ground interacts with every facade image, so the ground model must be applied per image path.",
+    "cost": "NICEOPS's existing ega ground term at about 840 ns per call would multiply by the number of image paths. A table is needed.",
+    "niceops_fit": "Reuse the existing impedance and ground models (Weyl-van der Pol with Faddeeva), applied per facade image source inside the precomputed table. Asphalt goes in as one high-sigma class, alongside the grass already supported.",
+    "elevated_moving_source_suitability": "Yes. The steep grazing angles of overhead flight make the ground reflection nearly specular and +6 dB at low frequency.",
+    "frequency_range_and_scale": "Impedance matters mostly below about 500 Hz for hard surfaces",
+    "references": [
+     {
+      "citation": "FHWA Pavement Effects Implementation Study, ch. 4 (in-situ effective flow resistivity)",
+      "supports_claim": "Asphalt EFR 5000-15000 cgs rayls, old asphalt about 30000. TNM uses EFR in its ground reflection.",
+      "url_or_doi": "https://www.fhwa.dot.gov/Environment/noise/resources/pavement_effects_implementation_study/pei04.cfm",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Attenborough, K. Ground effect in outdoor noise propagation (IOA publication)",
+      "supports_claim": "Below 250 Hz, attenuation near a porous surface is controlled by its impedance. Locally reacting ground characterised by fitted flow resistivity.",
+      "url_or_doi": "https://www.ioa.org.uk/system/files/publications/K%20ATTENBOROUGH%20GROUND%20EFFECT%20IN%20OUTDOOR%20NOISE%20PROPAGATION.pdf",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Full-wave urban reference solvers and the benchmark set (openPSTD / Fourier-PSTD, FDTD; Trikootam et al. 2017 urban benchmark)",
+    "physics_captured": "The complete linearised Euler field: diffraction, every reflection order, facade impedance, and moving-medium effects (CFD wind). Fourier-PSTD needs about 2 points per wavelength and was about 100x faster than second-order FDTD for 3-D propagation over a screen (Hornikx, Waxler, Forssén 2010). The urban benchmark (JASA 2017) defines 2-D cross-sections of typical urban geometries, with meteorology from CFD, solved by openPSTD v2.0 and FDTD.",
+    "limitations": "Cost grows as f^3 (2-D) or f^4 (3-D), so a practical 3-D ceiling is about 1-2 kHz for neighbourhood domains. The 2-D benchmark omits out-of-plane facade reflections. I did not get the benchmark's agreement numbers (full text not retrieved).",
+    "cost": "Hours on GPU per receiver neighbourhood for 3-D up to about 1 kHz. Hornikx's courtyard work used PSTD in 3-D and a 2.5-D equivalent-source method.",
+    "niceops_fit": "This is the 'GFPE reference' step's urban counterpart. Run per receiver neighbourhood (reciprocally: source at the microphone, field sampled on a hemisphere above the roofs) at 50 Hz-1 kHz, merge with GA above 500 Hz-1 kHz, and fit into the directional gain table. One reciprocal solve serves all source positions, which is how the ~1e8-evaluation budget stays intact.",
+    "elevated_moving_source_suitability": "Excellent via reciprocity, since the far elevated source becomes a near-plane-wave sample on the hemisphere, and each direction needs one far-field transform.",
+    "frequency_range_and_scale": "About 20 Hz-1 kHz in 3-D practical, higher in 2-D",
+    "references": [
+     {
+      "citation": "Trikootam, S.C., Hornikx, M., Fernandes, G.C., van Hooff, T., Blocken, B., Van Renterghem, T. (2017). Benchmark cases for urban sound propagation. J. Acoust. Soc. Am.",
+      "supports_claim": "2-D urban cross-section benchmarks with CFD meteorology. openPSTD v2.0 and FDTD compared.",
+      "url_or_doi": "https://sonicfield.org/library/benchmark-cases-for-urban-sound-propagation",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Hornikx, M., Waxler, R., Forssén, J. (2010). The extended Fourier pseudospectral time-domain method for atmospheric sound propagation. J. Acoust. Soc. Am.",
+      "supports_claim": "About 100x faster than second-order FDTD for 3-D propagation over a screen. Applied to an urban canyon with high amplitude and phase accuracy.",
+      "url_or_doi": "https://research.chalmers.se/publication/128738",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Hornikx, M., Forssén, J. (2011). Modelling of sound propagation to three-dimensional urban courtyards using the extended Fourier PSTD method. Applied Acoustics 72, 665-676",
+      "supports_claim": "3-D courtyard PSTD. Absorption in facade openings limits the penalty from openings.",
+      "url_or_doi": "https://research.chalmers.se/en/publication/143443",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Hornikx, M. (2009). Numerical modelling of sound propagation to closed urban courtyards. PhD thesis, Chalmers",
+      "supports_claim": "2.5-D equivalent-source method and 3-D PSTD for courtyards, with scale-model validation",
+      "url_or_doi": "https://research.chalmers.se/en/publication/94249",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Aircraft, UAM and sonic-boom canyon studies (the closest analogues to NICEOPS's source)",
+    "physics_captured": "Overhead sources in built-up areas. In Lugten et al.'s Schiphol container field lab (3 courtyards, 10 microphones, radar-matched flyovers), level differences between facades facing toward and away from the flight path were 8-9 dB(A) in a straight courtyard and up to 14 dB(A) with a slanted facade and an inset. Their 1:50 scale model in an anechoic room (50-800 Hz full scale, windless days, 32 flyovers) reproduced the relative differences within 1.9 dBA mean (sd 1.9) at some positions but was 4.2 dBA (sd 2.6) greater at others. ONERA (Malbéqui) tested ray codes for UAM against corner and canyon image-source cases. Yunus et al. replaced straight rays with Gaussian beams for vertiport footprints: error reduced by 5 dB in lit zones and 35 dB in terrain shadows, and wind reshaped footprint lobes. Riegel & Sparrow's combined ray tracing and radiosity for sonic booms in canyons found diffuse reflections had the largest impact on signatures, plus artificial shadow zones without diffraction.",
+    "limitations": "No consolidated helicopter-in-street-canyon dataset was found. The NLR helipad study (ERF) exists, but I could not retrieve it.",
+    "cost": "n/a (data)",
+    "niceops_fit": "The Lugten dataset (radar-matched, third-octave at 0.125 s, facade microphones toward and away from the flight path) is the best public-literature validation target for an overhead-source canyon module. The scale-model protocol is a cheap way to make helicopter-specific canyon transfer functions.",
+    "elevated_moving_source_suitability": "Directly applicable",
+    "frequency_range_and_scale": "50-800 Hz in the scale-model comparison. Flyover data in third octaves.",
+    "references": [
+     {
+      "citation": "Lugten, M., Wuite, G., Peng, Z., Tenpierik, M. (2024). Assessing the influence of street canyon shape on aircraft noise: Results from measurements in courtyards near Amsterdam Schiphol Airport. Building and Environment 255, 111400",
+      "supports_claim": "Full-scale container courtyards. 8-9 dB(A) toward/away difference in a straight courtyard, up to 14 dB(A) with slanted facade and inset (the numbers come from the InterNoise 2022 version, DOI 10.3397/IN_2022_0976).",
+      "url_or_doi": "https://doi.org/10.1016/j.buildenv.2024.111400",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Lugten, M., Wuite, G., Peng, Z., Kim, K., Tenpierik, M. (2023). A scale model approach to simulate aircraft noise in street canyons: a comparison between in-situ and laboratory measurements. Forum Acusticum 2023, Turin",
+      "supports_claim": "1:50 scale model vs field lab, 50-800 Hz. Mean relative differences of 1.9 dBA (sd 1.9) to 4.2 dBA (sd 2.6) depending on microphone pair, and 0.5 dBA (sd 1.9) in another courtyard.",
+      "url_or_doi": "https://doi.org/10.61782/fa.2023.0264",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Malbéqui, P., et al. (2023). Assessment of sound propagation for the urban air mobility. Forum Acusticum 2023 (ONERA)",
+      "supports_claim": "Ray tracing from road-noise practice applied to UAM. Corner and canyon image-source tests. Multipath interference. Rays invalid below a few tens of Hz.",
+      "url_or_doi": "https://doi.org/10.61782/fa.2023.0104",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Yunus, F., et al. (2023). Vertiport noise footprints with a Gaussian beam tracer (Aerospace Science and Technology, Politecnico di Torino / TU Delft)",
+      "supports_claim": "Error reduced by 5 dB in lit zones and 35 dB in terrain shadows compared with straight rays. Wind changes footprint lobes.",
+      "url_or_doi": "https://iris.polito.it/handle/11583/2978683",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Riegel, K., Sparrow, V. (2024). Sonic boom propagation in urban canyons using a combined ray tracing/radiosity method. J. Acoust. Soc. Am.; (2019) around a large building, validated against SonicBOBS",
+      "supports_claim": "Diffuse reflections have the greatest impact on boom signatures in canyons. Shadow zones from lack of diffraction. General agreement with SonicBOBS data.",
+      "url_or_doi": "https://pure.psu.edu/en/publications/sonic-boom-propagation-in-urban-canyons-using-a-combined-ray-trac/",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Open-source and commercial codes",
+    "physics_captured": "openPSTD: Fourier-PSTD linearised Euler, 2-D and 3-D, GPL-3.0. NoiseModelling: CNOSSOS-EU with specular reflections of configurable order and diffraction over and around edges, GPL-3.0. I-Simpa: GUI hosting SPPS (particle tracing, with urban street propagation listed) and MD (diffusion equation), GPL-3.0. pyroomacoustics: image source and ray tracing for rooms, MIT. Pachyderm: GA and FDTD in Rhino, source on GitHub (PachydermAcoustic), license not confirmed (developer indicated GPL compatibility). RAVEN (RWTH ITA): image source plus ray tracing, free for academics, terms not found. Treble: commercial nodal DG plus GA, indoor product, with published outdoor DG PML research.",
+    "limitations": "GPL-3 codes (openPSTD, NoiseModelling, I-Simpa) cannot be linked into an MIT-licensed NICEOPS without relicensing. Running them as separate tools to generate tables is fine. NoiseModelling's CNOSSOS is a road and rail engineering method, not an aircraft one.",
+    "cost": "n/a",
+    "niceops_fit": "The cleanest route: run openPSTD or I-Simpa out of process as table generators, or write a small in-house GA tracer (MIT) reusing the existing Delaunay and predicates code. pyroomacoustics (MIT) is a usable reference for image-source logic.",
+    "elevated_moving_source_suitability": "Via reciprocity tables, any of them",
+    "frequency_range_and_scale": "Wave codes up to about 1-2 kHz, GA codes above about 250 Hz",
+    "references": [
+     {
+      "citation": "openPSTD GitHub repository",
+      "supports_claim": "GPL-3.0. PSTD with a visual interface (Blender add-on in v1.x).",
+      "url_or_doi": "https://github.com/openPSTD/openPSTD",
+      "verified_by_search": true
+     },
+     {
+      "citation": "NoiseModelling (Université Gustave Eiffel / Cerema / CNRS Lab-STICC)",
+      "supports_claim": "GPL v3. Full CNOSSOS-EU implementation. Reflections and diffraction.",
+      "url_or_doi": "https://github.com/Universite-Gustave-Eiffel/NoiseModelling",
+      "verified_by_search": true
+     },
+     {
+      "citation": "I-Simpa licenses page; SPPS documentation",
+      "supports_claim": "GPL v3 or later. SPPS particle code covers urban street propagation. MD code solves the diffusion equation.",
+      "url_or_doi": "https://i-simpa.univ-gustave-eiffel.fr/presentation-1/licenses",
+      "verified_by_search": true
+     },
+     {
+      "citation": "pyroomacoustics (EPFL-LCAV)",
+      "supports_claim": "MIT license",
+      "url_or_doi": "https://pyroomacoustics.readthedocs.io/",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Pachyderm Acoustical Simulation (food4rhino listing)",
+      "supports_claim": "Source at github.com/PachydermAcoustic. License not confirmed.",
+      "url_or_doi": "https://www.food4rhino.com/en/app/pachyderm-acoustical-simulation",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Treble outdoor DG PML paper (arXiv 2404.08464)",
+      "supports_claim": "Treble co-authors develop nodal DG with PML for outdoor propagation. The product is a DG plus GA hybrid for rooms.",
+      "url_or_doi": "https://export.arxiv.org/abs/2404.08464",
+      "verified_by_search": true
+     }
+    ]
+   }
+  ],
+  "key_quantitative_findings": [
+   "Turbulence scattering canyon correction: +7 dB (single canyon) and +14 dB (double canyon) base terms in the gamma1 + gamma2 log10(H_I/H_0) correction. Engineering-model error sd under 3 dB without canyons and about 4 dB(A) with them (Forssén et al. 2014, Acta Acust. 100:810, doi 10.3813/aaa.918760).",
+   "Standard noise maps underestimate shielded facades by more than 14 dBA at one Ghent inner-yard position. FDTD-fitted canyon model sd 2.7 dB. Window Zn = 77, brick Zn = 10, gabled roof about -5 dB (Wei et al. 2014, doi 10.3813/aaa.918789).",
+   "Turbulence raises the expected level in a 2-D canyon by about 2-5 dB at 1.6 kHz and negligibly at low frequency (Ögren & Forssén 2004, Appl. Acoust. 65:629).",
+   "A real-life courtyard-to-street experiment found coherence loss rising strongly with wind speed and frequency, no measurable temperature-gradient effect, and only slight wind refraction into the canyon (Van Renterghem & Botteldooren 2010, JASA).",
+   "Excess attenuation per intermediate urban canyon: -1 to -4 dB wideband, roughly frequency-independent (Schiff, Hornikx, Forssén 2010, doi 10.1016/j.apacoust.2010.01.005).",
+   "Wind (downward refraction) over generic urban sections: +15 to +23 dB(A), larger at high frequency. Green roofs under 2 dB(A) in downward refraction (Hornikx et al. 2018, Building and Environment). This is for ground sources across blocks and does not transfer to overhead helicopters.",
+   "Aircraft flyovers in full-scale courtyards: 8-9 dB(A) difference between facades facing toward and away from the flight path (straight courtyard), up to 14 dB(A) with a slanted facade and inset (Lugten et al. 2024, doi 10.1016/j.buildenv.2024.111400; InterNoise 2022, doi 10.3397/IN_2022_0976).",
+   "1:50 scale model vs full-scale aircraft canyon, 50-800 Hz: relative-difference discrepancies 1.9 dBA (sd 1.9), 4.2 dBA (sd 2.6), and 0.5 dBA (sd 1.9) depending on position (Lugten et al. 2023, doi 10.61782/fa.2023.0264).",
+   "Gaussian beams vs straight rays for vertiport footprints: 5 dB error reduction in lit zones and 35 dB in terrain shadows (Yunus et al. 2023).",
+   "Fourier-PSTD is about 100x faster than second-order FDTD for 3-D propagation over a screen, at about 2 points per wavelength (Hornikx, Waxler, Forssén 2010).",
+   "Green roofs: about 3 dBA (flat) to 8 dBA (ridged) for inner yards. Green facades: 2-3 dB(A) at 1.5-4 m in a 19 m canyon (HOSANNA).",
+   "Balcony depth: 4-11 dB(A) facade reduction for road noise (Hossam El Dien & Woloszyn 2003). Balconies -3.5 to +6.3 dB depending on source location, including rooftop sources (DTU 2024).",
+   "Asphalt effective flow resistivity 5000-15000 cgs rayls new, about 30000 aged (FHWA TNM pavement study)."
+  ],
+  "open_questions": [
+   "No public helicopter-in-street-canyon dataset was found. The NLR/ERF helipad study could not be retrieved. Lugten's Schiphol courtyard dataset (radar-matched, third octaves at 0.125 s) is the best available validation target, but whether it can be accessed is unknown.",
+   "Facade-diffusion results (Kang, Picaut, Wei) and balcony and self-shielding results are all for street-level sources. For overhead sources the sign of some effects (sky-facing windows, balconies) may flip, and no fitted coefficients exist.",
+   "Measured directional (not random-incidence) scattering coefficients for real facades at steep incidence are essentially absent. ISO 17497-1 gives only random incidence.",
+   "Full text of the Trikootam et al. 2017 JASA benchmark was not retrieved, so its PSTD/FDTD agreement figures and DOI are unconfirmed here.",
+   "Crossover frequency above which canyon reflections can be summed incoherently for a long slant path from an elevated moving source (turbulence plus Doppler decorrelation). This could be calibrated with the project's own PE phase screens.",
+   "Licenses for Pachyderm and RAVEN were not confirmed. openPSTD, NoiseModelling and I-Simpa are GPL-3 and should be run out of process as table generators rather than linked into NICEOPS.",
+   "Whether a reciprocity table stored as directional energy gain per band (coherence-weighted) is accurate enough below about 250 Hz, where canyon modes and road impedance interact coherently, or whether complex transfer functions are needed there."
+  ]
+ },
+ "verdict": {
+  "family": "Urban-canyon physics beyond specular multipath, plus the benchmark and validation data, and open-source codes, for an elevated moving rotorcraft source (validation_physics review)",
+  "checked": [
+   {
+    "item": "Ögren & Forssén (2004), Appl. Acoust. 65(6):629-642: turbulence raises the expected canyon level by about 2-5 dB at 1.6 kHz",
+    "status": "fabricated_or_wrong",
+    "correction": "The citation exists. The Chalmers abstract says the increase is negligible at low frequency 'but at 1.6 kHz it reaches 25 dB for the geometries and turbulence parameters used here.' That is 25 dB, not 2-5 dB. The paper is also about sound scattered into a shielded courtyard: a 2-D canyon coupled to free space above by equivalent sources, with mutual coherences. It is not about decorrelation between direct and facade-reflected paths, so it does not support the coherence-loss model it is filed under. It is evidence for the turbulence-scattering floor."
+   },
+   {
+    "item": "Forssén et al. (2014), Acta Acust. 100(5):810, doi 10.3813/AAA.918760: canyon correction gamma1 = 7/14 dB, error sd <3 dB / ~4 dB(A), C_v^2 = 1",
+    "status": "unverifiable",
+    "correction": "The bibliographic data and the model structure are confirmed from the EAA landing page: single scattering, von Karman saturation, parameterised for single or double canyons, flat roofs, inputs geometry, frequency and velocity and temperature turbulence strengths. The abstract gives none of the specific numbers (7/14 dB, the sd values, C_v^2 = 1). They may be in the full text, but I could not check them."
+   },
+   {
+    "item": "Wei et al. (2014), Acta Acust. 100(6), doi 10.3813/AAA.918789: FDTD-fitted canyon model sd 2.7 dB, Zn = 77/10, gabled roof -5 dB, >14 dBA underestimate, 565 configurations",
+    "status": "unverifiable",
+    "correction": "Confirmed: title, the seven authors (Wei, Botteldooren, Van Renterghem, Hornikx, Forssén, Salomons, Ögren), volume and issue, the model scope (multiple reflections, heights, width, roughness, roof shape, fitted to full-wave simulations) and validation at 9 facades in Ghent, 3 of them in inner yards. None of the quoted numbers is in the abstract. The finding says 'pages 1098-1111'; the landing page gives only '14 pages'."
+   },
+   {
+    "item": "Lugten et al. (2023), Forum Acusticum, doi 10.61782/fa.2023.0264: 1:50 scale, 50-800 Hz, 32 flyovers, windless days, 4.2 dBA (sd 2.6), 1.9 dBA (sd 1.9), 0.5 dBA (sd 1.9)",
+    "status": "confirmed",
+    "correction": "All confirmed from the PDF text. The model band of 12.5 Hz-40 kHz corresponds to 25-800 Hz full scale, and only 50-800 Hz was analysed. The 4.2 dBA figure is for the microphone 2 vs 4 relative difference, larger in the anechoic room. The courtyard 2 result of 0.5 dBA ranged from 1.4 to -0.6 dBA by flight path."
+   },
+   {
+    "item": "Lugten et al. (2024), Building and Environment 255:111400: 8-9 dB(A) toward/away difference, up to 14 dB(A) with slanted facade and inset",
+    "status": "unverifiable",
+    "correction": "Crossref confirms title, authors (Lugten, Wuite, Peng, Tenpierik), volume and article number. I could not retrieve the abstract. The finding itself says the dB numbers come from the InterNoise 2022 paper, which I did not check."
+   },
+   {
+    "item": "Schiff, Hornikx & Forssén (2010), Appl. Acoust. 71(6):510-517: -1 to -4 dB excess attenuation per intermediate canyon, roughly frequency-independent",
+    "status": "unverifiable",
+    "correction": "Crossref confirms the title, authors, volume, issue and pages. I could not retrieve the abstract (the ScienceDirect redirect failed), so the -1 to -4 dB figure is unchecked."
+   },
+   {
+    "item": "Hornikx, Dohmen, Conen, van Hooff, Blocken (2018), Building and Environment: wind effect 15-23 dB(A), vegetated roofs <2 dB(A) in downward refraction",
+    "status": "confirmed",
+    "correction": "Confirmed: Building and Environment vol. 144, pp. 519-531 (2018). The abstract says 'the wind effect ranges from 15 to 23 dB(A)', and that vegetated roofs give <2 dB(A) broadband in downward refraction."
+   },
+   {
+    "item": "Hornikx, Waxler, Forssén (2010), JASA: extended Fourier PSTD about 100x faster than second-order FDTD for 3-D propagation over a screen, 2 points per wavelength, urban canyon",
+    "status": "confirmed",
+    "correction": "JASA 128(4):1632-1646. Both numbers are in the abstract. The urban canyon case is 2-D only; the 3-D validation is the screen case."
+   },
+   {
+    "item": "Hornikx et al. (2014), Acta Acust. 100(2):293-305, multiple-reflection correction term",
+    "status": "confirmed",
+    "correction": "doi 10.3813/AAA.918709. Note a scope condition: the expression for A_s and A_r holds only when the source is separated from the receiver environment by at least four street widths. It is built for road-traffic point or line sources and splits source-side and receiver-side terms. That split is relevant if it is reused as a template."
+   },
+   {
+    "item": "Hornikx & Forssén (2011), Appl. Acoust. 72:665-676, 3-D courtyard PSTD; absorption in facade openings limits the penalty",
+    "status": "confirmed",
+    "correction": "Vol. 72(9), doi 10.1016/j.apacoust.2011.03.005. The quantitative point is missing from the finding: a facade opening can give up to 10 dB(A) more than propagation over the roof."
+   },
+   {
+    "item": "Hornikx (2009) PhD thesis, Chalmers: 2.5-D ESM, 3-D PSTD, scale-model validation",
+    "status": "confirmed",
+    "correction": "Confirmed. The thesis also concludes that higher-order facade reflections greatly influence the equivalent level in courtyards."
+   },
+   {
+    "item": "Kang (2000), JASA 107(3), radiosity vs image source in street canyons",
+    "status": "confirmed",
+    "correction": "Crossref confirms JASA 107(3):1394-1404, doi 10.1121/1.428580. I did not check the content claims, including 'similar when width < height'."
+   },
+   {
+    "item": "Picaut, Colle, Bérengier (2006), transport theory / diffusion equation canyon model, JASA",
+    "status": "unverifiable",
+    "correction": "The cited URL returns 410. The author list and year look wrong. The transport-theory paper with this title is, as I recall, Le Pollès, Picaut, Bérengier & Bardos, JASA 116(5) (2004). The diffusion-process canyon model is Picaut (2002, Applied Acoustics 63) and Picaut et al. (2005, JASA). I found no co-author named 'Colle'. Fix the citation before relying on it."
+   },
+   {
+    "item": "Heimann (2007), Appl. Acoust. 68:217-237: upwind facades slightly louder in parallel-street layouts",
+    "status": "confirmed",
+    "correction": "Correct for the parallel-streets case, where an upwind facade also gets sound carried downwind from the next street. The paper's main finding is the opposite in general: wind gives quieter upwind and louder downwind facades, more so with hip roofs. The summary should state both."
+   },
+   {
+    "item": "Van Renterghem et al. (2013), INTER-NOISE Innsbruck: turbulence scattering significant at shielded facades below 1 kHz, strong-turbulence periods dominate Leq, use high turbulence strengths",
+    "status": "confirmed"
+   },
+   {
+    "item": "Yunus et al. (2023), Aerospace Sci. Tech.: Gaussian beams cut error by 5 dB (lit) and 35 dB (terrain shadows) vs straight rays",
+    "status": "confirmed",
+    "correction": "Yunus, Casalino, Avallone, Ragni (TU Delft), AST vol. 139, 108410. Both numbers confirmed. The finding's affiliation 'Politecnico di Torino' reflects only the repository hosting the paper. The abstract also reports that buildings add about +5 dB in lit zones through multiple reflections."
+   },
+   {
+    "item": "Riegel & Sparrow (2024), JASA: combined ray tracing/radiosity for sonic booms in canyons; diffuse reflections matter most; shadow zones without diffraction",
+    "status": "confirmed",
+    "correction": "JASA 155(2):1527-1533. The abstract makes no mention of validation against SonicBOBS. That claim, for the 2019 paper, was not checked."
+   },
+   {
+    "item": "Malbéqui et al. (2023), Forum Acusticum, doi 10.61782/fa.2023.0104: ray codes vs image-source corner/canyon cases for UAM",
+    "status": "corrected",
+    "correction": "There is one author, P. Malbéqui (ONERA), not 'et al.'. The study covers octave bands 63 Hz-8 kHz with the source at high altitude. Its useful numbers are missing from the finding: about +9 dB near a corner and about +14 dB with source and microphone both in the canyon. The claim that rays are invalid below a few tens of Hz was not found in the abstract."
+   },
+   {
+    "item": "DTU Orbit (2024), 'Impact of building facade design on road and rooftop noises': balconies -3.5 to +6.3 dB including rooftop (elevated) sources",
+    "status": "corrected",
+    "correction": "This is Feriani, Engsig-Karup & Jeong, Applied Acoustics 240 (2025) 110935, using a discontinuous Galerkin FEM. The abstract gives the balcony range of -3.5 to 6.3 dB as depending on source location, but says the balcony effect on rooftop sources is minor (about +/-1 dB). For rooftop sources, facade tilting matters (-8.4 to +4.6 dB), and the opposite building's reflections add up to 12 dB in a narrow canyon. The finding's implication that balconies strongly affect elevated sources is the reverse of what the abstract says."
+   },
+   {
+    "item": "Hossam El Dien & Woloszyn (2003), WIT Trans. Built Env. 69: balcony depth 4-11 dB(A), increasing with floor; pyramid tracing",
+    "status": "confirmed",
+    "correction": "Confirmed. The inclined ceiling gives up to 6 dB(A) on higher floors."
+   },
+   {
+    "item": "Van Renterghem & Thomas (2025), Forum Acusticum: self-shielding windows, largest reduction on upper floors, diffuse canyon field",
+    "status": "confirmed",
+    "correction": "doi 10.61782/fa.2025.0764. The design premise is street-level sources diffracting around convex elements, which supports the finding's caveat that the sign may flip for an overhead source."
+   },
+   {
+    "item": "Van Renterghem et al. (2013), 'The potential of building envelope greening to achieve quietness'",
+    "status": "confirmed",
+    "correction": "Building and Environment 61:34-44, doi 10.1016/j.buildenv.2012.12.001. The qualitative claims are confirmed. The abstract has no dB numbers."
+   },
+   {
+    "item": "HOSANNA toolbox: green roof about 3 dBA flat to 8 dBA ridged; green facades 2-3 dB(A) in a 19 m canyon",
+    "status": "unverifiable",
+    "correction": "The citation is the Forssén et al. paper at Transport Research Arena 2014, a conference paper. Its abstract says only that green roofs 'may significantly reduce the noise at the quiet side'. The 3/8 dBA and 2-3 dB(A) figures are not in the abstract."
+   },
+   {
+    "item": "Van Renterghem et al. (2012), EURONOISE: vegetated low barriers, FDTD/PSTD/BEM/CRR, 19.2 m canyon, absorption essential",
+    "status": "confirmed"
+   },
+   {
+    "item": "FHWA pavement study: asphalt EFR 5000-15000 cgs rayls, about 30000 aged",
+    "status": "confirmed",
+    "correction": "Confirmed. Table 2 gives new DGAC 12400 and old 30000. Porous pavements are 7200-10000, in the lower half of the range."
+   },
+   {
+    "item": "Trikootam et al. (2017), JASA, Benchmark cases for urban sound propagation",
+    "status": "unverifiable",
+    "correction": "The sonicfield URL returns 410. Neither the author list nor a DOI could be confirmed, and the finding itself admits the full text was not retrieved."
+   },
+   {
+    "item": "Van Renterghem & Botteldooren (2010), JASA, meteorological influence between adjacent city canyons",
+    "status": "unverifiable",
+    "correction": "The cited URL returns 410, and I could not retrieve another copy. The paper very likely exists (JASA 2010), but the specific findings are unchecked."
+   },
+   {
+    "item": "EM2PAU 1/2-scale canyon, 9 sonic anemometers, 48 thermocouples, PE",
+    "status": "unverifiable",
+    "correction": "The HAL page was blocked by bot protection."
+   }
+  ],
+  "overstated_or_wrong_claims": [
+   "Ögren & Forssén 2004 is misquoted by an order of magnitude. The abstract says turbulence raises the expected shielded-canyon level by 25 dB at 1.6 kHz, not 2-5 dB. It is also filed under the wrong mechanism: it is scattering into a shielded courtyard, not decorrelation of facade reflections. The coherence-loss section's quantitative backing therefore rests only on the unverifiable Van Renterghem & Botteldooren 2010 paper.",
+   "The DTU facade study (Feriani, Engsig-Karup, Jeong, Applied Acoustics 2025, not 'DTU Orbit 2024') is cited as showing balconies at -3.5 to +6.3 dB 'including rooftop sources'. Its abstract says the balcony effect on rooftop sources is minor (about +/-1 dB), while facade tilting (-8.4 to +4.6 dB) and opposite-facade reflections (up to +12 dB) are what matter for elevated sources. It is a DG-FEM study, which should be noted where the open-codes section discusses DG.",
+   "Many specific coefficients are presented as verified, but they are absent from the abstracts and could not be confirmed: Forssén 2014 (7/14 dB canyon terms, sd <3 / ~4 dB(A), C_v^2 = 1), Wei 2014 (sd 2.7 dB, Zn = 77/10, -5 dB gabled roof, >14 dBA, 565 configurations / 20,740 results), Schiff 2010 (-1 to -4 dB per canyon), HOSANNA (3/8 dBA roofs, 2-3 dB(A) facades), and Lugten 2024 (8-9 / 14 dB(A), taken from the InterNoise 2022 version). Treat them as unconfirmed until the full texts are checked.",
+   "The Picaut transport-theory citation ('Picaut, Colle, Bérengier 2006') has a doubtful author list and year. As I recall it, the paper is Le Pollès, Picaut, Bérengier & Bardos (2004), and I found no evidence for a co-author 'Colle'.",
+   "Malbéqui 2023 is single-authored, and the finding leaves out its directly relevant numbers: a high-altitude source gives about +9 dB near a corner and about +14 dB inside a canyon.",
+   "Heimann 2007 is summarised by the exception only. The general finding is quieter upwind and louder downwind facades; upwind facades are slightly louder only in the parallel-streets case.",
+   "The open question 'measured directional scattering coefficients are essentially absent, ISO 17497-1 gives only random incidence' overlooks ISO 17497-2, the directional diffusion coefficient (Cox & D'Antonio), which characterises the spatial distribution of scattered energy. Facade data under it are scarce, but a standard exists.",
+   "Wei 2014 page range '1098-1111' is unconfirmed; the publisher landing page lists only 14 pages.",
+   "The Hornikx-Waxler-Forssén 2010 'urban canyon with high amplitude and phase accuracy' was a 2-D case. The 3-D validation was only over a screen.",
+   "The finding's suggestion that Hornikx 2014's A_can split is reusable should carry its validity condition: source and receiver environments separated by at least four street widths, built for traffic sources."
+  ],
+  "important_omissions": [
+   "Edge diffraction methods for the GA half of the reciprocity table: the Biot-Tolstoy-Medwin / Svensson edge-diffraction model, UTD (Kouyoumjian-Pathak; Keller GTD) and Pierce's wedge solution. Without them a ray/radiosity table has the artificial hard shadows that Riegel & Sparrow report. Roof-edge diffraction into courtyards is the dominant path for low-elevation helicopter states.",
+   "Albert & Liu (CRREL): FDTD and measurements of acoustic pulses around buildings and in a mock urban village, e.g. JASA 2010 'The effect of buildings on acoustic pulse propagation in an urban environment', and Liu & Albert 2006 on right-angle walls. This is an important full-wave validation dataset with impulsive and elevated-like sources that the validation section omits.",
+   "Hornikx (2016), 'Ten questions concerning computational urban acoustics' (Building and Environment), the central review of urban wave and GA methods and their validation status.",
+   "Classic street-canyon multiple-reflection and modal models: Bullen & Fricke (1982); Davies (1978, corridors); Heutschi (1995); Iu & Li (2002) image-source canyon model; Kang's later work and his book Urban Sound Environment (2007). Also Picaut et al. (2005) real-street measurements as validation data.",
+   "Engineering-method reflection and coherence treatments that NICEOPS could borrow directly: Nord2000 and Harmonoise/Imagine facade reflection with Fresnel-zone weighting and coherence factors, and CNOSSOS-EU reflection rules. They are mentioned in passing but not reviewed.",
+   "Aircraft-specific urban propagation beyond Lugten: Hao & Kang (2014) on urban morphology and flyover noise (Applied Acoustics, cited by Lugten); NASA/UAM urban propagation work and the Penn State group's urban rotorcraft/UAM ray studies; Empa's sonAIR and facade-reflection treatments for aircraft noise.",
+   "Doppler and time-variance for a moving source in a multipath canyon: time-domain image-source or auralization approaches that model differing Doppler per path. The findings assert that Doppler smears interference but cite no source for it.",
+   "The DTU study's other result: for rooftop (elevated) sources the opposite facade's reflection adds up to 12 dB in narrow canyons. That number bears directly on helicopter facade exposure.",
+   "Directional diffusion coefficient standard ISO 17497-2, and in-situ scattering measurement methods (Mommertz/Vorländer and others), relevant to the open question on facade scattering at steep incidence.",
+   "Ostashev & Wilson's treatment of turbulence-induced coherence loss in reflected and multipath fields (Acoustics in Moving Inhomogeneous Media), the theoretical basis for the partial-coherence factors the findings propose to calibrate with PE phase screens."
+  ]
+ }
+}

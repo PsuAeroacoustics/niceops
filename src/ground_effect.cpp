@@ -324,6 +324,23 @@ std::array<double, 2> spherical_reflection_coefficient(double cos_grazing, doubl
             boundary_loss);
 }
 
+double diffuse_reflection(std::complex<double> admittance)
+{
+    // Simpson's rule in mu = cos theta, over 2 mu |R_p(mu)|^2: fine enough
+    // for the dip at mu ~ |beta| of a hard ground's.
+    constexpr int intervals = 4000;
+    const double h = 1.0 / intervals;
+    double sum = 0.0;
+    for (int i = 0; i <= intervals; i++)
+    {
+        const double mu = i * h;
+        const auto r = reflection_coefficient(mu, 0.0, admittance.real(), admittance.imag(), false);
+        const double value = 2.0 * mu * (r[0] * r[0] + r[1] * r[1]);
+        sum += (i == 0 || i == intervals ? 1.0 : i % 2 == 1 ? 4.0 : 2.0) * value;
+    }
+    return sum * h / 3.0;
+}
+
 void add_bounce_loss(double grazing, int bounces,
         const std::vector<std::complex<double>>& admittance, std::size_t first_band,
         std::size_t last_band, double* loss)

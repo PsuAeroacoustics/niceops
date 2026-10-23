@@ -1,0 +1,1174 @@
+#include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <complex>
+#include <filesystem>
+#include <fstream>
+#include <random>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include "building_input.hpp"
+#include "buildings.hpp"
+#include "point_paths.hpp"
+#include "util/constants.hpp"
+
+using namespace niceops; // NOLINT
+
+namespace {
+
+// A gable house 10 m by 20 m, its ridge along y at x = 5: eaves 6 m up, the
+// ridge 10 m, the roof's planes rising 0.8 a metre.
+Footprint gable_house()
+{
+    Footprint f;
+    f.x = {0.0, 10.0, 10.0, 0.0};
+    f.y = {0.0, 0.0, 20.0, 20.0};
+    f.roof = {{0.8, 0.0, 6.0}, {-0.8, 0.0, 14.0}};
+    return f;
+}
+
+} // namespace
+
+// The house's top is its ridge; its long walls stand to the eaves, its gable
+// walls in two stretches up to the ridge and down; it diffracts at four
+// corners as tall as the eaves, at its eaves, at its four rakes, and at its
+// ridge, each wedge the angle its faces make: the eaves 90 degrees plus the
+// pitch inside, the rakes square, the ridge 180 less twice the pitch.
+TEST_CASE("a gable roof's walls, eaves, rakes and ridge", "[pitched_roofs]")
+{
+    const Buildings city({gable_house()});
+    REQUIRE(city.footprints()[0].top == Catch::Approx(10.0).epsilon(1e-12));
+    std::size_t rectangles = 0, sloped = 0;
+    for (const Facade& f : city.facades())
+    {
+        if (!(f.top_start == f.top_start) || f.top_start == f.top_end)
+        {
+            rectangles++;
+            REQUIRE(facade_top(f, Vec3(f.x0, f.y0, 0.0)) == Catch::Approx(6.0).epsilon(1e-12));
+            continue;
+        }
+        sloped++;
+        // A gable stretch runs from an eave (6) to the ridge (10).
+        REQUIRE(std::min(f.top_start, f.top_end) == Catch::Approx(6.0).epsilon(1e-12));
+        REQUIRE(std::max(f.top_start, f.top_end) == Catch::Approx(10.0).epsilon(1e-12));
+        const Vec3 middle(0.5 * (f.x0 + f.x1), 0.5 * (f.y0 + f.y1), 0.0);
+        REQUIRE(facade_top(f, middle) == Catch::Approx(8.0).epsilon(1e-12));
+    }
+    REQUIRE(rectangles == 2);
+    REQUIRE(sloped == 4);
+    const double pitch = std::atan(0.8);
+    std::size_t corners = 0, eaves = 0, rakes = 0, ridges = 0;
+    for (const Edge& e : city.edges())
+    {
+        if (e.vertical)
+        {
+            corners++;
+            REQUIRE(e.length == Catch::Approx(6.0).epsilon(1e-12));
+            REQUIRE(e.n == Catch::Approx(1.5).epsilon(1e-12));
+            continue;
+        }
+        const Vec3 end = e.start + e.length * e.direction;
+        if (std::abs(e.direction.z) < 1e-12 && std::abs(e.start.z - 10.0) < 1e-9)
+        {
+            ridges++;
+            REQUIRE(e.length == Catch::Approx(20.0).epsilon(1e-12));
+            REQUIRE(e.start.x == Catch::Approx(5.0).epsilon(1e-12));
+            REQUIRE(e.n == Catch::Approx(1.0 + 2.0 * pitch / pi).epsilon(1e-12));
+        }
+        else if (std::abs(e.direction.z) < 1e-12)
+        {
+            eaves++;
+            REQUIRE(e.start.z == Catch::Approx(6.0).epsilon(1e-12));
+            REQUIRE(e.n == Catch::Approx(2.0 - (0.5 * pi + pitch) / pi).epsilon(1e-12));
+        }
+        else
+        {
+            rakes++;
+            REQUIRE(std::abs(std::abs(end.z - e.start.z) - 4.0) < 1e-9);
+            REQUIRE(e.n == Catch::Approx(1.5).epsilon(1e-12));
+        }
+        // The air lies above the roof, off both faces.
+        REQUIRE(e.air.z > 0.0);
+    }
+    REQUIRE(corners == 4);
+    REQUIRE(eaves == 2);
+    REQUIRE(rakes == 4);
+    REQUIRE(ridges == 1);
+}
+
+// Blocked where the segment passes through the house: inside its footprint
+// between the floor and the roof over that point, against sampling the
+// segment finely; below the floor, the house and its image, from minus the
+// roof to the roof.  A point is buried under the roof and not above it.
+TEST_CASE("a pitched house blocks what passes under its roof", "[pitched_roofs]")
+{
+    const Footprint house = gable_house();
+    const Buildings city({house});
+    std::mt19937 rng(7);
+    std::uniform_real_distribution<double> x(-5.0, 15.0), y(-5.0, 25.0), z(-12.0, 14.0);
+    std::size_t blocked = 0, open = 0;
+    for (int trial = 0; trial < 4000; trial++)
+    {
+        const Vec3 a(x(rng), y(rng), z(rng)), b(x(rng), y(rng), z(rng));
+        for (const bool below : {false, true})
+        {
+            if (!below && (a.z < 0.0 || b.z < 0.0))
+                continue;
+            // Sampled: inside somewhere by a margin.
+            bool deep = false, near = false;
+            for (int k = 1; k < 4000; k++)
+            {
+                const Vec3 p = a + (k / 4000.0) * (b - a);
+                const bool in_plan = p.x > 0.0 && p.x < 10.0 && p.y > 0.0 && p.y < 20.0;
+                const double h = roof_height(house, p.x, p.y);
+                const double low = below ? -h : 0.0;
+                const double margin = std::min({p.x, 10.0 - p.x, p.y, 20.0 - p.y, p.z - low, h - p.z});
+                if (in_plan && margin > 0.02)
+                    deep = true;
+                if (in_plan && margin > -0.02)
+                    near = true;
+            }
+            if (deep)
+            {
+                REQUIRE(city.blocked(a, b, below));
+                blocked++;
+            }
+            else if (!near)
+            {
+                REQUIRE(!city.blocked(a, b, below));
+                open++;
+            }
+        }
+    }
+    REQUIRE(blocked > 500);
+    REQUIRE(open > 500);
+    REQUIRE(city.buried(Vec3(3.0, 10.0, 8.0)));
+    REQUIRE(!city.buried(Vec3(1.0, 10.0, 7.0)));
+    REQUIRE(!city.buried(Vec3(5.0, 10.0, 10.5)));
+}
+
+// A shed roof (one plane) and a hip roof (four planes): their tops, and a
+// hip roof's ridge and four hips, all convex.
+TEST_CASE("shed and hip roofs", "[pitched_roofs]")
+{
+    Footprint shed;
+    shed.x = {0.0, 8.0, 8.0, 0.0};
+    shed.y = {0.0, 0.0, 6.0, 6.0};
+    shed.roof = {{0.5, 0.0, 3.0}};
+    const Buildings sheds({shed});
+    REQUIRE(sheds.footprints()[0].top == Catch::Approx(7.0).epsilon(1e-12));
+    for (const Edge& e : sheds.edges())
+        REQUIRE(e.n > 1.0);
+
+    Footprint hip;
+    hip.x = {0.0, 12.0, 12.0, 0.0};
+    hip.y = {0.0, 0.0, 8.0, 8.0};
+    // Every side's plane rising at 1 in 2 from 5 m: the ridge at 7 m from
+    // x = 4 to 8.
+    hip.roof = {{0.5, 0.0, 5.0}, {-0.5, 0.0, 11.0}, {0.0, 0.5, 5.0}, {0.0, -0.5, 9.0}};
+    const Buildings hips({hip});
+    REQUIRE(hips.footprints()[0].top == Catch::Approx(7.0).epsilon(1e-12));
+    std::size_t level = 0, sloping = 0;
+    for (const Edge& e : hips.edges())
+    {
+        if (e.vertical)
+            continue;
+        const bool interior = e.start.x > 1e-9 && e.start.x < 12.0 - 1e-9 && e.start.y > 1e-9 && e.start.y < 8.0 - 1e-9;
+        const Vec3 end = e.start + e.length * e.direction;
+        const bool interior_end = end.x > 1e-9 && end.x < 12.0 - 1e-9 && end.y > 1e-9 && end.y < 8.0 - 1e-9;
+        if (!interior && !interior_end)
+            continue; // an eave
+        if (std::abs(e.direction.z) < 1e-12)
+        {
+            level++;
+            REQUIRE(e.length == Catch::Approx(4.0).epsilon(1e-9));
+            REQUIRE(e.start.z == Catch::Approx(7.0).epsilon(1e-12));
+        }
+        else
+            sloping++;
+        REQUIRE(e.n > 1.0);
+        REQUIRE(e.n < 1.5);
+    }
+    REQUIRE(level == 1);
+    REQUIRE(sloping == 4);
+}
+
+namespace {
+
+// A long gable house's boundary-element solutions (tools/thick_barrier_bem.py
+// --width 8 --height 6 --ridge 9, 90 elements a wavelength): frequency, the
+// source's y and height, the microphone's distance behind the house and
+// height, and the level, dB re the free field.
+struct GableCase
+{
+    double f, source_y, source_z, behind, z, exact;
+};
+
+const std::vector<GableCase> gable_cases {
+        {125, -25, 4.5, 2, 1.2, -10.62},
+        {125, -25, 4.5, 2, 4, -9.75},
+        {125, -25, 4.5, 2, 7, -3.29},
+        {125, -25, 4.5, 5, 1.2, -11.88},
+        {125, -25, 4.5, 5, 4, -7.12},
+        {125, -25, 4.5, 5, 7, -3.50},
+        {125, -25, 4.5, 10, 1.2, -21.32},
+        {125, -25, 4.5, 10, 4, -8.16},
+        {125, -25, 4.5, 10, 7, -3.21},
+        {125, -10, 2, 2, 1.2, -15.32},
+        {125, -10, 2, 2, 4, -14.43},
+        {125, -10, 2, 2, 7, -8.07},
+        {125, -10, 2, 5, 1.2, -16.35},
+        {125, -10, 2, 5, 4, -11.66},
+        {125, -10, 2, 5, 7, -8.36},
+        {125, -10, 2, 10, 1.2, -25.83},
+        {125, -10, 2, 10, 4, -12.66},
+        {125, -10, 2, 10, 7, -8.07},
+        {250, -25, 4.5, 2, 1.2, -20.96},
+        {250, -25, 4.5, 2, 4, -17.49},
+        {250, -25, 4.5, 2, 7, -5.80},
+        {250, -25, 4.5, 5, 1.2, -19.21},
+        {250, -25, 4.5, 5, 4, -11.83},
+        {250, -25, 4.5, 5, 7, -5.47},
+        {250, -25, 4.5, 10, 1.2, -7.31},
+        {250, -25, 4.5, 10, 4, -6.73},
+        {250, -25, 4.5, 10, 7, -7.55},
+        {250, -10, 2, 2, 1.2, -30.52},
+        {250, -10, 2, 2, 4, -27.01},
+        {250, -10, 2, 2, 7, -15.49},
+        {250, -10, 2, 5, 1.2, -28.53},
+        {250, -10, 2, 5, 4, -21.22},
+        {250, -10, 2, 5, 7, -15.13},
+        {250, -10, 2, 10, 1.2, -16.36},
+        {250, -10, 2, 10, 4, -15.93},
+        {250, -10, 2, 10, 7, -17.39},
+        {500, -25, 4.5, 2, 1.2, -26.39},
+        {500, -25, 4.5, 2, 4, -18.12},
+        {500, -25, 4.5, 2, 7, -9.28},
+        {500, -25, 4.5, 5, 1.2, -20.61},
+        {500, -25, 4.5, 5, 4, -12.55},
+        {500, -25, 4.5, 5, 7, -9.38},
+        {500, -25, 4.5, 10, 1.2, -10.57},
+        {500, -25, 4.5, 10, 4, -11.62},
+        {500, -25, 4.5, 10, 7, -10.26},
+        {500, -10, 2, 2, 1.2, -29.32},
+        {500, -10, 2, 2, 4, -21.01},
+        {500, -10, 2, 2, 7, -12.45},
+        {500, -10, 2, 5, 1.2, -23.28},
+        {500, -10, 2, 5, 4, -15.23},
+        {500, -10, 2, 5, 7, -12.67},
+        {500, -10, 2, 10, 1.2, -12.94},
+        {500, -10, 2, 10, 4, -14.27},
+        {500, -10, 2, 10, 7, -13.69},
+        {1000, -25, 4.5, 2, 1.2, -37.83},
+        {1000, -25, 4.5, 2, 4, -28.30},
+        {1000, -25, 4.5, 2, 7, -15.56},
+        {1000, -25, 4.5, 5, 1.2, -31.21},
+        {1000, -25, 4.5, 5, 4, -16.96},
+        {1000, -25, 4.5, 5, 7, -15.74},
+        {1000, -25, 4.5, 10, 1.2, -16.85},
+        {1000, -25, 4.5, 10, 4, -21.18},
+        {1000, -25, 4.5, 10, 7, -15.58},
+        {1000, -10, 2, 2, 4, -29.76},
+        {1000, -10, 2, 2, 7, -17.31},
+        {1000, -10, 2, 5, 1.2, -32.46},
+        {1000, -10, 2, 5, 4, -18.18},
+        {1000, -10, 2, 5, 7, -17.69},
+        {1000, -10, 2, 10, 1.2, -17.74},
+        {1000, -10, 2, 10, 4, -22.43},
+        {1000, -10, 2, 10, 7, -17.82},
+};
+
+// The level, dB re the free field, of a long house `width` across: every
+// ray times the root of its length, the line source's equivalent.
+double gable_level(const Buildings& city, const GableCase& c, const PointPathOptions& options, double width = 8.0)
+{
+    const double k = 2.0 * pi * c.f / 343.2;
+    const Vec3 s(0.0, c.source_y, c.source_z), m(0.0, width + c.behind, c.z);
+    const std::vector<double> reflection(city.facades().size(), 1.0);
+    const PointSourceField field(city, s, m, options);
+    std::complex<double> sum(0.0, 0.0);
+    for (const PointRay& ray : field.rays())
+    {
+        std::complex<double> a;
+        if (options.edge_source)
+        {
+            const std::vector<std::complex<double>> f = edge_source_factors(city, ray, {k});
+            a = f.empty() ? point_ray_amplitude(ray, reflection, 1.0, k) : reflected_amplitude(ray, reflection, 1.0) * f[0];
+        }
+        else
+            a = point_ray_amplitude(ray, reflection, 1.0, k);
+        sum += a * std::sqrt(ray.length) * std::polar(1.0, k * ray.length);
+    }
+    return 20.0 * std::log10(std::abs(sum) * std::sqrt((m - s).norm()));
+}
+
+} // namespace
+
+// A gable house 8 m across, its eaves 6 m up and its ridge 9 m, long enough
+// to be two-dimensional, on rigid ground; the source and the microphone in
+// one plane across it, as for the long block (test_point_paths.cpp): every
+// ray times the root of its length is the line source's, and the exact
+// values a boundary-element solution for one (90 elements a wavelength,
+// converged to 0.15 dB; the one case that was not is left out).  Sound
+// crosses the roof by the near eave, the ridge and the far eave, three edges
+// whose wedges are the roof's own.  UTD is within 0.74 dB, rms 0.17, and the
+// edge-source integral within 0.53, rms 0.12; a flat roof at the eaves, at
+// the mean height or at the ridge -- what LoD1 would give it -- is 6.2, 8.9
+// and 11.0 dB rms off.
+TEST_CASE("over a long gable house the point-source field is the boundary-element solution's", "[pitched_roofs]")
+{
+    Footprint house;
+    house.x = {-2000.0, 2000.0, 2000.0, -2000.0};
+    house.y = {0.0, 0.0, 8.0, 8.0};
+    house.roof = {{0.0, 0.75, 6.0}, {0.0, -0.75, 12.0}};
+    const Buildings city({house});
+    Footprint box = house;
+    box.roof.clear();
+    box.top = 7.5;
+    const Buildings flat({box});
+    double square[3] {0.0, 0.0, 0.0};
+    for (const GableCase& c : gable_cases)
+    {
+        INFO(c.f << " Hz, source " << c.source_y << " m, " << c.source_z << " m up, microphone " << c.behind
+                  << " m behind, " << c.z << " m up");
+        PointPathOptions options;
+        const double utd = gable_level(city, c, options) - c.exact;
+        REQUIRE(std::abs(utd) < 1.0);
+        options.edge_source = true;
+        const double edge_source = gable_level(city, c, options) - c.exact;
+        REQUIRE(std::abs(edge_source) < 0.7);
+        const double lod1 = gable_level(flat, c, PointPathOptions()) - c.exact;
+        square[0] += utd * utd;
+        square[1] += edge_source * edge_source;
+        square[2] += lod1 * lod1;
+    }
+    const double n = static_cast<double>(gable_cases.size());
+    REQUIRE(std::sqrt(square[0] / n) < 0.25);
+    REQUIRE(std::sqrt(square[1] / n) < 0.18);
+    REQUIRE(std::sqrt(square[2] / n) > 5.0);
+}
+
+namespace {
+
+std::string write_file(const std::string& name, const std::string& text)
+{
+    const auto path = (std::filesystem::temp_directory_path() / name).string();
+    std::ofstream(path) << text;
+    return path;
+}
+
+} // namespace
+
+// A district in feet with a gable house, a hip-roofed house capped flat (a
+// deck at 22 ft, below its planes' 22.5), a shed whose top is above its
+// plane, and a flat block.  Lengths convert, slopes do not, and a plane is
+// the same plane wherever its point is given on it.
+TEST_CASE("roof planes come from a CSV beside the district", "[pitched_roofs]")
+{
+    const std::string district = write_file("niceops_roofs_district.csv",
+            "building,x,y,top\n"
+            "1,0,0,40\n1,30,0,40\n1,30,60,40\n1,0,60,40\n"
+            "2,50,0,22\n2,90,0,22\n2,90,30,22\n2,50,30,22\n"
+            "3,100,0,30\n3,120,0,30\n3,120,20,30\n3,100,20,30\n"
+            "4,0,100,15\n4,10,100,15\n4,10,110,15\n4,0,110,15\n");
+    // The gable rises 0.8 from 18 ft at its eaves, its second plane given by
+    // a point on its far eave; the hip rises 0.5 from 15 ft on every side.
+    const std::string roofs = write_file("niceops_roofs_planes.csv",
+            "building,x,y,z,slope_x,slope_y\n"
+            "1,0,0,18,0.8,0\n1,30,45,18,-0.8,0\n"
+            "2,50,0,15,0.5,0\n2,90,0,15,-0.5,0\n2,50,0,15,0,0.5\n2,50,30,15,0,-0.5\n"
+            "3,100,0,10,0,0.5\n");
+    BuildingInputOptions options;
+    options.roofs = roofs;
+    const BuildingInput in = read_buildings(district, options);
+    REQUIRE(in.footprints[0].roof.size() == 2);
+    REQUIRE(roof_height(in.footprints[0], 15.0 * ft2m, 10.0 * ft2m) == Catch::Approx(30.0 * ft2m).epsilon(1e-12));
+    REQUIRE(roof_height(in.footprints[0], 30.0 * ft2m, 10.0 * ft2m) == Catch::Approx(18.0 * ft2m).epsilon(1e-12));
+    REQUIRE(in.footprints[0].roof[1].a == -0.8);
+    // The hip's deck: a fifth, level plane at its top.
+    REQUIRE(in.footprints[1].roof.size() == 5);
+    REQUIRE(roof_height(in.footprints[1], 70.0 * ft2m, 15.0 * ft2m) == Catch::Approx(22.0 * ft2m).epsilon(1e-12));
+    REQUIRE(roof_height(in.footprints[1], 52.0 * ft2m, 15.0 * ft2m) == Catch::Approx(16.0 * ft2m).epsilon(1e-12));
+    REQUIRE(in.footprints[2].roof.size() == 1);
+    REQUIRE(in.footprints[3].roof.empty());
+    const Buildings city(in.footprints);
+    REQUIRE(city.footprints()[0].top == Catch::Approx(30.0 * ft2m).epsilon(1e-12));
+    REQUIRE(city.footprints()[1].top == Catch::Approx(22.0 * ft2m).epsilon(1e-12));
+    REQUIRE(city.footprints()[2].top == Catch::Approx(20.0 * ft2m).epsilon(1e-12));
+    REQUIRE(city.footprints()[3].top == Catch::Approx(15.0 * ft2m).epsilon(1e-12));
+
+    options.roofs = write_file("niceops_roofs_stray.csv", "building,x,y,z,slope_x,slope_y\n7,0,0,10,0.5,0\n");
+    REQUIRE_THROWS_WITH(read_buildings(district, options), Catch::Matchers::ContainsSubstring("building 7 is not"));
+    options.roofs = write_file("niceops_roofs_metres.csv", "building,x,y,z_m,slope_x,slope_y\n1,0,0,6,0.5,0\n");
+    REQUIRE_THROWS_WITH(read_buildings(district, options), Catch::Matchers::ContainsSubstring("is in m"));
+}
+
+namespace {
+
+// A long mansard house's boundary-element solutions (tools/thick_barrier_bem.py
+// --width 12 --height 6 --roof '1.5,7.5;5.25,9;6.75,9;10.5,7.5', 90 elements
+// a wavelength, the four cases not converged to 0.15 dB left out), as
+// gable_cases.
+const std::vector<GableCase> mansard_cases {
+        {125, -30, 2, 2, 0.5, -26.60},
+        {125, -30, 2, 2, 1.5, -19.67},
+        {125, -30, 2, 2, 4, -19.89},
+        {125, -30, 2, 6, 0.5, -20.78},
+        {125, -30, 2, 6, 1.5, -18.28},
+        {125, -30, 2, 6, 4, -15.05},
+        {125, -30, 2, 15, 0.5, -14.15},
+        {125, -30, 2, 15, 1.5, -28.20},
+        {125, -30, 2, 15, 4, -14.75},
+        {125, -15, 0.5, 2, 0.5, -22.75},
+        {125, -15, 0.5, 2, 1.5, -15.82},
+        {125, -15, 0.5, 2, 4, -16.03},
+        {125, -15, 0.5, 6, 0.5, -16.78},
+        {125, -15, 0.5, 6, 1.5, -14.27},
+        {125, -15, 0.5, 6, 4, -11.07},
+        {125, -15, 0.5, 15, 0.5, -9.96},
+        {125, -15, 0.5, 15, 1.5, -24.25},
+        {125, -15, 0.5, 15, 4, -10.65},
+        {250, -30, 2, 2, 0.5, -26.35},
+        {250, -30, 2, 2, 1.5, -21.55},
+        {250, -30, 2, 2, 4, -24.12},
+        {250, -30, 2, 6, 0.5, -34.43},
+        {250, -30, 2, 6, 1.5, -25.02},
+        {250, -30, 2, 6, 4, -14.13},
+        {250, -30, 2, 15, 0.5, -16.47},
+        {250, -30, 2, 15, 1.5, -11.44},
+        {250, -30, 2, 15, 4, -16.58},
+        {250, -15, 0.5, 2, 0.5, -31.51},
+        {250, -15, 0.5, 2, 1.5, -26.70},
+        {250, -15, 0.5, 2, 4, -29.28},
+        {250, -15, 0.5, 6, 0.5, -39.41},
+        {250, -15, 0.5, 6, 1.5, -29.98},
+        {250, -15, 0.5, 6, 4, -19.11},
+        {250, -15, 0.5, 15, 0.5, -21.16},
+        {250, -15, 0.5, 15, 1.5, -16.11},
+        {250, -15, 0.5, 15, 4, -21.43},
+        {500, -30, 2, 2, 1.5, -40.28},
+        {500, -30, 2, 2, 4, -36.09},
+        {500, -30, 2, 6, 0.5, -34.20},
+        {500, -30, 2, 6, 1.5, -34.13},
+        {500, -30, 2, 6, 4, -28.97},
+        {500, -30, 2, 15, 0.5, -34.63},
+        {500, -30, 2, 15, 1.5, -26.64},
+        {500, -30, 2, 15, 4, -24.98},
+        {500, -15, 0.5, 2, 0.5, -47.29},
+        {500, -15, 0.5, 2, 1.5, -38.89},
+        {500, -15, 0.5, 2, 4, -34.64},
+        {500, -15, 0.5, 6, 0.5, -32.52},
+        {500, -15, 0.5, 6, 1.5, -32.60},
+        {500, -15, 0.5, 6, 4, -27.46},
+        {500, -15, 0.5, 15, 0.5, -32.75},
+        {500, -15, 0.5, 15, 1.5, -24.80},
+        {500, -15, 0.5, 15, 4, -23.35},
+        {1000, -30, 2, 2, 0.5, -36.76},
+        {1000, -30, 2, 2, 1.5, -37.41},
+        {1000, -30, 2, 2, 4, -31.29},
+        {1000, -30, 2, 6, 0.5, -26.75},
+        {1000, -30, 2, 6, 1.5, -27.66},
+        {1000, -30, 2, 6, 4, -20.27},
+        {1000, -30, 2, 15, 0.5, -18.75},
+        {1000, -30, 2, 15, 1.5, -21.23},
+        {1000, -30, 2, 15, 4, -15.78},
+        {1000, -15, 0.5, 6, 0.5, -34.31},
+        {1000, -15, 0.5, 6, 1.5, -35.06},
+        {1000, -15, 0.5, 6, 4, -27.72},
+        {1000, -15, 0.5, 15, 0.5, -25.93},
+        {1000, -15, 0.5, 15, 1.5, -28.41},
+        {1000, -15, 0.5, 15, 4, -22.97},
+};
+
+} // namespace
+
+// A long mansard house 12 m across, its eaves 6 m up and its deck 9 m (slopes
+// of 1 and 0.4 each side), against its boundary-element solution as the
+// gable is.  From a source low beside it to a microphone low and close
+// behind, the path bends at four edges -- the deck's two, the far break and
+// the far eave -- and only a chain (PointPathOptions::max_chain) carries it:
+// without one there is no ray at all.  With it those levels are within 1.5
+// dB below 4 m (at 4 m the microphone sits on the far lower slope's plane,
+// at its eave's boundary).  Over every case the rays are 3.9 dB rms: the
+// cascade over a mansard's nearly flat wedges (n 1.1), each pair sharing the
+// face the ray runs along, is that far from the exact field with three edges
+// as with four, where a gable's is 0.17 (THEORY 6.5).
+TEST_CASE("over a long mansard house the rays need four edges", "[pitched_roofs]")
+{
+    Footprint house;
+    house.x = {-2000.0, 2000.0, 2000.0, -2000.0};
+    house.y = {0.0, 0.0, 12.0, 12.0};
+    house.top = 9.0;
+    house.roof = {{0.0, 1.0, 6.0}, {0.0, 0.4, 6.9}, {0.0, -0.4, 11.7}, {0.0, -1.0, 18.0}};
+    const Buildings city({house});
+    PointPathOptions none;
+    none.max_chain = 3;
+    double square = 0.0;
+    int chained = 0;
+    for (const GableCase& c : mansard_cases)
+    {
+        INFO(c.f << " Hz, source " << c.source_y << " m, " << c.source_z << " m up, microphone " << c.behind
+                  << " m behind, " << c.z << " m up");
+        const double error = gable_level(city, c, PointPathOptions(), 12.0) - c.exact;
+        square += error * error;
+        const Vec3 s(0.0, c.source_y, c.source_z), m(0.0, 12.0 + c.behind, c.z);
+        const PointSourceField field(city, s, m, PointPathOptions());
+        int most = 0;
+        for (const PointRay& ray : field.rays())
+            most = std::max(most, ray.wedges);
+        const bool low_and_close = c.source_z < 1.0 && c.behind < 3.0;
+        if (low_and_close)
+        {
+            REQUIRE(most == 4);
+            REQUIRE(PointSourceField(city, s, m, none).rays().empty());
+            if (c.z < 2.0)
+                REQUIRE(std::abs(error) < 1.5);
+            chained++;
+        }
+        else if (c.source_z > 1.0)
+            REQUIRE(most == 3);
+    }
+    REQUIRE(chained == 9);
+    REQUIRE(std::sqrt(square / mansard_cases.size()) < 4.2);
+}
+
+// Across a hip roof below its ridge, from low beside it: the far eave, two
+// hips and the near eave, the hips oblique to the eaves, and the path over
+// them stationary in 3-D -- Keller's law at every edge -- however the solver
+// starts.
+TEST_CASE("a chain over a hip roof keeps Keller's law at every edge", "[pitched_roofs]")
+{
+    Footprint hip;
+    hip.x = {0.0, 12.0, 12.0, 0.0};
+    hip.y = {0.0, 0.0, 8.0, 8.0};
+    hip.roof = {{0.5, 0.0, 5.0}, {-0.5, 0.0, 11.0}, {0.0, 0.5, 5.0}, {0.0, -0.5, 9.0}};
+    const Buildings city({hip});
+    const Vec3 s(-2.0, 2.6, 1.0), m(14.0, 3.4, 1.0);
+    const PointSourceField field(city, s, m, PointPathOptions());
+    const PointRay* chain = nullptr;
+    for (const PointRay& ray : field.rays())
+        if (ray.wedges == 4 && ray.floor == 0)
+            chain = &ray;
+    REQUIRE(chain != nullptr);
+    REQUIRE(chain->path.size() == 6);
+    std::vector<const Edge*> g;
+    int oblique = 0;
+    for (std::size_t i = 1; i <= 4; i++)
+    {
+        const Vec3& p = chain->path[i];
+        for (const Edge& e : city.edges())
+        {
+            const double t = (p - e.start).dot(e.direction);
+            if (!e.vertical && t > 0.0 && t < e.length && (e.start + t * e.direction - p).norm() < 1e-9)
+                g.push_back(&e);
+        }
+        REQUIRE(g.size() == i);
+        oblique += std::abs(g.back()->direction.z) > 0.1;
+        const Vec3 in = (p - chain->path[i - 1]) / (p - chain->path[i - 1]).norm();
+        const Vec3 out = (chain->path[i + 1] - p) / (chain->path[i + 1] - p).norm();
+        REQUIRE(std::abs(in.dot(g.back()->direction) - out.dot(g.back()->direction)) < 1e-9);
+    }
+    REQUIRE(oblique == 2);
+    // From each edge's middle, the solver finds the same points.
+    std::vector<double> t;
+    for (const Edge* e : g)
+        t.push_back(0.5 * e->length);
+    REQUIRE(chain_points(g, s, m, t));
+    for (std::size_t i = 0; i < 4; i++)
+        REQUIRE((g[i]->start + t[i] * g[i]->direction - chain->path[i + 1]).norm() < 1e-8);
+}
+
+// The pruning's visibility proof takes a convex pitched house as its prism cut
+// by each roof plane (mirrored in a facade and in the floor as the footprint
+// is): pruned, the search finds the rays the unpruned one does, ray for ray,
+// among gable, hip, shed and mansard houses, from low and from above, the
+// microphones in their shadows and in the street.
+TEST_CASE("pruning finds every ray among pitched houses", "[pitched_roofs]")
+{
+    auto house = [](double x0, double y0, double w, double d, std::vector<RoofPlane> roof, double top) {
+        Footprint f;
+        f.x = {x0, x0 + w, x0 + w, x0};
+        f.y = {y0, y0, y0 + d, y0 + d};
+        // The planes given over the house's own corner.
+        for (RoofPlane& p : roof)
+            p.c -= p.a * x0 + p.b * y0;
+        f.roof = std::move(roof);
+        f.top = top;
+        return f;
+    };
+    const Buildings city({house(0.0, 0.0, 10.0, 16.0, {{0.7, 0.0, 6.0}, {-0.7, 0.0, 13.0}}, 20.0),
+            house(18.0, 0.0, 12.0, 8.0, {{0.5, 0.0, 5.0}, {-0.5, 0.0, 11.0}, {0.0, 0.5, 5.0}, {0.0, -0.5, 9.0}}, 20.0),
+            house(0.0, 24.0, 8.0, 6.0, {{0.0, 0.4, 4.0}}, 20.0),
+            house(18.0, 18.0, 12.0, 14.0, {{1.0, 0.0, 6.0}, {0.4, 0.0, 6.9}, {-0.4, 0.0, 11.7}, {-1.0, 0.0, 18.0}}, 9.0)});
+    const std::vector<std::pair<Vec3, Vec3>> pairs {{{-12.0, 8.0, 1.0}, {14.0, 8.0, 1.2}},
+            {{-12.0, 8.0, 1.0}, {34.0, 25.0, 1.2}}, {{24.0, -10.0, 1.5}, {24.0, 12.0, 1.2}},
+            {{14.0, 40.0, 30.0}, {14.0, -6.0, 1.2}}, {{-6.0, 27.0, 2.0}, {36.0, 4.0, 1.2}},
+            {{12.0, 27.0, 1.2}, {34.0, 25.0, 1.2}}, {{39.6, 3.7, 30.0}, {16.5, 4.5, 5.2}}};
+    std::size_t diffracted = 0, walls_and_slopes = 0, roofs_twice = 0;
+    for (const auto& [s, m] : pairs)
+    {
+        INFO("source " << s.x << ", " << s.y << ", " << s.z << "; microphone " << m.x << ", " << m.y << ", " << m.z);
+        PointPathOptions all;
+        all.prune = false;
+        const PointSourceField pruned(city, s, m);
+        const PointSourceField every(city, s, m, all);
+        REQUIRE(pruned.rays().size() == every.rays().size());
+        for (std::size_t i = 0; i < every.rays().size(); i++)
+        {
+            const PointRay& ray = every.rays()[i];
+            REQUIRE(pruned.rays()[i].length == ray.length);
+            REQUIRE(pruned.rays()[i].wedges == ray.wedges);
+            diffracted += ray.wedges >= 2;
+            walls_and_slopes += ray.wedges == 0 && !ray.facades.empty() && !ray.roof_facades.empty();
+            roofs_twice += ray.wedges == 2 && !ray.roof_facades.empty();
+        }
+    }
+    REQUIRE(diffracted > 100);
+    REQUIRE(walls_and_slopes > 0);
+    REQUIRE(roofs_twice > 0);
+}
+
+namespace {
+
+// Every wall stands below its top, every edge has a length, and no edge lies
+// where two buildings' surfaces meet in an inside corner.
+void require_sound(const Buildings& city)
+{
+    for (const Facade& f : city.facades())
+        for (double t : {0.0, 0.5, 1.0})
+        {
+            const Vec3 p(f.x0 + t * (f.x1 - f.x0), f.y0 + t * (f.y1 - f.y0), 0.0);
+            REQUIRE(facade_bottom(f, p) < facade_top(f, p) + 1e-9);
+        }
+    for (const Edge& e : city.edges())
+        REQUIRE(e.length > 0.0);
+}
+
+bool has_edge_through(const Buildings& city, const Vec3& p)
+{
+    for (const Edge& e : city.edges())
+    {
+        const double t = (p - e.start).dot(e.direction);
+        if (t > 1e-6 && t < e.length - 1e-6 && (e.start + t * e.direction - p).norm() < 1e-6)
+            return true;
+    }
+    return false;
+}
+
+} // namespace
+
+// A side two buildings share is judged along it, not by their highest points:
+// a gable's eave side against a taller flat building loses its wall, eave and
+// corners there, and the flat building keeps its wall from the gable's eave to
+// its roof, its roof edge and its corners -- where comparing the ridge (9 m)
+// with the flat roof (7 m) once inverted the gable's wall, kept its eave in the
+// inside corner and dropped the flat building's side.
+TEST_CASE("a gable's eave against a taller flat roof", "[pitched_roofs]")
+{
+    Footprint gable;
+    gable.x = {0.0, 10.0, 10.0, 0.0};
+    gable.y = {0.0, 0.0, 8.0, 8.0};
+    gable.roof = {{0.0, 1.0, 5.0}, {0.0, -1.0, 13.0}};
+    Footprint block;
+    block.x = {0.0, 10.0, 10.0, 0.0};
+    block.y = {8.0, 8.0, 14.0, 14.0};
+    block.top = 7.0;
+    const Buildings city({gable, block});
+    require_sound(city);
+    // The flat building's wall over the gable's eave, 5 m to 7 m.
+    bool wall = false;
+    for (const Facade& f : city.facades())
+        if (std::abs(f.y0 - 8.0) < 1e-9 && std::abs(f.y1 - 8.0) < 1e-9)
+        {
+            REQUIRE(f.bottom == Catch::Approx(5.0));
+            REQUIRE(f.top == Catch::Approx(7.0));
+            wall = true;
+        }
+    REQUIRE(wall);
+    REQUIRE(!has_edge_through(city, Vec3(5.0, 8.0, 5.0)));
+    REQUIRE(has_edge_through(city, Vec3(5.0, 8.0, 7.0)));
+    // No ray diffracts in the inside corner, on the eave's line there (rays
+    // reflect in the flat building's wall just above it); one diffracts over
+    // the flat building's roof edge, past the gable's slope.  The line's two
+    // ends are vertices -- the flat building's corners start there -- whose
+    // waves past those corners' ends the rays take.
+    const PointSourceField along(city, Vec3(-2.0, 7.5, 5.6), Vec3(12.0, 7.5, 5.6));
+    for (const PointRay& ray : along.rays())
+        for (const Vec3& p : ray.path)
+            REQUIRE((std::abs(p.y - 8.0) > 1e-6 || std::abs(p.z - 5.0) > 1e-6 || p.x < 1e-6 || p.x > 10.0 - 1e-6));
+    const PointSourceField over(city, Vec3(-0.5, 6.0, 6.2), Vec3(6.0, 22.0, 1.5));
+    bool crossed = false;
+    for (const PointRay& ray : over.rays())
+        for (const Vec3& p : ray.path)
+            crossed = crossed || (std::abs(p.y - 8.0) < 1e-6 && std::abs(p.z - 7.0) < 1e-6);
+    REQUIRE(crossed);
+}
+
+// Two gables sharing a gable wall, their eaves level (5 m) and their ridges
+// not (9 m and 8 m): the higher one's wall stands over the lower roof's
+// profile, its bottom sloping with it, and nothing is left of the lower's
+// wall, nor of the corners where the eaves meet in one straight wall.  And a
+// wing's gable end against a main roof's eave side, their tops level (9 m):
+// the eave side's wall stands over the gable's profile on either side of its
+// ridge.
+TEST_CASE("pitched roofs that share a side", "[pitched_roofs]")
+{
+    auto house = [](double x0, double x1, double ridge) {
+        Footprint f;
+        f.x = {x0, x1, x1, x0};
+        f.y = {0.0, 0.0, 8.0, 8.0};
+        const double s = (ridge - 5.0) / 4.0;
+        f.roof = {{0.0, s, 5.0}, {0.0, -s, 5.0 + 8.0 * s}};
+        return f;
+    };
+    const Buildings pair({house(0.0, 10.0, 9.0), house(10.0, 20.0, 8.0)});
+    require_sound(pair);
+    std::size_t sloped = 0;
+    for (const Facade& f : pair.facades())
+    {
+        if (!(std::abs(f.x0 - 10.0) < 1e-9 && std::abs(f.x1 - 10.0) < 1e-9))
+            continue;
+        // At y = 2 the lower roof is 6.5 m and the higher 7 m.
+        const Vec3 p(10.0, 2.0, 0.0);
+        if (std::min(f.y0, f.y1) < 2.0 && std::max(f.y0, f.y1) > 2.0)
+        {
+            REQUIRE(facade_bottom(f, p) == Catch::Approx(6.5));
+            REQUIRE(facade_top(f, p) == Catch::Approx(7.0));
+        }
+        sloped += f.bottom_start == f.bottom_start;
+    }
+    REQUIRE(sloped == 2);
+    for (const Edge& e : pair.edges())
+        if (e.vertical)
+            REQUIRE((std::abs(e.start.x - 10.0) > 1e-9 || e.start.z > 4.0));
+    REQUIRE(pair.support(Vec3(10.0, 2.0, 6.8)).kind == Buildings::Support::Kind::facade);
+    REQUIRE(pair.support(Vec3(10.0, 2.0, 6.0)).kind == Buildings::Support::Kind::none);
+
+    Footprint wing;
+    wing.x = {0.0, 10.0, 10.0, 0.0};
+    wing.y = {0.0, 0.0, 8.0, 8.0};
+    wing.roof = {{0.8, 0.0, 5.0}, {-0.8, 0.0, 13.0}};
+    Footprint main;
+    main.x = {0.0, 10.0, 10.0, 0.0};
+    main.y = {8.0, 8.0, 16.0, 16.0};
+    main.top = 9.0;
+    const Buildings tee({wing, main});
+    require_sound(tee);
+    std::size_t pieces = 0;
+    for (const Facade& f : tee.facades())
+        if (std::abs(f.y0 - 8.0) < 1e-9 && std::abs(f.y1 - 8.0) < 1e-9)
+        {
+            pieces++;
+            REQUIRE(f.top == Catch::Approx(9.0));
+            // Over x = 2 the wing's roof is 6.6 m.
+            if (std::min(f.x0, f.x1) < 2.0 && std::max(f.x0, f.x1) > 2.0)
+                REQUIRE(facade_bottom(f, Vec3(2.0, 8.0, 0.0)) == Catch::Approx(6.6));
+        }
+    REQUIRE(pieces == 2);
+}
+
+// A level plane through a ridge (a cap at the ridge's height) makes no second
+// and third ridge along it: a ridge has one of its planes the least on either
+// side.  And a cap below the ridge is a deck that reflects as a flat roof
+// does: a source and a microphone above it hear its reflection, as over the
+// same building flat at the deck's height.
+TEST_CASE("a cap at the ridge, and a deck below it", "[pitched_roofs]")
+{
+    Footprint gable;
+    gable.x = {0.0, 10.0, 10.0, 0.0};
+    gable.y = {0.0, 0.0, 8.0, 8.0};
+    gable.roof = {{0.0, 1.0, 5.0}, {0.0, -1.0, 13.0}, {0.0, 0.0, 9.0}};
+    const Buildings capped({gable});
+    std::size_t at_ridge = 0;
+    for (const Edge& e : capped.edges())
+        at_ridge += !e.vertical && std::abs(e.start.z - 9.0) < 1e-9 && std::abs(e.direction.z) < 1e-12;
+    REQUIRE(at_ridge == 1);
+
+    Footprint deck;
+    deck.x = {0.0, 12.0, 12.0, 0.0};
+    deck.y = {0.0, 0.0, 20.0, 20.0};
+    deck.top = 8.0;
+    deck.roof = {{0.5, 0.0, 6.0}, {-0.5, 0.0, 12.0}, {0.0, 0.0, 8.0}};
+    Footprint flat = deck;
+    flat.roof.clear();
+    const Vec3 source(6.0, 5.0, 10.0), microphone(6.0, 15.0, 10.0);
+    auto roof_rays = [&](const Buildings& city) {
+        std::size_t n = 0;
+        const PointSourceField field(city, source, microphone);
+        for (const PointRay& ray : field.rays())
+            n += ray.wedges == 0 && !ray.roof_facades.empty();
+        return n;
+    };
+    const Buildings decked({deck}), level({flat});
+    REQUIRE(decked.on_roof(0, 6.0, 10.0));
+    REQUIRE(!decked.on_roof(0, 1.0, 10.0));
+    REQUIRE(roof_rays(decked) == 1);
+    REQUIRE(roof_rays(level) == 1);
+}
+
+// A wall square to a slope: the two mirrors commute, so the ray off both is
+// the source's image in the one and then the other, and its length that
+// image's distance from the microphone, to round-off (image theory).  A shed
+// roof rising 0.3 in y, and a tall wall standing against its end x = 30.
+TEST_CASE("a wall square to a slope reflects as the two mirrors' image", "[pitched_roofs]")
+{
+    Footprint shed;
+    shed.x = {0.0, 30.0, 30.0, 0.0};
+    shed.y = {0.0, 0.0, 10.0, 10.0};
+    shed.roof = {{0.0, 0.3, 6.0}};
+    shed.top = 9.0;
+    Footprint wall;
+    wall.x = {30.0, 32.0, 32.0, 30.0};
+    wall.y = {-30.0, -30.0, 40.0, 40.0};
+    wall.top = 40.0;
+    const Buildings city({shed, wall});
+    for (const auto& [s, m] : std::vector<std::pair<Vec3, Vec3>> {{{10.0, 2.0, 12.0}, {20.0, 7.0, 12.0}},
+                 {{20.0, 7.0, 12.0}, {10.0, 2.0, 12.0}}, {{24.0, 1.0, 15.0}, {12.0, 8.0, 10.5}}})
+    {
+        INFO("source " << s.x << ", " << s.y << ", " << s.z);
+        // In the wall x = 30, then in the slope's plane.
+        const Vec3 in_wall(60.0 - s.x, s.y, s.z);
+        const RoofPlane plane = shed.roof[0];
+        const Vec3 image = in_wall - (2.0 * plane.above(in_wall)) * plane.normal();
+        const PointSourceField field(city, s, m);
+        std::size_t found = 0;
+        for (const PointRay& ray : field.rays())
+            if (ray.wedges == 0 && ray.floor == 0 && ray.facades.size() == 1 && ray.roof_facades.size() == 1)
+            {
+                found++;
+                REQUIRE(ray.length == Catch::Approx((m - image).norm()).epsilon(1e-12));
+                REQUIRE(ray.spreading == Catch::Approx(1.0 / ray.length).epsilon(1e-12));
+                // The path: source, the wall or the slope, the other, microphone.
+                REQUIRE(ray.path.size() == 4);
+                double drawn = 0.0;
+                for (std::size_t k = 1; k < ray.path.size(); k++)
+                    drawn += (ray.path[k] - ray.path[k - 1]).norm();
+                REQUIRE(drawn == Catch::Approx(ray.length).epsilon(1e-12));
+            }
+        REQUIRE(found == 1);
+    }
+}
+
+// Oblique mirrors do not commute. Construct a wall -> slope ray from its
+// two reflection points, then check its reciprocal and the diffraction-off
+// path against the composite image, not against another traced ray.
+TEST_CASE("oblique slope wall rays survive without diffraction", "[pitched_roofs]")
+{
+    Footprint shed;
+    shed.x = {0.0, 30.0, 30.0, 0.0};
+    shed.y = {0.0, 0.0, 20.0, 20.0};
+    shed.roof = {{0.3, 0.2, 6.0}};
+    shed.top = 19.0;
+    Footprint wall;
+    wall.x = {30.0, 32.0, 32.0, 30.0};
+    wall.y = {-30.0, -30.0, 40.0, 40.0};
+    wall.top = 50.0;
+    const Buildings city({shed, wall});
+    const RoofPlane plane = shed.roof.front();
+    const Vec3 p(20.0, 10.0, plane.at(20.0, 10.0)), w(30.0, 8.0, 20.0);
+    const Vec3 d = (p - w) / (p - w).norm();
+    const Vec3 s = w - 8.0 * Vec3(-d.x, d.y, d.z);
+    const Vec3 m = p + 10.0 * (d - 2.0 * d.dot(plane.normal()) * plane.normal());
+    const Vec3 wall_image(60.0 - s.x, s.y, s.z);
+    const Vec3 image = wall_image - 2.0 * plane.above(wall_image) * plane.normal();
+    const double expected = (m - image).norm();
+    for (bool reverse : {false, true})
+        for (bool diffraction : {false, true})
+            for (bool source_reflections : {false, true})
+            {
+                PointPathOptions options;
+                options.diffraction = diffraction;
+                options.source_reflections = source_reflections;
+                options.max_reflections = 2;
+                const Vec3 a = reverse ? m : s, b = reverse ? s : m;
+                const PointSourceField field(city, a, b, options);
+                std::size_t found = 0;
+                for (const PointRay& ray : field.rays())
+                    if (ray.wedges == 0 && ray.floor == 0 && ray.facades.size() == 1 && !ray.roof_facades.empty()
+                            && std::abs(ray.length - expected) < 1e-8)
+                    {
+                        found++;
+                        REQUIRE(ray.path.size() == 4);
+                        REQUIRE((ray.path[1] - (reverse ? p : w)).norm() < 1e-9);
+                        REQUIRE((ray.path[2] - (reverse ? w : p)).norm() < 1e-9);
+                        const Vec3 launch = ((reverse ? p : w) - a) / ((reverse ? p : w) - a).norm();
+                        REQUIRE((point_ray_launch(ray) - launch).norm() < 1e-12);
+                    }
+                INFO(reverse << ", diffraction " << diffraction << ", source reflections " << source_reflections);
+                REQUIRE(found == 1);
+            }
+}
+
+TEST_CASE("slope wall paths keep real floor legs and reciprocal lengths", "[pitched_roofs]")
+{
+    Footprint gable;
+    gable.x = {0.0, 10.0, 10.0, 0.0};
+    gable.y = {0.0, 0.0, 20.0, 20.0};
+    gable.roof = {{0.6, 0.0, 6.0}, {-0.6, 0.0, 12.0}};
+    gable.top = 9.0;
+    Footprint wall;
+    wall.x = {-60.0, 60.0, 60.0, -60.0};
+    wall.y = {25.0, 25.0, 27.0, 27.0};
+    wall.top = 50.0;
+    Footprint screen;
+    screen.x = {-8.0, -6.0, -6.0, -8.0};
+    screen.y = {-20.0, -20.0, 24.0, 24.0};
+    screen.top = 26.0;
+
+    std::size_t specular = 0, diffracted = 0, floors = 0, contact = 0;
+    for (bool screened : {false, true})
+    {
+        const Buildings city(screened ? std::vector<Footprint>{gable, wall, screen} : std::vector<Footprint>{gable, wall});
+        for (double y : {5.0, 15.0, 22.0})
+            for (double height : {0.0, 1.5, 8.0})
+                for (bool reverse : {false, true})
+                {
+                    const Vec3 high(-20.0, y, 40.0), low(42.0, 10.0, height);
+                    const Vec3 s = reverse ? low : high, m = reverse ? high : low;
+                    PointPathOptions options;
+                    options.double_diffraction = false;
+                    options.max_reflections = 2;
+                    const PointSourceField field(city, s, m, options), reciprocal(city, m, s, options);
+                    for (const PointRay& ray : field.rays())
+                    {
+                        if (ray.roof_facades.empty() || ray.facades.empty())
+                            continue;
+                        specular += ray.wedges == 0;
+                        diffracted += ray.wedges == 1;
+                        floors += ray.floor > 0;
+                        contact += ray.launch_mirrored;
+                        double drawn = 0.0;
+                        for (std::size_t k = 1; k < ray.path.size(); k++)
+                        {
+                            REQUIRE(ray.path[k].z >= -1e-10);
+                            REQUIRE((ray.path[k] - ray.path[k - 1]).norm() > 1e-9);
+                            drawn += (ray.path[k] - ray.path[k - 1]).norm();
+                        }
+                        REQUIRE(drawn == Catch::Approx(ray.length).epsilon(1e-10));
+                        Vec3 launch = ray.path[1] - s;
+                        if (ray.launch_mirrored)
+                            launch.z = -launch.z;
+                        launch /= launch.norm();
+                        REQUIRE((point_ray_launch(ray) - launch).norm() < 1e-10);
+                        REQUIRE(std::any_of(reciprocal.rays().begin(), reciprocal.rays().end(), [&](const PointRay& r) {
+                            return r.wedges == ray.wedges && r.floor == ray.floor && r.facades.size() == ray.facades.size()
+                                    && r.roof_facades == ray.roof_facades && std::abs(r.length - ray.length) < 1e-8;
+                        }));
+                        if (ray.wedges == 0)
+                            for (int f = 0; f < ray.floor; f++)
+                                REQUIRE(ray.floor_bounce[f].leg == Catch::Approx(ray.length).epsilon(1e-12));
+                    }
+                }
+    }
+    INFO(specular << " specular, " << diffracted << " diffracted, " << floors << " floor, " << contact << " contact");
+    REQUIRE(specular > 0);
+    REQUIRE(diffracted > 0);
+    REQUIRE(floors > 0);
+    REQUIRE(contact > 0);
+}
+
+TEST_CASE("an edge cutting a wall slope reflection keeps its diffracted partner", "[pitched_roofs]")
+{
+    Footprint shed;
+    shed.x = {0.0, 30.0, 30.0, 0.0};
+    shed.y = {0.0, 0.0, 20.0, 20.0};
+    shed.roof = {{0.3, 0.2, 6.0}};
+    shed.top = 19.0;
+    Footprint wall;
+    wall.x = {30.0, 32.0, 32.0, 30.0};
+    wall.y = {-30.0, -30.0, 40.0, 40.0};
+    wall.top = 50.0;
+    const RoofPlane plane = shed.roof.front();
+    const Vec3 p(20.0, 10.0, plane.at(20.0, 10.0)), w(30.0, 8.0, 20.0);
+    const Vec3 d = (p - w) / (p - w).norm();
+    const Vec3 s = w - 8.0 * Vec3(-d.x, d.y, d.z);
+    const Vec3 r = d - 2.0 * d.dot(plane.normal()) * plane.normal();
+    const Vec3 m = p + 10.0 * r, q = 0.5 * (w + p);
+    const Vec3 across = Vec3(0.0, 1.0, 0.0).cross(r) / Vec3(0.0, 1.0, 0.0).cross(r).norm();
+    Footprint screen;
+    screen.x = {q.x, q.x + 1.5, q.x + 1.5, q.x};
+    screen.y = {-20.0, -20.0, 40.0, 40.0};
+    screen.top = q.z;
+    const Buildings city({shed, wall, screen});
+    const std::vector<double> bands {125.0, 250.0, 500.0, 1000.0, 2000.0};
+    const std::vector<double> rho(city.facades().size() * bands.size(), 1.0);
+    for (bool reverse : {false, true})
+    {
+        std::vector<double> levels[2];
+        std::size_t specular[2] = {};
+        for (int side = 0; side < 2; side++)
+        {
+            const Vec3 receiver = m + (side == 0 ? -1e-4 : 1e-4) * across;
+            PointPathOptions options;
+            // One reflection on each side: a wall on the source's, a slope
+            // on the receiver's. Neither side needs two reflections.
+            options.max_edge_reflections = 1;
+            const PointSourceField field(city, reverse ? receiver : s, reverse ? s : receiver, options);
+            for (const PointRay& ray : field.rays())
+                specular[side] += ray.wedges == 0 && !ray.facades.empty() && !ray.roof_facades.empty();
+            levels[side].resize(bands.size());
+            field.band_levels(rho, 1.0, bands, 343.2, levels[side].data());
+        }
+        REQUIRE(specular[0] != specular[1]);
+        for (std::size_t b = 0; b < bands.size(); b++)
+        {
+            INFO("reverse " << reverse << ", band " << bands[b]);
+            REQUIRE(std::abs(levels[0][b] - levels[1][b]) < 0.05);
+        }
+    }
+}
+
+// A ray diffracted once round a tower's corner and reflected in a lower
+// building's roof, flat or a slope, toward a microphone over it, cut off
+// between the corner and the roof by a second tower's sharp corner: across
+// that corner's shadow boundary the ray diffracted at both corners and
+// reflected in the same roof takes over, so the field is continuous.  The
+// corners are vertical, so for a roof sloping along x the boundary is where
+// the microphone's image in the roof's plane lines up with them in plan.
+// The step is measured in the field itself, against the cut-off ray: at a
+// null of the whole field, as at 125 Hz here, the twice-diffracted ray's
+// percent or so of UTD's own error is a fraction of a decibel.  The tower
+// runs out of reach northward, or the pair of its corners along its west
+// wall would be cut off too, whose partner needs three edges.
+TEST_CASE("a roof's reflection after two edges carries on where a second edge cuts it off", "[pitched_roofs]")
+{
+    Footprint tower;
+    tower.x = {10.0, 20.0, 20.0, 10.0};
+    tower.y = {10.0, 10.0, 400.0, 400.0};
+    tower.top = 100.0;
+    // A sharp corner pointing north at (25, 7): a single wedge.
+    Footprint spike;
+    spike.x = {25.0, 22.0, 28.0};
+    spike.y = {7.0, -10.0, -10.0};
+    spike.top = 100.0;
+    const Vec3 source(5.0, 40.0, 20.0);
+    const std::vector<double> bands {125.0, 250.0, 500.0, 1000.0, 2000.0};
+    for (const bool slope : {false, true})
+    {
+        Footprint low;
+        low.x = {30.0, 80.0, 80.0, 30.0};
+        low.y = {-40.0, -40.0, 40.0, 40.0};
+        low.top = slope ? 25.0 : 10.0;
+        if (slope)
+            low.roof = {{0.15, 0.0, 5.5}};
+        const Buildings city({tower, spike, low});
+        const std::vector<double> rho(city.facades().size() * bands.size(), 1.0);
+        // The microphone's image in the roof's plane, and where it lines up
+        // with the corners (10, 10) and (25, 7) in plan.
+        Vec3 microphone(60.0, 0.0, slope ? 17.0 : 13.0);
+        Vec3 image(microphone.x, microphone.y, 20.0 - microphone.z);
+        if (slope)
+        {
+            const RoofPlane& plane = low.roof.front();
+            image = microphone - (2.0 * plane.above(microphone)) * plane.normal();
+        }
+        microphone.y = 10.0 - 3.0 * (image.x - 10.0) / 15.0;
+        for (const bool reverse : {false, true})
+            for (const bool twice_roofs : {true, false})
+            {
+                // Per sub-band, the field at its middle wavenumber, and on
+                // the lit side the once-diffracted roof ray's amplitude.
+                std::vector<std::complex<double>> p[2];
+                std::vector<double> once(3 * bands.size(), 0.0);
+                std::size_t roof_twice = 0;
+                for (int side = 0; side < 2; side++)
+                {
+                    const Vec3 m = microphone + Vec3(0.0, side == 0 ? 1e-4 : -1e-4, 0.0);
+                    PointPathOptions options;
+                    options.twice_roofs = twice_roofs;
+                    const PointSourceField field(city, reverse ? m : source, reverse ? source : m, options);
+                    p[side].assign(3 * bands.size(), 0.0);
+                    std::vector<std::size_t> order;
+                    field.sub_band_problems(
+                            rho, 1.0, bands, 343.2,
+                            [&](std::size_t band, int part, const std::vector<std::complex<double>>& amplitude,
+                                    const std::vector<double>& length, const SubBand& sub) {
+                                const double k = 0.5 * (sub.k1 + sub.k2);
+                                for (std::size_t i = 0; i < amplitude.size(); i++)
+                                {
+                                    p[side][3 * band + part] += amplitude[i] * std::polar(1.0, -k * length[i]);
+                                    const PointRay& ray = field.rays()[order[i]];
+                                    if (side == 0 && ray.wedges == 1 && !ray.roof_facades.empty())
+                                        once[3 * band + part] = std::max(once[3 * band + part], std::abs(amplitude[i]));
+                                }
+                            },
+                            {}, nullptr, &order);
+                    for (const PointRay& ray : field.rays())
+                        roof_twice += side == 1 && ray.wedges == 2 && !ray.roof_facades.empty();
+                }
+                INFO("slope " << slope << ", reverse " << reverse << ", twice_roofs " << twice_roofs);
+                double step = 0.0;
+                for (std::size_t k = 0; k < once.size(); k++)
+                {
+                    REQUIRE(once[k] > 0.0);
+                    step = std::max(step, std::abs(p[0][k] - p[1][k]) / once[k]);
+                }
+                CHECK((roof_twice > 0) == twice_roofs);
+                if (twice_roofs)
+                    CHECK(step < 0.02);
+                else
+                    CHECK(step > 0.9);
+            }
+    }
+}
+
+// A ray over a tall block's two roof edges with a lower roof under each end:
+// it reflects in both, the source's image in the one roof and the
+// microphone's in the other standing in for the ends, and the edges, a
+// shared face's, at the points the unfolded path crosses them.  Found both
+// ways round, and level roofs and slopes alike.
+TEST_CASE("a twice-diffracted ray reflects in a roof at each end", "[pitched_roofs]")
+{
+    for (const bool slope : {false, true})
+    {
+        Footprint a, tower, b;
+        a.x = {-40.0, -5.0, -5.0, -40.0};
+        a.y = {-50.0, -50.0, 50.0, 50.0};
+        a.top = 6.0;
+        tower.x = {0.0, 10.0, 10.0, 0.0};
+        tower.y = {-200.0, -200.0, 200.0, 200.0};
+        tower.top = 20.0;
+        b.x = {15.0, 50.0, 50.0, 15.0};
+        b.y = a.y;
+        b.top = 6.0;
+        if (slope)
+        {
+            // Sheds rising toward the tower, 1 in 20, 6 m at its foot.
+            a.top = 7.75;
+            a.roof = {{0.05, 0.0, 6.25}};
+            b.top = 7.75;
+            b.roof = {{-0.05, 0.0, 6.75}};
+        }
+        const Buildings city({a, tower, b});
+        const Vec3 source(-20.0, 0.0, 9.0), microphone(30.0, 0.0, 9.0);
+        // Each end's image in the plane under it.
+        auto image = [&](const Footprint& f, const Vec3& p) {
+            if (f.roof.empty())
+                return Vec3(p.x, p.y, 2.0 * f.top - p.z);
+            const RoofPlane& plane = f.roof.front();
+            return p - (2.0 * plane.above(p)) * plane.normal();
+        };
+        const Vec3 sa = image(a, source), mb = image(b, microphone);
+        const double expected = std::hypot(0.0 - sa.x, 20.0 - sa.z) + 10.0 + std::hypot(mb.x - 10.0, mb.z - 20.0);
+        std::size_t found[2] = {0, 0};
+        for (int way = 0; way < 2; way++)
+        {
+            const PointSourceField field(city, way ? microphone : source, way ? source : microphone);
+            for (const PointRay& ray : field.rays())
+                if (ray.wedges == 2 && ray.roof_facades.size() == 2 && ray.floor == 0 && ray.facades.empty())
+                {
+                    INFO("slope " << slope << ", way " << way);
+                    REQUIRE(ray.length == Catch::Approx(expected).epsilon(1e-9));
+                    found[way]++;
+                }
+        }
+        INFO("slope " << slope);
+        REQUIRE(found[0] == 1);
+        REQUIRE(found[1] == 1);
+    }
+}

@@ -1,0 +1,253 @@
+# GPU
+
+The GPU paths: the backend interface, the kernel dialect, how `niceops_point_field` and
+`niceops --buildings` form the rays' amplitudes and sum the bands there, and how
+`niceops_urban_table --wave_below` marches the canyon wave solver and `niceops_fdtd_field` its
+3-D reference. Accuracy is in FIDELITY's
+[A point source among buildings](../FIDELITY.md#a-point-source-among-buildings) and
+[Canyon wave solver](../FIDELITY.md#canyon-wave-solver).
+
+## Layout
+
+| Where | What |
+| --- | --- |
+| `src/gpu/gpu.hpp` | The backend-neutral interface: `Device`, shared `Buffer`s, compiled `Kernel`s, `Batch`es of dispatches. No backend type appears in it. |
+| `src/gpu/gpu_metal.mm` | The Metal backend, in Objective-C++. |
+| `src/gpu/gpu_disabled.cpp` | The backend of a build without one: `Device::get()` is null. |
+| `src/gpu/band_energy` | `BandEnergies`: a batch of ray sets on the GPU, either `RaySet`s (amplitudes from the host) or `PointRaySet`s (rays whose amplitudes the GPU forms). `plan_nodes` picks each problem's form. |
+| `src/gpu/point_rays` | `pack_point_rays`: a `PointSourceField`'s rays as the GPU's records, with a directional source's weights and how the rays add (`PointRayPacking`). |
+| `src/gpu/band_stream` | `BandStream`: packed sets from worker threads to the GPU a batch at a time, two in flight, each set's energies handed back; `niceops_point_field` and `UrbanDistrict::levels` share it. |
+| `src/gpu/kernels/` | Kernel sources in the dialect: `prelude_metal.h`; `common.h` (complex floats, the group sum, `nk_phase`); `wedge.h` (Faddeeva, the UTD transition, the wedge coefficient, Filon's panel); the `*_types.h` records shared with the host; `band_energy.kern`, `point_rays.kern`, `canyon_wave.kern`, `fdtd.kern`; `wedge_check.kern`, for the tests. |
+| `src/canyon_wave.cpp` (`run_gpu`) | The canyon solver's march on the GPU, beside `run()`. |
+| `src/fdtd.cpp` (`march_gpu`) | The 3-D FDTD reference's march on the GPU, beside `march_cpu` ([urban.md](urban.md#the-full-wave-reference-srcfdtd-niceops_fdtd_field)). |
+| `cmake/embed_kernels.cmake` | Embeds every file of `NICEOPS_KERNEL_SOURCES` as a string, for `gpu::kernel_source()`. |
+
+A batch dispatches, in order: `ray_amplitudes` (rays not over a shared face, and a sampled shared
+face's cascade, one problem a group), `face_amplitudes` (each shared face's ray at each problem, or
+a sampled face's at its probes, 32 threads splitting its Filon panels), `face_ratios` (each sampled
+face's ratio, applied to its cascade, a face a thread), `band_phasors` (each ray's phase at the
+band's middle), then `band_pair_sum` and `band_quadrature` over their problems.
+
+## Things to preserve
+
+- **The GPU by default, the CPU the reference.** Every GPU path runs wherever there is a device and
+  the case is one it takes, and falls back to the CPU otherwise; `--gpu` asks for it (refused where
+  it cannot run) and `--no-gpu` keeps the CPU. It is tested against the CPU at a stated tolerance
+  rather than bit for bit, and never feeds a golden: **every test pinned to CPU results passes
+  `--no-gpu`**, or it would fail on a Mac and pass on Linux CI. The CPU path stays byte-identical
+  whether or not the build has a backend.
+- **`--gpu,!--no-gpu` is one CLI11 option**, so `app.count("--gpu")` counts `--no-gpu` as well.
+  Asking for the GPU is the flag's value and its count together; testing the count alone made
+  `--no-gpu` demand a device, which only a build without a backend shows (`fdtd_field_runs`, which
+  passes `--no-gpu`, failed under GCC).
+- **Kernels are written once, in the dialect.** A kernel names only what a prelude defines:
+  `NK_DIALECT` (defined, so that the `*_types.h` leave out `<cstdint>`), `NK_KERNEL`,
+  `NK_IN`/`NK_OUT`/`NK_VALUE` with their slots, `NK_GROUP_ARGS` (which carries its own leading
+  comma), `NK_GROUP`/`NK_THREAD`/`NK_THREADS`, `NK_FN` for helper functions, the address-space
+  words for their pointers (`NK_GLOBAL_IN`, `NK_GLOBAL_OUT`, `NK_LOCAL`, `NK_SHARED`),
+  `NK_SHARED_ARRAY`, `NK_BARRIER`, `NK_CONSTANT` for tables, `nk_sincos`, `nk_u8` for byte-wide
+  flags, and the types `uint` and `uint32_t`. No standard library, exceptions, recursion or `double`;
+  complex numbers are `nk_complex` from `common.h`, not a backend's vector type. A record the
+  host fills goes in a `*_types.h` of fixed-width integers and floats, included by both sides, so
+  the layouts agree. A CUDA or HIP backend needs a `prelude_cuda.h` mapping the same names
+  (`extern "C" __global__`, `blockIdx.x`, `__shared__`, `__constant__`, `static __device__ inline`
+  for `NK_FN`, `sincosf`, `uint` and `uint32_t` typedefs, and an `NK_GROUP_ARGS` that is empty) and a `gpu_cuda.cpp` behind `gpu.hpp`, compiling the same sources
+  with NVRTC; arguments bind by position, which the slots already are.
+- **No shader toolchain.** Metal compiles the sources at run time (`newLibraryWithSource`), which
+  needs the framework only; Command Line Tools without Xcode have no offline `metal` compiler. A
+  program is the prelude, `common.h`, then the sources a `Device::kernel` call names, in order;
+  each program and kernel is compiled once and cached.
+- **Safe math and precise functions** (`MTLMathModeSafe`, `MTLMathFloatingPointFunctionsPrecise`):
+  the Kahan compensation in the pair sum and the float-float phases depend on the compiler not
+  reassociating them. From macOS 15 the functions (`exp`, `log`, `atan2`, `sqrt`) default to the
+  fast variants whatever the math mode, `exp` erring by 4e-6 on [-87, 0] against the precise 2e-7,
+  where before macOS 15 `fastMathEnabled = NO` gave the precise ones: without the second setting the
+  results would differ by OS. They cost nothing measurable on the demo approach and moved its SELs by 5e-9 dB.
+- **A batch dropped mid-encoding ends its encoder** (`Batch::Impl`'s destructor). An exception
+  between a batch's first dispatch and its commit releases the encoder, and Metal aborts the
+  process when an encoder is released without `endEncoding`, so the exception's message was never
+  printed.
+- **What float cannot hold is formed in double on the host.**
+  - Phases: a length and a wavenumber each travel as a pair of floats, their product is formed
+    exactly (`fma`) and reduced modulo 2 pi before its sine and cosine (`nk_phase`): about
+    3e-7 rad of error, where `k L` in float loses 0.03 rad at 10 kHz and 2 km. A Filon panel's
+    phase `k u0` goes the same way; in float it lost 6e-4 rad over tens of meters.
+  - A wedge's angles: each term's cotangent and the cosine in its transition function's
+    argument, from `wedge_angles` or `WedgeSweep`. Near a boundary the cotangent has a pole and
+    the cosine a zero; as floats each keeps its relative precision, where the angles themselves
+    could not place the term so finely.
+  - A Filon panel's lengths: its start's, and its other nodes' distances from it, so that a panel
+    of micrometers beside a cut keeps them.
+- **The shared face's aperture is worked out once for the run's wavenumbers**
+  (`shared_face_geometry`): nodes, path lengths, rates, amplitudes and the second wedge's angles,
+  which do not depend on k, once per ray, where the CPU keeps each wavenumber's own nodes, sharing
+  the geometry of those that coincide. The nodes run to the lowest wavenumber's extent, graded as `aperture()` grades
+  them, with a panel end at every wavenumber's taper start and extent: without them the Filon
+  test's faces come out 0.019 dB from the fine midpoint rule at worst, three times what
+  [FIDELITY](../FIDELITY.md#a-point-source-among-buildings) gives with them. **The end
+  nodes sit a hair of the shortest aperture inside each segment, not a hair of the segment.** A
+  geometrical-optics wave's stationary point lies on its cut, where its amplitude per unit path
+  length goes as 1/sqrt(u − u_c), so how much of that the first panel misses depends on how far
+  in the first node sits: 1e-7 of a 200 m segment (2e-5 m, the 50 Hz aperture's) moved a 10 kHz
+  field by 0.06 dB. The CPU path's own apertures are short at high k, which is why it never
+  showed there.
+- **The band average takes the cheaper of two forms** (`plan_nodes`): the pair sum, as the CPU's,
+  or the Gauss–Legendre integral of |S|² over the sub-band (THEORY 6.5), whenever its nodes times
+  the rays are fewer than the pairs within reach. The node count is
+  `h Δ / 2 + 4 (h Δ)^(1/3) + 6`, Δ the spread of lengths: on the district's problems it is within
+  2e-12 dB of every pair summed. A problem past 4096 nodes takes the pairs.
+- **The point model on the GPU streams** (`BandStream`). Workers trace pairs without pause and push
+  each pair's packed rays (`pack_point_rays`) onto a bounded queue; one GPU thread takes them a
+  batch at a time, keeps two batches in flight and hands each set's energies back. The bound holds
+  the workers back if the GPU falls behind, and a GPU failure wakes them to stop; the caller's
+  catch calls `finish()` first, so the GPU's own error is the one reported. The ray dumps come from
+  the CPU.
+- **Shared faces are sampled on the GPU as on the CPU** (`shared_face_samples`, one rule for both).
+  The packer works out a sampled face's aperture for its probes' wavenumbers only and adds the
+  cascade's two wedge terms (the first's scale carrying the cascade's spreading over the face's);
+  `ray_amplitudes` puts the cascade at every problem, `face_amplitudes` the integral at the probes
+  into a side buffer (`GpuFaceItem::probe`), and `face_ratios` takes R = integral / cascade there and
+  multiplies every problem's cascade by R interpolated in log k, as `sampled_shared_face_factors`
+  does. A probe whose R is not finite is passed over, where the CPU takes the integral everywhere
+  instead. Taken at every wavenumber (`--exact_shared_faces`), a face has no cascade
+  (`NK_NO_CASCADE`) and `face_amplitudes` writes the amplitudes itself, as before. Exact faces' items
+  index their face through their ray's record, not their order. Without the sampling the GPU spent
+  90% of its time on the integrals and the CPU's sampled run beat it (1.45 s against 1.77 s over the
+  demo approach's source positions); with it, 0.82 s.
+- **A partly coherent sum** (`BandProblem::sum`, `cone`): `band_pair_sum` weights each pair by the
+  cone's mean coherency of the two rays' launches (`PointRaySet::launch`, three floats a ray, the
+  chord in degrees as `partially_coherent_energies` takes it), or adds only each ray's own energy.
+  The quadrature integrates every pair with its phases, so a set that is not coherent takes the pair
+  sum throughout. For a coherent set `g` is 1.0f, and the sum's arithmetic is what it was. The cone's
+  taper is not a positive-definite kernel, so a sub-band's sum can come out below zero; the kernel
+  takes 0 there, as the CPU does.
+- **Factors that vary across a band are formed on the host, per sub-band** (`pack_point_rays`).
+  A ray's reflected amplitude goes up complex, six floats a band (`PointRaySet::complex_reflections`,
+  read through `BandProblem::slot`), whenever the floor has an impedance, the district has facade
+  reliefs, or any ray carries a row's profile field (`PointRay::profile`, `PointRay::row_share`) or
+  a tilted step's jump split (`PointRay::jump_weight`). The floor's Q (`floor_factors`), a relief's
+  share (`relief_factors`), the profile's field (`profile_factors`) and the fade weights
+  (`ray_weight`) are each taken at the sub-band's middle wavenumber, as the CPU takes them, and
+  multiplied into that one factor; the kernels never see the models behind them. Otherwise the
+  amplitude is one real float a band.
+- **`niceops --buildings` on the GPU** (`UrbanDistrict::levels` with a device): the sphere's weight
+  on each ray in each band is folded into the ray's reflected amplitude, so the kernels are
+  `niceops_point_field`'s. The measured coherence (a decay in frequency times angle, and the rotor's
+  delay with its wraps) and the phase interval's variance are the CPU's (`gpu_supports`); a default
+  run then stays on the CPU. `--gpu` with `--ray_coherence measured` or `--phase_interval` is
+  refused as the arguments are read, and where a database's record is what selects the measured
+  model, at that track.
+- **The FDTD takes the GPU only where it holds the march** (`gpu_cannot_hold` in `fdtd.cpp`): the
+  kernels index cells and the recording in 32 bits, and each buffer must fit the device's
+  `max_buffer_bytes()` and all of them its `working_set_bytes()` (17 bytes a cell, two floats a
+  PML slab cell, the recording). Otherwise the default marches on the CPU and says so, and
+  `--gpu` (`FdtdSetup::gpu_required`) is refused with the reason; `FdtdRecording::gpu` says which
+  ran.
+- **CI never builds the Metal backend.** It runs on Linux, where `NICEOPS_GPU=AUTO` is `OFF`.
+  `point_field_gpu_refused` and `buildings_gpu_refused` cover the disabled backend there; everything
+  else here is tested only on a Mac (`[gpu]`, `point_field_gpu_*`, `buildings_gpu_*`).
+
+## The canyon wave solver
+
+- **One dispatch a step** (`canyon_step`). A group owns a 32 by 8 tile of cells, loads the old
+  pressure over the tile and a cell around it, forms the new velocity on every face its
+  pressures need -- its own faces, and again its neighbors' on its right and top -- writes its
+  own faces, then its cells' new pressure, with `run()`'s rules for the PML, the impedance
+  walls, the recording and the source term. Every field is double-buffered, old in and new
+  out, so a group reads its neighbors' old faces while they write their new ones. Two
+  dispatches a step (velocity, then pressure) took 27.6 s on the 20 m canyon to 707 Hz; one
+  takes 23.1 s.
+- **The stopping rule is `run()`'s, judged late.** Each step on a 32nd leaves one partial energy
+  per tile; the host encodes 1024 steps a batch, keeps two batches in flight, sums the partials
+  of each finished batch in order and stops where `run()` would. A batch past that step runs on
+  harmlessly, since the field never depends on when the run stops, and the recording is cut
+  there. The step the test canyon stopped at was the CPU's.
+- **What follows the march is the CPU's and is threaded** (urban.md): with it serial, the GPU
+  was busy 10.8 s of a 23 s solve. The table builder marches two canyons at a time on the GPU,
+  so that one's transforms overlap the next one's march, and the two share the run's `-j`
+  between them (`CanyonWaveSetup::threads`): the solver never takes every core of its own accord.
+- **`--gpu` is refused before any work** wherever it would do nothing (`niceops_urban_table`
+  without `--wave_below`) or cannot run (`gpu::Device::require`, which both tools call, so the
+  refusal they print is one text).
+- **A dispatch checks its group size against the pipeline's limit** and refuses an unallocated
+  buffer: the kernels' group sums and tiles assume the size they are given, and `ensure`
+  allocates at least one element, because a dispatch binds every buffer it names, used or not: a
+  batch with no wedges (`--no_diffraction`, an open scene) still binds the wedge buffer.
+
+## Measured
+
+On the demo approach over the test district (the run's 6,551 states, seven microphones, 28 bands),
+an M4 Pro (the development build, asserts on): `niceops --buildings` takes 1.2 s on the GPU
+against 3.2 s with `--no-gpu`, its SELs within 1e-6 dB of the CPU's; `niceops_point_field` over
+every fifth of those source positions, 9,177 pairs, takes 0.81 s against 1.49 s on 14 threads, its
+band levels within 0.04 dB.
+
+On the 49-block district, an M4 Pro (10 performance and 4 efficiency cores, 20 GPU cores), with
+every shared face's integral at every wavenumber.
+
+- **The pair sum alone** (40 microphones, one source 30 m up, 24 bands of three sub-bands, 1.1
+  billion pairs within reach): the CPU's vectorized sum on 14 threads takes 51 ms
+  (2.2e10 pairs/s, about 0.6 ns a pair a thread). The same algorithm on the GPU takes 14 ms;
+  taking each problem by the cheaper form takes 4.3 ms, 12 times the CPU.
+- **The 60-point track over 185 microphones**: 30 s on the CPU, 3.9 s on the GPU. The GPU is
+  busy 3.3 s of it and sets the pace: the shared faces' panels (`face_amplitudes`) take about
+  half of that, the other rays' amplitudes 0.4 s and the band sums the rest. The workers spend
+  72% of their time on the path search and 25% packing the rays, two thirds of that the shared
+  faces' aperture geometry (415,000 faces on this run, 286 nodes each). That geometry works out
+  every segment's panel ends before placing a node, so `aperture_geometry` reserves its nodes
+  exactly, and `pack_point_rays` reserves the set's per-ray arrays and grows its panels
+  geometrically: grown an element at a time they were a tenth of packing in copies. Same values,
+  same order; the district's `--gpu -j 8` run went from 9.7 to 8.7 s of CPU on top of the held
+  microphone ends (urban.md), 10.3 to 8.7 s for both (best of 3, alternated), and at `-j 1`
+  from 7.5 to 7.1 s of CPU.
+
+- **The canyon wave solver**: the 20 m canyon to 707 Hz at 15 points per wavelength (1.08
+  million cells, 66,764 steps) marches in 10.8 s of GPU time, about 6.7e9 cell updates a second,
+  against about 67 s on one core. Fourteen such canyons to 354 Hz take 22 s with `--gpu`
+  against 34 s on 14 threads, the CPU's own being bandwidth-bound: 14 threads ran them only 2.6
+  times as fast as one.
+
+Measured and left alone:
+
+- **Staging a problem's rays in threadgroup memory** made the pair sum slower (5.6e10 against
+  8.2e10 pairs/s): 32 KB a group cut how many groups a core keeps in flight, and the rays were
+  already cached.
+- **The quadrature threshold**: taking the integral where nodes times rays is under 4, 1, 0.5,
+  0.25 or 0.1 times the pairs gave 5.5, 4.3, 4.5, 5.4 and 7.2 ms.
+- **Batches the workers wait for**: tracing 64 pairs, then handing them to the GPU, ran as slowly
+  as the CPU alone (43.6 s against 42.7 s): the cores idled at each batch's end and through the
+  single-threaded hand-off. Streaming took it to 35 s.
+- **The CPU's amplitudes, uploaded**: forming them on the CPU and sending them over in float
+  (35 s) left the workers the amplitudes' 40% of their time; the GPU forms them in a fraction of
+  its 3 s.
+- **Fewer aperture nodes.** Most of a shared face's nodes are the panel ends at each of the 72
+  sub-bands' taper start and extent. Over 60 of the track's faces, at every sub-band, against
+  the midpoint rule at a 192nd of a wavelength: with them, 352 nodes a face and 0.009 dB at
+  worst; without, 155 nodes and 0.042 dB; without but graded at 0.05 of the distance rather than
+  0.15, 445 nodes and 0.017 dB; with only every third sub-band's, 196 nodes and 0.046 dB. The
+  ends are the cheapest way to that accuracy.
+
+## Not on the GPU
+
+- **The path search** (`PointSourceField::trace`): branchy, and most of the workers' time.
+- **Ray-tracing hardware** (RT cores; Metal's intersection API, in hardware on M3 and later;
+  OptiX; Vulkan's ray queries) accelerates what a renderer spends its time on: walking a bounding
+  volume hierarchy and testing rays against triangles. Here that is the visibility tests inside
+  the path search, a small share of an evaluated pair in a `--buildings` run
+  ([urban.md](urban.md) has the profile) and 12% of a pair on the 49-block district; the rest
+  is each ray's wave arithmetic at each sub-band, which no ray-tracing unit does. With
+  `niceops_point_field` on the GPU the search is most of the workers' time, but the GPU sets that
+  run's pace. Two places it could pay later: scenes of many triangles (pitched LoD2
+  roofs, terrain meshes, trees), where the exact test for extruded footprints no longer applies;
+  and a diffuse field traced stochastically, as game-audio engines use it, for scattering beyond
+  the first facade. Either needs the path tests' contact rules (a segment ending on a wall,
+  grazing one, leaving an edge) in float: a conservative filter, with the double test deciding
+  what lies near a surface.
+- **The edge-source integral** (`--edge_source`, [urban.md](urban.md#the-edge-source-integral-srcedge_source---edge_source)),
+  refused with `--gpu`. Its factors are the same at every sub-band from one set of nodes, so the
+  natural split is the host forming each ray's amplitudes and the GPU summing them as a `RaySet`
+  (amplitudes from the host); that is not done.
+- **Apple GPUs have no double precision**, so the PE and the stratified eigenrays, which need
+  it, stay on the CPU for Metal. For the PE that was measured, not assumed: in float it holds
+  its accuracy only at a range step of a wavelength or less, four times the arithmetic, on a
+  march too sequential to fill a GPU ([pe.md](pe.md#grid-and-accuracy)).

@@ -197,6 +197,55 @@ std::optional<std::string> read_root_text(int ncid, const char* name)
     return text;
 }
 
+// The root attributes of a CoherenceRecord, each checked as it is read: a
+// fit's scale comes with its exponent, numbers are positive, the tonal
+// fraction within [0, 1] (its length is checked against the bands later).
+CoherenceRecord read_coherence_record(int ncid)
+{
+    CoherenceRecord r;
+    auto positive = [&](const char* name) -> std::optional<double> {
+        const auto v = read_double_attribute(ncid, name);
+        if (v && !(*v > 0.0 && std::isfinite(*v)))
+            input_error("The database attribute ", name, " is ", *v, "; it must be positive.");
+        return v;
+    };
+    r.blades = positive("main_rotor_blades");
+    if (const auto text = read_root_text(ncid, "main_rotor_rotation"))
+    {
+        r.rotation_sense = parse_rotation_sense(*text);
+        if (!r.rotation_sense)
+            input_error("The database attribute main_rotor_rotation is '", *text,
+                    "'; expected 'counterclockwise' or 'clockwise', seen from above.");
+    }
+    r.rotation_limit = positive("coherence_rotation_limit_Hz");
+    r.scale = positive("coherence_scale_Hz_deg");
+    r.exponent = positive("coherence_exponent");
+    r.spread_scale = positive("coherence_spread_scale_Hz_deg");
+    r.spread_exponent = positive("coherence_spread_exponent");
+    if (r.scale.has_value() != r.exponent.has_value())
+        input_error("The database gives one of coherence_scale_Hz_deg and coherence_exponent without the other.");
+    if (r.spread_scale.has_value() != r.spread_exponent.has_value())
+        input_error("The database gives one of coherence_spread_scale_Hz_deg and coherence_spread_exponent "
+                    "without the other.");
+    switch (netcdf::attribute_values(ncid, NC_GLOBAL, "coherence_tonal_fraction", r.tonal_fraction))
+    {
+    case netcdf::Values::missing:
+        r.tonal_fraction.clear();
+        break;
+    case netcdf::Values::not_numbers:
+        input_error("Found but could not read the database attribute coherence_tonal_fraction as numbers.");
+    case netcdf::Values::ok:
+        for (double v : r.tonal_fraction)
+            if (!(v >= 0.0 && v <= 1.0))
+                input_error("The database attribute coherence_tonal_fraction holds ", v,
+                        "; a fraction is within [0, 1].");
+        break;
+    }
+    if (const auto text = read_root_text(ncid, "coherence_source"))
+        r.source = *text;
+    return r;
+}
+
 // The root attribute speed_reference.  Absent is the ground.
 SpeedReference read_speed_reference(int ncid)
 {
@@ -1046,6 +1095,10 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
     if (build_temperature && build_pressure && build_humidity)
         build_atmosphere_ = BuildAtmosphere{*build_temperature, *build_pressure, *build_humidity};
     rotor_rpm_ = read_double_attribute(file_ncid, "rotor_rpm");
+    coherence_record_ = read_coherence_record(file_ncid);
+    if (!coherence_record_.empty())
+        info("Database records its vehicle's coherence between emission directions",
+                coherence_record_.source.empty() ? std::string(".") : " (" + coherence_record_.source + ").");
     if (build_atmosphere_)
         info("Built at ", build_atmosphere_->temperature_kelvin, " K, ",
                 build_atmosphere_->pressure_kpa, " kPa, ",
@@ -1652,6 +1705,9 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
     // coplanar and the 3D triangulation degenerate.  A fourth operating
     // parameter would be another column here and nothing else -- the
     // interpolator's dimension is a constructor argument, not a fixed three.
+    if (!coherence_record_.tonal_fraction.empty() && coherence_record_.tonal_fraction.size() != frequencies_.size())
+        input_error("The database attribute coherence_tonal_fraction holds ", coherence_record_.tonal_fraction.size(),
+                " values; it needs one per band of the database's spectra, ", frequencies_.size(), ".");
     std::vector<double> conditions(advance_ratios.size() * active_condition_dims_);
     for (std::size_t i = 0; i < advance_ratios.size(); i++)
     {
@@ -2113,6 +2169,19 @@ void Database::eval_spectrum(double range, double absorbed_range, double phi, do
         general_band(band);
 }
 
+void Database::spectrum_along(const SourceState& state, const Vec3& direction, double* levels,
+        std::size_t first_band, std::size_t last_band, const PackedSpectra* packed) const
+{
+    const auto angles = lookup_angles(state.frame, direction, !upper_hemisphere_measured_);
+    assert(std::isfinite(angles[0]) && std::isfinite(angles[1]));
+    // At the sphere's radius nothing spreads and nothing is absorbed, so the
+    // coefficients are never read; zeros keep them defined.
+    thread_local std::vector<double> none;
+    none.assign(frequencies_.size(), 0.0);
+    eval_spectrum(sphere_radius_, sphere_radius_, angles[0], angles[1], state.blend, none.data(), levels, first_band,
+            last_band, packed);
+}
+
 // The body both spectral_level_at_observer and spectral_level_along share,
 // forced inline into each.  As an ordinary call from the first -- the one the
 // straight-ray observer loop takes -- it cost 4% of the acoustic loop, measured
@@ -2263,6 +2332,8 @@ Database::Sphere Database::interpolate_sphere(double advance_ratio, double fligh
     sphere.speed_reference = speed_reference_;
     sphere.azimuth_reference = azimuth_reference_;
     sphere.tip_speed = tip_speed_;
+    sphere.coherence = coherence_record_;
+    sphere.rotor_rpm = rotor_rpm_;
     sphere.rotor_radius = rotor_radius_;
     sphere.vehicle_weight_newtons = vehicle_weight_newtons_;
     sphere.phis = phis.values();
@@ -3046,6 +3117,37 @@ int define_scalar(int group, const char* name, int dimid)
     return varid;
 }
 
+
+// The record's root attributes, in define mode.
+// A root attribute of one number, where there is one; in define mode.
+void write_root_number(int file, const char* name, const std::optional<double>& v)
+{
+    if (v)
+        nc_check(nc_put_att_double(file, NC_GLOBAL, name, NC_DOUBLE, 1, &*v), std::string("writing ") + name);
+}
+
+void write_coherence_record(int file, const CoherenceRecord& r)
+{
+    auto number = [&](const char* name, const std::optional<double>& v) { write_root_number(file, name, v); };
+    auto text = [&](const char* name, const std::string& v) {
+        if (!v.empty())
+            nc_check(nc_put_att_text(file, NC_GLOBAL, name, v.size(), v.c_str()), std::string("writing ") + name);
+    };
+    number("main_rotor_blades", r.blades);
+    if (r.rotation_sense)
+        text("main_rotor_rotation", *r.rotation_sense > 0 ? "counterclockwise" : "clockwise");
+    number("coherence_rotation_limit_Hz", r.rotation_limit);
+    number("coherence_scale_Hz_deg", r.scale);
+    number("coherence_exponent", r.exponent);
+    number("coherence_spread_scale_Hz_deg", r.spread_scale);
+    number("coherence_spread_exponent", r.spread_exponent);
+    if (!r.tonal_fraction.empty())
+        nc_check(nc_put_att_double(file, NC_GLOBAL, "coherence_tonal_fraction", NC_DOUBLE, r.tonal_fraction.size(),
+                         r.tonal_fraction.data()),
+                "writing coherence_tonal_fraction");
+    text("coherence_source", r.source);
+}
+
 } // namespace
 
 void write_sphere(const Database::Sphere& sphere, const std::string& path)
@@ -3096,6 +3198,9 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
                          azimuth.c_str()),
                 "writing azimuth_reference");
     }
+
+    write_coherence_record(file, sphere.coherence);
+    write_root_number(file, "rotor_rpm", sphere.rotor_rpm);
 
     int group = 0;
     nc_check(nc_def_grp(file, "sphere0", &group), "defining group sphere0");

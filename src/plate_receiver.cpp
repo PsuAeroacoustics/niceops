@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
+#include <string>
 
 #include <netcdf.h>
 
@@ -201,6 +203,75 @@ PlateReceiver PlateReceiver::bound(const std::vector<double>& bands, const Groun
     return plate;
 }
 
+PlateReceiver::Stencil PlateReceiver::stencil(double elevation, double azimuth) const
+{
+    std::size_t e0 = 0;
+    double we = 0.0;
+    if (elevation >= elevations_.back())
+    {
+        e0 = elevations_.size() - 2;
+        we = 1.0;
+    }
+    else if (elevation > elevations_.front())
+    {
+        e0 = static_cast<std::size_t>(
+                std::upper_bound(elevations_.begin(), elevations_.end(), elevation) - elevations_.begin() - 1);
+        we = (elevation - elevations_[e0]) / (elevations_[e0 + 1] - elevations_[e0]);
+    }
+    double turns = azimuth / azimuth_step_;
+    turns -= std::floor(turns / static_cast<double>(n_azimuths_)) * static_cast<double>(n_azimuths_);
+    auto a0 = static_cast<std::size_t>(turns);
+    const double wa = turns - static_cast<double>(a0);
+    a0 %= n_azimuths_;
+    const std::size_t a1 = (a0 + 1) % n_azimuths_;
+    const std::size_t spectrum = n_bands_ * n_sub_;
+    const double* table = values_->data();
+    return {{table + ((e0 * n_azimuths_ + a0) * spectrum) * 4, table + ((e0 * n_azimuths_ + a1) * spectrum) * 4,
+                    table + (((e0 + 1) * n_azimuths_ + a0) * spectrum) * 4,
+                    table + (((e0 + 1) * n_azimuths_ + a1) * spectrum) * 4},
+            {(1.0 - we) * (1.0 - wa), (1.0 - we) * wa, we * (1.0 - wa), we * wa}};
+}
+
+void PlateReceiver::transfer(double elevation, double azimuth, const std::size_t* bands, const double* frequencies,
+        std::size_t count, std::complex<double>* direct, std::complex<double>* image) const
+{
+    const Stencil st = stencil(elevation * 180.0 / pi, azimuth);
+    auto at = [&](std::size_t s, int part) {
+        double v = 0.0;
+        for (int c = 0; c < 4; c++)
+            v += st.weight[c] * st.corner[c][s * 4 + static_cast<std::size_t>(part)];
+        return v;
+    };
+    for (std::size_t i = 0; i < count; i++)
+    {
+        const std::size_t band = bands[i];
+        if (band >= n_bands_)
+            throw std::out_of_range("PlateReceiver::transfer: band " + std::to_string(band) + " is past the table's");
+        const double* f = frequencies_.data() + band * n_sub_;
+        // The sub-frequencies about this one, and the weight of the upper.
+        std::size_t lo = 0;
+        double w = 0.0;
+        if (n_sub_ > 1)
+        {
+            if (frequencies[i] >= f[n_sub_ - 1])
+            {
+                lo = n_sub_ - 2;
+                w = 1.0;
+            }
+            else if (frequencies[i] > f[0])
+            {
+                while (lo + 2 < n_sub_ && f[lo + 1] <= frequencies[i])
+                    lo++;
+                w = std::log(frequencies[i] / f[lo]) / std::log(f[lo + 1] / f[lo]);
+            }
+        }
+        const std::size_t s0 = band * n_sub_ + lo, s1 = n_sub_ > 1 ? s0 + 1 : s0;
+        auto blend = [&](int part) { return (1.0 - w) * at(s0, part) + w * at(s1, part); };
+        direct[i] = {blend(0), blend(1)};
+        image[i] = {blend(2), blend(3)};
+    }
+}
+
 void PlateReceiver::level(double source_height, double ground_distance, double azimuth,
         double* correction, std::size_t first_band, std::size_t last_band) const
 {
@@ -266,36 +337,10 @@ void PlateReceiver::evaluate(double source_height, double ground_distance, doubl
     const double kappa_per_hz = pi * image_range / sound_speed_;
 
     // Bilinear stencil.  Elevation is held at the table's ends.
-    const double elevation = std::atan2(hs, ground_distance) * 180.0 / pi;
-    std::size_t e0 = 0;
-    double we = 0.0;
-    if (elevation >= elevations_.back())
-    {
-        e0 = elevations_.size() - 2;
-        we = 1.0;
-    }
-    else if (elevation > elevations_.front())
-    {
-        e0 = static_cast<std::size_t>(
-                std::upper_bound(elevations_.begin(), elevations_.end(), elevation)
-                - elevations_.begin() - 1);
-        we = (elevation - elevations_[e0]) / (elevations_[e0 + 1] - elevations_[e0]);
-    }
-    double turns = azimuth / azimuth_step_;
-    turns -= std::floor(turns / static_cast<double>(n_azimuths_)) * static_cast<double>(n_azimuths_);
-    auto a0 = static_cast<std::size_t>(turns);
-    const double wa = turns - static_cast<double>(a0);
-    a0 %= n_azimuths_;
-    const std::size_t a1 = (a0 + 1) % n_azimuths_;
-
+    const Stencil st = stencil(std::atan2(hs, ground_distance) * 180.0 / pi, azimuth);
+    const double* const* corner = st.corner;
+    const double* weight = st.weight;
     const std::size_t spectrum = n_bands_ * n_sub_;
-    const double* table = values_->data();
-    const double* corner[4] = {
-            table + ((e0 * n_azimuths_ + a0) * spectrum) * 4,
-            table + ((e0 * n_azimuths_ + a1) * spectrum) * 4,
-            table + (((e0 + 1) * n_azimuths_ + a0) * spectrum) * 4,
-            table + (((e0 + 1) * n_azimuths_ + a1) * spectrum) * 4};
-    const double weight[4] = {(1.0 - we) * (1.0 - wa), (1.0 - we) * wa, we * (1.0 - wa), we * wa};
     constexpr double ten_over_ln10 = 4.34294481903251827651;
     const bool boundary_loss = ground_.boundary_loss_correction;
 

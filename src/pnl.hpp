@@ -20,9 +20,10 @@
 //   * the duration correction takes 10 lg(dt / T), T = 10 s, as the -13 that
 //     A36.4.5.4 states for dt = 0.5 s, and exactly for any other dt;
 //   * the A36.4.4.2 band-sharing check is applied (optional, as in panam),
-//     its adjustment Delta_B added to EPNL as a term of its own (ICAO Annex
-//     16 Vol. I, Appendix 2; panam F014), PNLTM, the duration and D being
-//     the unadjusted history's;
+//     its adjustment Delta_B added to EPNL as a term of its own (panam
+//     F014), PNLTM, the duration and D being the unadjusted history's: a
+//     departure from ICAO Annex 16 Vol. I, Appendix 2 and AC 36-4D, which
+//     add it to PNLTM (THEORY 10.5);
 //   * a -infinity band (zero energy), for which the procedure is undefined,
 //     enters steps 1-7 at its noy threshold SPL(d) and carries no tone (it
 //     has no noys either way); taken literally it made its neighbor a full

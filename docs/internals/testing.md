@@ -15,7 +15,10 @@ output with a file in `golden/` or with another run, through `golden_compare`:
 
 - **Tolerance.** The default is 1e-9 relative, scaled by max(1, |value|). An optional third
   argument is an absolute tolerance, for runs that are meant to agree only that closely; a value
-  then agrees within the larger of the two. Header lines (anything non-numeric) are skipped.
+  then agrees within the larger of the two. A fourth and fifth argument compare the candidate
+  less an offset, after a number of leading numeric lines compared as they are (a grid file's x
+  and y axes): a level that should sit a known number of dB from another. Header lines (anything
+  non-numeric) are skipped.
 - **Non-finite values.** A NaN agrees only with a NaN, and an infinity only with the same
   infinity (a culled cell is −inf in both runs). `golden_compare` is tested itself
   (`golden_compare_rejects_nan`, `golden_compare_rejects_inf`,
@@ -49,7 +52,7 @@ condition-bin bounds, frame alignment and common prediction coverage. It is not 
 | File | Made by | Compared by (tolerance) | Producing run | Regenerate |
 | --- | --- | --- | --- | --- |
 | `state_197421.csv` | D reference | `state_golden` (1e-9 rel.) | `regression_default` (`-S state/ci_state.csv`) | `regenerate-goldens` skill |
-| `197421_LAE.csv` | C++ build | `regression_golden` (1e-9 rel.); also `blend_barycentric_is_golden`, `ambient_negligible_matches` | `regression_default` | copy `integrated/197421_LAE.csv` |
+| `197421_LAE.csv` | C++ build | `regression_golden` (1e-9 rel.); also `blend_barycentric_is_golden`, `ambient_negligible_matches`, `mask_suspect_cells_clean_is_golden`, `config_demo_is_golden`, `operations_count_one_is_golden` | `regression_default` | copy `integrated/197421_LAE.csv` |
 | `metrics_197421_lafmax.csv` | C++ build | `lafmax_golden` (1e-9 rel.) | `metrics_broadband` | copy `integrated/metrics_bb_lafmax.csv` |
 | `metrics_197421_na64.csv` | C++ build | `nax_golden` (1e-9 rel.) | `metrics_broadband` | copy `integrated/metrics_bb_na64.csv` |
 | `metrics_197421_ta70.csv` | C++ build | `ta_golden` (1e-9 rel.) | `metrics_broadband` | copy `integrated/metrics_bb_ta70.csv` |
@@ -67,6 +70,13 @@ condition-bin bounds, frame alignment and common prediction coverage. It is not 
 | `terrain_ridge_kirchhoff_plate.csv` | C++ build | `terrain_ridge_kirchhoff_plate_golden` (1e-6 dB abs.) | `terrain_ridge_kirchhoff_plate` | copy the run's output |
 | `terrain_ridge_kirchhoff_noground.csv` | C++ build | `terrain_ridge_kirchhoff_noground_golden` (1e-6 dB abs.) | `terrain_ridge_kirchhoff_noground` | copy the run's output |
 | `terrain_ridge_kirchhoff_table.csv` | C++ build | `terrain_ridge_kirchhoff_table_golden` (1e-5 dB abs.) | `terrain_ridge_kirchhoff_table` | copy the run's output |
+| `urban_canyon.csv` | C++ build | `urban_table_canyon_golden` (1e-6 dB abs.) | `urban_table_canyon` | copy the run's output |
+| `urban_plate.csv` | C++ build | `urban_table_plate_golden` (1e-6 dB abs.) | `urban_table_plate` | copy the run's output |
+| `urban_wave.csv` | C++ build | `urban_table_wave_golden` (1e-5 dB abs.) | `urban_table_wave` | copy the run's output |
+| `urban_buildings.csv` | C++ build | `urban_buildings_golden` (1e-6 dB abs.) | `urban_buildings` | copy the run's output |
+| `urban_buildings_plate.csv` | C++ build | `urban_buildings_plate_golden` (1e-6 dB abs.) | `urban_buildings_plate` | copy the run's output |
+| `urban_buildings_diffuse.csv` | C++ build | `urban_buildings_diffuse_golden` (1e-6 dB abs.) | `urban_buildings_diffuse` | copy the run's output |
+| `buildings_scattering.csv` | C++ build | `buildings_scattering_golden` (1e-6 dB abs.) | `buildings_scattering_run` (`--buildings --facade_scattering 0.3 --no-gpu`) | copy `integrated/buildings_scattering.csv` |
 
 All files are in `golden/`; each producing run writes `integrated/<name>.csv` unless the table
 says otherwise. To regenerate a C++ golden, run its comparison with the build that carries the
@@ -111,6 +121,10 @@ Notes on each:
   tolerance is absolute because the root solves are not bit-stable across compilers.
   `stratified_calm_floor_plate_200hz` ends `--band_limits` at the 200 Hz band, so the layered
   solve's resolution frequency is not the 10 kHz default.
+- **The four stratified goldens were regenerated when `--ray_stride 4` became the default**; the
+  files from before, every state solved, are kept as `*_exact.csv` and pinned by runs with
+  `--ray_stride 1`, which reproduce them to the bit. `stratified_stride_{windy,duct}_is_close`
+  holds the default within 0.005 and 0.02 dB of them.
 - **`terrain_hills_{point,plate}.csv`** were made by the build that added `--terrain`. They are
   pinned for the same reason: passing the plate's receiver as a point receiver at its call site
   (the plate then measures the source from the line, not from its microphone) moved cells by
@@ -126,16 +140,51 @@ Notes on each:
   pair the whole path's ground as well (ground counted twice) fails both, and giving a plate's
   microphone side the point model in place of the plate fails the plate's. The windowed/marched
   pairs compare a run with itself and pass with either.
-- **The four stratified goldens were regenerated when `--ray_stride 4` became the default**; the
-  files from before, every state solved, are kept as `*_exact.csv` and pinned by runs with
-  `--ray_stride 1`, which reproduce them to the bit. `stratified_stride_{windy,duct}_is_close`
-  holds the default within 0.005 and 0.02 dB of them.
 - **`terrain_ridge_kirchhoff_{point,plate,noground,table}.csv`** were made by the builds that
   added `--terrain_screening kirchhoff` (point, plate) and its band-loss table (the other two;
   the table moved the first two by under 10⁻⁸ dB), behind the ridge fixture, and pin the
   knife edge's four call sites: the ground model over the plane, the plate, the free field with no
   ground model, and the table (looser, as the table is built by the test run). Dropping the loss
   from the free field's or the table's call passed every other test.
+- **`urban_{canyon,plate}.csv`** were made by the build that added `--urban_table`, and
+  regenerated when the ideal canyon learned the floor's rays (the low-pass microphone moved from
+  -3.7 to -2.1 dB against open ground; flush microphones, their own floor images, did not move),
+  and again, with `urban_wave.csv`, when UTD roof-edge diffraction replaced the CNOSSOS-EU
+  placeholder (the low-pass microphone to +0.4 dB, the placeholder having left shadows 2-4 dB too
+  deep).
+  Seven microphones in ideal canyons on the demo track, poles and plates. They pin the call site:
+  an image path whose separation is not mirrored back before the plate reads its azimuth fails
+  the plate's, and a reflection evaluated with the ground model whatever its floor partner fails
+  both, with every windowed/marched pair green.
+- **`urban_wave.csv`** was made by the build that added `--wave_below`: the same microphones with
+  the flush canyons' bands below 80 Hz from the wave solver (10 points per wavelength), blended
+  through 125 Hz. Its tolerance is looser, the FDTD's round-off being compiler-dependent.
+- **`urban_buildings{,_plate}.csv`** were made by the build that added `--buildings`: the same
+  seven microphones among eleven LoD1 buildings (`tests/data/urban_buildings.csv`), as poles and
+  as plates. They pin the builder's call site: passing the tool's facades as no `run_facades`
+  (the run's first-order reflections then counted twice) fails both, with every windowed/marched
+  pair green.
+- **`urban_buildings{,_plate,_diffuse}.csv`** were regenerated when the table's directions moved
+  1e-6 rad clockwise of its azimuths, off the walls' knife edges: the demo microphones moved by at
+  most 0.006 dB. `urban_buildings_geojson_is_the_csv` runs the same district read from GeoJSON
+  against the CSV's run, to 1e-7.
+- **`urban_buildings_diffuse.csv`** was made by the build that added `--facade_scattering`: the
+  same district with every wall scattering 0.2. It pins the run's reflections at rho (1 - s): written
+  at rho, they count the scattered share twice and fail it, with the windowed/marched pair green.
+- **`urban_buildings{,_plate,_diffuse}.csv`** moved again when UTD's edges took their ends (up to
+  0.06 dB), and when the plane-wave tables took the roofs, which keeps a corner's end wave the
+  foot prefilter had dropped (0.001 dB; 0.005 for the diffuse one, with the roofs scattering).
+  The moves are in [HISTORY](../HISTORY.md#changes-that-affect-results).
+- **`buildings_scattering.csv`** was made by the build that added `--facade_scattering` under
+  `--buildings`: the test district's seven microphones in a trajectory run, every wall scattering
+  0.3, on the CPU (`--no-gpu`). It pins the run's own diffuse field, which no table carries, and
+  the point model's rays under it: it was regenerated with each deliberate change to those rays
+  (reflections at a twice-diffracted ray's ends and between its edges, three roof edges, a floor
+  bounce between two edges, UTD's edge ends, a shared face's aperture at its limit, a flat face's
+  twice-diffracted ray through its plane). Beside it, `buildings_scattering_states_sampled` holds
+  the sampled states within 0.01 dB of every state, and
+  `buildings_scattering_out_of_reach_is_specular` holds a district out of every microphone's
+  `--diffuse_radius` to the specular run.
 
 ## `self_test`
 
@@ -197,6 +246,33 @@ CTests are defined in `CMakeLists.txt`.
 | `terrain_ridge_screened_point_golden`, `terrain_ridge_screened_plate_golden` | CTest | the screened pair's call given the whole path's ground, plate and table besides its side terms; the plate's microphone side evaluated with the point model |
 | `a screened pair never exceeds the bound's screened term` | `test_screening.cpp` | F's clamp to 1 dropped; `screen_gain_bound` without G_S, or without the 1/3 (it must come within 3% of the bound, which rigid ground near grazing does). The call site's screening term removed from the bound passes every `terrain_ridge_screened_*_windowed_is_exact`, although the term raises the bound in most bands, so the run logs how many bands it raises and `terrain_ridge_screened_bound` requires at least one. Which classes the term's source side takes is guarded by reading |
 | `the point receiver's ground bound over several classes is their elementwise maximum` | `test_ground_classes.cpp` | the bound over the first class only, inside `point_ground_gain_bounds`. No CTest kills it: each class's bound is within about 3 dB of the others' in the bands A-weighting keeps, and `ground_classes{,_terrain}_windowed_is_exact` passed with it for grass, concrete, snow, water and passive thin layers. The call site passing every class (`point_classes`) is therefore guarded only by reading |
+| `urban_table_bump_windowed_is_exact` | CTest | the urban table's largest gain left out of `path_gains`. The canyon tables' own gains, at most +3 dB, sit inside the bound's slack, so the canyon and plate pairs pass with it; the bump table adds +25 dB at 3 to 20 degrees of elevation. The first-order images left out of `urban_bound_geometry` pass every CTest, including 150 random tall canyons near the end of the approach, with and without the ground: the table's own gain and the slack cover reflections leaving 10 to 40 degrees from the direct path on this database. It is kept for directional spheres and guarded by reading |
+| `urban_table_plate_golden` | CTest | an image path's separation not mirrored back before the plate reads its azimuth |
+| `urban_table_canyon_golden`, `urban_table_plate_golden` | CTest | a first-order reflection evaluated with the ground model whatever its floor partner (`first_order_floor_partner` skipped) |
+| `urban_buildings_golden`, `urban_buildings_plate_golden` | CTest | the builder's table keeping the first-order reflections the run evaluates (no `run_facades`), or their floor partners; the second also fails `[building_paths]` |
+| `the beams find every diffracted ray the unpruned search does` | `test_building_paths.cpp` | `clip_to_beam` with the window's far side reversed, or clipping 1 mm short of its boundaries |
+| `the field is continuous across a corner's shadow and reflection boundaries` | `test_point_paths.cpp` | `term_angles` taking every pole's limit a hair above it (9.3 dB on the corner's shadow boundary, at the receivers exactly on it) |
+| `away from transitions the twice-diffracted cascade is the edge-source integral` | `test_edge_source.cpp` | the cascade's spreading for edges that are not parallel taken as the parallel one (1.45 dB on the perpendicular pair) |
+| `with the edge source a corner's adjacent edges give a finite field` | `test_point_paths.cpp` | `where_along` taking a point on the edge's own line (the corner two edges share) for a wave's boundary, with no least length for a partner's part: a stretch of no length whose spectrum is not a number |
+| `the level-curve spectrum is the nested integral` | `test_edge_source.cpp` | the level curves' breaks without the boundary points, where a directivity term's pole meets its ridge (the perpendicular pair 1-11% off) |
+| `a point of an edge proved hidden is hidden` | `test_edge_visibility.cpp` | the buildings grown by 5 cm rather than shrunk by `visible_stretch`'s margin (209,070 points seen yet proved hidden). A margin of zero passes: no sampled path grazes a corner closely enough |
+| `pruning the diffracted paths loses no ray` | `test_point_paths.cpp` | each visible stretch pulled in by 0.5 m at both ends (466 rays of 628 on one case); the buildings grown by 5 cm |
+| `urban_buildings_diffuse_golden` | CTest | the run's first-order reflections written at rho rather than rho (1 - s) |
+| `rays that leave together deviate together` | `test_source_coherence.cpp` | the interval's groups never linked (every pair alone); the rotor's delay with its sense reversed on the rays; the one-turn shift of a pair whose azimuth difference wraps left out |
+| `rays leaving apart lose their coherence as frequency times angle grows` | `test_source_coherence.cpp` | every pair's mean coherency 1 (the coherent sum) under `--ray_coherence measured` |
+| `within the cone rays add with their phases and beyond it in energy` | `test_source_coherence.cpp` | the pair sum not told it is the cone (every pair coherent) |
+| `a roof under a reflected leg is found whatever stands far off` | `test_point_paths.cpp` | a reflected leg's roofs looked for in the plan box of its unfolded line rather than of its points and facades, which found or missed a real bounce by the plan grid's cell size, so by buildings a kilometer off |
+| `a bounce on two level roofs' join is one ray` | `test_point_paths.cpp` | the later building not ceding a level shared side (`ceded_`): both roofs took the bounce, 1.4 dB loud |
+| `the ray set is reciprocal at every edge order` | `test_point_paths.cpp` | the source's image tree at the specular order rather than the edges' (`tree_order`), which only `--max_edge_reflections 0` shows |
+| `the fade adds partners and nothing else` | `test_point_paths.cpp` | `leg_edges` skipping its own buildings without testing them for blocking (a leg back through an L's other wing); `push_faded` truncating to the three nearest screens before keeping the ones across |
+| `the edge source is the same with the district turned` | `test_edge_source.cpp` | `onto_air` left out of `angle_about` or `edge_frame_ends`, so a corner's sample lands at 0 or 2π by rounding (up to 1 dB, rotation by rotation) |
+| `a partner's part reaches a shared vertex` | `test_edge_source.cpp` | the part's end not snapped to the edge's end, 1e-20 short of the vertex: the partner's whole field added, 10-16 dB |
+| `a wall against part of another's stands against it there`; `a courtyard closed at T-junctions is reached over its roofs alone` | `test_buildings.cpp`; `test_point_paths.cpp` | `split_at_junctions` removed (rays along the seam into the courtyard); a side split where a neighbor only touches it at a vertex |
+| `the tabulated transition function is the Faddeeva form` | `test_wedge.cpp` | `utd_transition(NaN)` indexing the table, which reads out of bounds on x86 |
+| `over a rigid floor the FDTD's field is the two rays'` | `test_fdtd.cpp` | the transfer divided by -i omega (fourth order 0.0023 dB low at 1250 Hz, the tolerance 0.0015) or by the continuous -i omega + a c; Q left unweighted by the air (0.013 dB, the tolerance 0.003) |
+| `the GPU's cone and energy sums are the CPU's`; `the GPU's cone sum is not below zero` | `test_gpu.cpp` | a cone set packed as coherent; `band_pair_sum` without its clamp at zero (three rays whose cone sum is 3 - 2 - 2) |
+| `buildings_measured_interval_brackets` | CTest (`tests/check_interval.cmake`) | an interval collapsed onto the level, or its ends swapped |
+| `the phase interval's ends are the gamma distribution's quantiles` | `test_source_coherence.cpp` | the gamma cdf's series taken past a shape of 1e4, where its 1000 terms stop short of the mean |
 
 **A mutation check that restores a file with `mv` leaves it older than the objects built from the
 mutant, and make then considers it up to date.** `touch` it, or `cp` it back.

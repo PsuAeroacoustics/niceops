@@ -7,7 +7,7 @@
 // band-averaged level relative to a point source's free field at the straight-
 // line distance, on a grid of ranges (--step) and heights (--dz, from the ground
 // to --top), as CSV rows band,range,height,level in --units.  The ground,
-// turbulence and grid options are niceops_pe_compare's.  The heights are the
+// turbulence, grid and thread options are niceops_pe_compare's (pe_options.hpp).  The heights are the
 // PE's receivers, so asking for a tall grid raises the PE's own domain with it.
 
 #include <CLI/CLI.hpp>
@@ -24,10 +24,16 @@
 #include "stratified.hpp"
 #include "util/constants.hpp"
 #include "util/logger.hpp"
+#include "util/parallel.hpp"
+
+#include "pe_options.hpp"
 
 using namespace niceops; // NOLINT
 
+// A refused input -- an unreadable profile, a bad grid -- ends the run with its
+// reason, not an abort.
 int main(int argc, char** argv)
+try
 {
     CLI::App app {"The parabolic equation's field on one vertical plane."};
     std::string atmosphere_file;
@@ -39,20 +45,7 @@ int main(int argc, char** argv)
     double step = 0.0;
     double top = 0.0;
     double dz_out = 0.0;
-    double flow_resistance = flow_resistance::grassy_field;
-    std::string impedance_model = "delany_bazley";
-    int samples = 5;
-    double points_per_wavelength = 0.0;
-    double range_points_per_wavelength = 10.0;
-    std::string scheme = "pade";
-    double range_step_wavelengths = 8.0;
-    double max_angle = 50.0;
-    int vertical_order = 4;
-    int boundary_order = 4;
-    std::string starter = "self";
-    double gamma_t = 0.0;
-    double outer_scale = 10.0;
-    unsigned seed = 1;
+    PeOptions pe_options;
     app.add_option("--atmosphere", atmosphere_file, "Atmosphere profile, as for niceops.")->required();
     app.add_option("--units", units, "Length unit: ft (default) or m.")->check(CLI::IsMember({"ft", "m"}));
     app.add_option("--toward", toward, "Compass bearing the sound travels along, degrees.")->required();
@@ -62,37 +55,11 @@ int main(int argc, char** argv)
     app.add_option("--step", step, "Range spacing of the output, in --units (default max_range / 200).")->check(CLI::NonNegativeNumber);
     app.add_option("--top", top, "Highest height written, in --units (default twice the source's).")->check(CLI::NonNegativeNumber);
     app.add_option("--dz", dz_out, "Height spacing of the output, in --units (default top / 150).")->check(CLI::NonNegativeNumber);
-    app.add_option("--flow_resistance", flow_resistance, "Ground flow resistance, kPa s/m^2.");
-    app.add_option("--impedance_model", impedance_model, "As for niceops.");
-    app.add_option("--samples", samples, "PE frequencies per band (default 5).")->check(CLI::PositiveNumber);
-    app.add_option("--ppw", points_per_wavelength, "PE grid points per wavelength in height (default 10 where the grid is fourth order "
-            "throughout, 20 under --scheme cn or either order 2).")->check(CLI::NonNegativeNumber);
-    app.add_option("--scheme", scheme,
-            "How the PE marches in range: pade (default), the split-step Pade march, or cn, Crank-Nicolson.")
-            ->check(CLI::IsMember({"pade", "cn"}));
-    app.add_option("--range_step", range_step_wavelengths,
-            "--scheme pade: longest range step, in wavelengths (default 8).")->check(CLI::PositiveNumber);
-    app.add_option("--max_angle", max_angle,
-            "--scheme pade: elevation angle the march is accurate to, degrees (default 50, at most 60).  Steeper "
-            "paths from the source come out as NaN.")->check(CLI::Range(0.1, 60.0));
-    app.add_option("--vertical_order", vertical_order,
-            "--scheme pade: order of the height derivative on the grid, 4 (default) or 2.")
-            ->check(CLI::IsMember({2, 4}));
-    app.add_option("--boundary_order", boundary_order,
-            "--scheme pade: order of the ground condition and of the source's and receivers' "
-            "interpolation, 4 (default) or 2.")
-            ->check(CLI::IsMember({2, 4}));
-    app.add_option("--starter", starter,
-            "--scheme pade: self (default), the wide-angle self-starter, or gaussian.")
-            ->check(CLI::IsMember({"self", "gaussian"}));
-    app.add_option("--range_ppw", range_points_per_wavelength,
-            "--scheme cn: range steps per wavelength (default 10).")->check(CLI::PositiveNumber);
-    app.add_option("--gamma_t", gamma_t, "Turbulence in the PE, as for niceops_pe_compare (default 0).");
-    app.add_option("--outer_scale", outer_scale, "von Karman outer scale, m (default 10).");
-    app.add_option("--seed", seed, "First realization's seed (default 1).");
+    pe_options.add_to(app);
     CLI11_PARSE(app, argc, argv);
 
     Logger::instance().set_file("log/pe_field.log");
+    const unsigned workers = tool_thread_count(pe_options.threads);
     const LengthUnit unit = units == "m" ? meters : feet;
     const double z_s = source_height * unit.to_meters;
     const double r_max = max_range * unit.to_meters;
@@ -117,10 +84,7 @@ int main(int argc, char** argv)
     std::vector<double> c(layered.levels());
     layered.along(std::sin(bearing), std::cos(bearing), c.data());
 
-    GroundModel ground;
-    ground.flow_resistance = flow_resistance;
-    ground.impedance_model = parse_impedance_model(impedance_model);
-    const auto admittance = ground_impedance(ground, bands, sound_speed);
+    const auto admittance = ground_impedance(pe_options.ground(), bands, sound_speed);
 
     std::vector<double> heights;
     for (std::size_t j = 0; static_cast<double>(j) * dz <= z_top + 1e-9; j++)
@@ -128,7 +92,7 @@ int main(int argc, char** argv)
     std::vector<PeSetup> setups(bands.size());
     for (std::size_t b = 0; b < bands.size(); b++)
     {
-        PeSetup& setup = setups[b];
+        PeSetup& setup = setups[b] = pe_options.setup(b, workers);
         setup.source_height = z_s;
         setup.receiver_heights = heights;
         setup.max_range = r_max;
@@ -136,21 +100,11 @@ int main(int argc, char** argv)
         setup.admittance = admittance[b];
         setup.z = layered.heights();
         setup.c = c;
-        setup.points_per_wavelength = points_per_wavelength;
-        setup.range_points_per_wavelength = range_points_per_wavelength;
-        setup.scheme = scheme == "cn" ? PeScheme::crank_nicolson : PeScheme::split_step_pade;
-        setup.range_step_wavelengths = range_step_wavelengths;
-        setup.max_angle = max_angle;
-        setup.vertical_order = vertical_order;
-        setup.boundary_order = boundary_order;
-        setup.starter = starter == "gaussian" ? PeStarter::gaussian : PeStarter::self;
-        setup.gamma_t = gamma_t;
-        setup.outer_scale = outer_scale;
-        setup.seed = seed + 1000u * static_cast<unsigned>(b);
     }
-    std::cerr << "PE field: " << bands.size() << " bands x " << samples << " frequencies, " << heights.size()
-              << " heights..." << std::endl;
-    const auto pe = solve_pe_bands(setups, bands, samples);
+    std::cerr << "PE field: " << bands.size() << " bands x " << pe_options.samples << " frequencies, "
+              << heights.size() << " heights on " << workers << (workers == 1 ? " thread..." : " threads...")
+              << std::endl;
+    const auto pe = solve_pe_bands(setups, bands, pe_options.samples);
 
     std::cout << "band,range_" << unit.name << ",height_" << unit.name << ",level_db\n" << std::setprecision(6);
     for (std::size_t b = 0; b < bands.size(); b++)
@@ -159,4 +113,9 @@ int main(int argc, char** argv)
                 std::cout << bands[b] << "," << pe[b].range[q] / unit.to_meters << "," << heights[k] / unit.to_meters
                           << "," << pe[b].relative_level[k][q] << "\n";
     return 0;
+}
+catch (const std::exception& e)
+{
+    std::cerr << "niceops_pe_field: " << e.what() << std::endl;
+    return 1;
 }

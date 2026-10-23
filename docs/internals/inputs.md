@@ -13,11 +13,12 @@ conversion happens once, in `run()`, where the command line is parsed, and nothi
 that seam sees anything else. The seam converts exactly these options, each only when given:
 `--grid`, `--gridstep`, `--trim`, `--ground_elevation`, `--receiver_height`, `--path_smoothing`,
 `--roughness`, `--layer_depth`, `--roughness_length`, `--surface_layer_depth`,
-`--terrain_offset` and `--terrain_step`, an operations file's `offset` column, and a ground
+`--terrain_offset`, `--terrain_step`, `--screening_min_height`, `--patch_size`,
+`--diffuse_radius` and `--path_radius`, an operations file's `offset` column, and a ground
 classes file's `layer_depth` and `roughness` columns (`ground_classes_from`). The anemometer
-height in `--wind` is a length in `--units` too. Speeds are not lengths: `--wind`'s speed names its unit (`12kt`, `6.2mps`,
-`14mph`), as an `--atmosphere` file's wind columns must, and a bare number is refused rather than
-read in `--units`. A new length option joins the list above, or `--units m` silently reads it as
+height in `--wind` is a length in `--units` too. Speeds are not lengths: `--wind`'s speed names
+its unit (`12kt`, `6.2mps`, `14mph`), as an `--atmosphere` file's wind columns must, and a bare
+number is refused rather than read in `--units`. A new length option joins the list above, or `--units m` silently reads it as
 feet.
 
 ### Things to preserve
@@ -65,7 +66,8 @@ with exit status 0. Know these before adding a reader, and follow the same rules
   it is a header). Observer files keep one width, and an observer file that yields no observers
   is an error. A sixth observer column is the microphone's ground class, which must be a whole
   number from 0 to 2^31 − 1 and is checked against `--ground_classes` in `run()`; it needs the
-  height column, so no width is ambiguous. `--atmosphere` rejects non-finite cells. `--trim` past the crop is diagnosed.
+  height column, so no width is ambiguous. `--atmosphere` rejects non-finite cells. `--trim`
+  past the crop is diagnosed.
 - **Padding.** `read_numeric_csv` accepts fields padded on either side of the comma.
   `arrays/coyle_approach.csv`, the only scattered-observer set in the repository, pads *before*
   the comma, and all 84 shipped AC tracks pad on the left, which `std::stod` always skips. Keep

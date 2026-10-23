@@ -1,0 +1,382 @@
+{
+ "findings": {
+  "family": "Geometric acoustics for urban street canyons and built environments: image sources, ray/beam tracing, diffuse-reflection energy methods (radiosity, diffusion, particles), edge diffraction (UTD/BTM/ESIE/engineering rooftop models), GPU implementations",
+  "models": [
+   {
+    "name": "Image-source method (ISM) for specular facade/ground reflections, coherent or incoherent summation",
+    "physics_captured": "Specular multipath between parallel facades and the ground, by mirror images of the source. For an ideal canyon of two infinite parallel walls plus ground, the image lattice is analytic: n_s = 2(n_r+1) sources for reflection order n_r. Summed coherently, it gives interference (comb filtering, a destructive notch near 250 Hz for a receiver 4 m from a wall); summed incoherently, it gives smooth band-energy levels. Li and Lai (JASA 2009) give a closed-form integral version of the incoherent canyon sum. Wall and ground impedance enter through plane- or spherical-wave reflection coefficients.",
+    "limitations": "Specular only: real facades scatter, and Kang (2000) shows that replacing diffuse boundaries with specular ones markedly changes along-street attenuation and RT30. No diffraction: finite building height, the open roof and street ends are missing, so the ideal lattice overestimates confinement wherever leakage over roofs or out of ends matters. Visibility checks for general 3-D geometry grow as (number of faces)^order, which makes high orders in real cities expensive. Valid only when wavelengths are small compared with facade and canyon dimensions. Malbéqui notes it fails below a few tens of Hz; a canyon modal/FDTD study agrees with simpler models only up to about 100 Hz at full scale.",
+    "cost": "Analytic canyon lattice: microseconds per receiver per band for 20-40 images. General 3-D ISM with visibility: exponential in order. Practical urban codes stop at about 3-5 orders, or switch to ray/beam tracing.",
+    "niceops_fit": "The best candidate for the reference solution and for building per-receiver tables in simple canyon or corner geometries. For an elevated source far from the canyon relative to its width (30-1500 m altitude vs 10-30 m streets), the canyon response is essentially a function of incidence direction (azimuth, elevation) and band. A per-receiver table H_r(f_band, theta, phi) can therefore be precomputed and applied as a gain on top of the existing straight-ray level, with the same bilinear lookup as the sphere grid, costing about 20 ns per evaluation and fitting 1e8 evaluations. Incoherent (band-energy) summation is the right default for a moving broadband source in 1/3-octave bands. Coherent summation should be reserved for low bands or a tonal analysis. The ideal-canyon lattice is also a cheap unit test for any ray tracer that NICEOPS adopts, as Malbéqui did for Mithra.",
+    "references": [
+     {
+      "citation": "Malbéqui, P. (2023). Assessment of sound propagation for the urban air mobility. Forum Acusticum 2023 (10th EAA Convention), Turin, pp. 1011-1014.",
+      "supports_claim": "Image-source reference solutions for a corner and a street canyon, with an elevated VTOL source and octave bands 63 Hz-8 kHz; ray tracing (CSTB Mithra) agrees well. About +8 dB re free field near a corner and up to +14 dB with source and microphone both in the canyon. A Mithra case with a source 500 ft above the Airbus Helicopters site in Marignane. Rays not valid below a few tens of Hz.",
+      "url_or_doi": "https://doi.org/10.61782/fa.2023.0104",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Li, K. M. and Lai, C. Y. (2009). A note on noise propagation in street canyons. J. Acoust. Soc. Am. 126, 644.",
+      "supports_claim": "Integral, closed-form version of the incoherent image-source sum for street canyons, validated indoor and outdoor.",
+      "url_or_doi": "https://ira.lib.polyu.edu.hk/bitstream/10397/111516/1/644_1_online.pdf",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Kang, J. (2000). Sound propagation in street canyons: Comparison between diffusely and geometrically reflecting boundaries. J. Acoust. Soc. Am. 107.",
+      "supports_claim": "Geometric (image-source) boundaries give significantly less along-street attenuation, considerably longer RT30, and reduced extra attenuation from air or vegetation absorption than diffuse boundaries.",
+      "url_or_doi": "https://labs.sonicfield.org/library/sound-propagation-in-street-canyons-comparison-between-diffusely-and-geometrical",
+      "verified_by_search": true
+     },
+     {
+      "citation": "(Authors not confirmed in search) Effect of the open roof on low frequency acoustic propagation in street canyons. arXiv:0907.0605 / HAL hal-00400411.",
+      "supports_claim": "A modal plus 2-D image-source analytical model, a 2-D FDTD with open-roof radiation losses, and a scale model agree only up to about 100 Hz at full scale; above that, leaky modes break the analytic model.",
+      "url_or_doi": "https://arxiv.org/pdf/0907.0605",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Ray tracing / beam tracing / Gaussian beam tracing (3-D, multi-order specular plus optional diffuse), including GPU implementations",
+    "physics_captured": "Multi-order specular reflection in arbitrary 3-D city geometry. Commercial road and rail codes such as Mithra and SoundPLAN add ground reflection, absorption and detour-style diffraction. Beam tracing (Funkhouser/Tsingos) enumerates reflection, transmission and diffraction sequences without ray-sampling noise. Gaussian-beam summation adds smooth, caustic-free fields and can carry refraction. Rays can scatter stochastically to emulate Lambert facades.",
+    "limitations": "Pure ray tracing has no diffraction, so it leaves hard shadow zones behind buildings: Riegel and Sparrow report receivers with zero signal, and a UAM noise-map study excluded diffraction as too hard at city scale. Sampling noise and aliasing appear for small receivers, and results need many rays and high reflection orders (10-20 in city cases). It is a high-frequency approximation, valid roughly where wavelength << building dimensions (about 100-200 Hz and up for 10-30 m canyons). Diffraction add-ons (UTD, UBD, detour) are bolted on, and their order is usually limited to 1-2.",
+    "cost": "CPU: a Shinjuku district traffic-noise beam tracing ran 5392 s sequentially (another configuration about 4 h), reduced to about 3-8 min with domain decomposition plus threading on 8 workstations. GPU: CUDA Gaussian beam tracing on an RTX A6000 reported 790-798x speedup over the authors' CPU code for the GBS field step in a city scene (up to 16,384 rays, 10,201 receivers, 20 reflection orders; absolute times not reported). i-Sound on a GTX 280: 2-3 reflection orders plus 1 edge diffraction at interactive rates (about 33 fps).",
+    "niceops_fit": "Not usable inside the 1e8-evaluation loop directly, but suitable offline for building per-receiver reciprocity tables. By reciprocity, launch rays or beams from each ground receiver and bin the energy leaving the urban canopy by direction (theta, phi) and band. That gives a receiver directivity gain table, which turns into one table lookup per (state, observer) at run time. A canyon receiver needs about 1e4-1e5 rays and about 20 orders, which is milliseconds to seconds per receiver on GPU, so 14,400 receivers is minutes to an hour on one GPU. The beam-tracing variant can also carry the existing refraction machinery. Diffraction must be added (see the UTD/BTM entries), or shadowed courtyards come out silent, which is wrong for an elevated source just below a roofline.",
+    "references": [
+     {
+      "citation": "Sheng, Z., Duan, L., Jiang, H. (2025). Accelerating Gaussian beam tracing method with dynamic parallelism on graphics processing units. arXiv:2501.13382.",
+      "supports_claim": "GPU Gaussian beam summation 790x faster than CPU in city scenes and 188x in free field (RTX A6000, CUDA). City case: 10,201 receivers, 16,384 rays, max reflection order 20. No diffraction mentioned.",
+      "url_or_doi": "https://arxiv.org/abs/2501.13382",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Gbikpi-Benissan, G. and Magoulès, F. (2019/2014 preprint). Beam-tracing domain decomposition method for urban acoustic pollution. arXiv:1912.03998.",
+      "supports_claim": "Beam tracing of Shinjuku district traffic noise: sequential runs of 5392 s (and about 4 h for another case) cut to minutes with domain decomposition plus multithreading on a small cluster. Geometrical methods are valid only at high frequency.",
+      "url_or_doi": "https://arxiv.org/pdf/1912.03998",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Tsingos, N., Funkhouser, T., Ngan, A., Carlbom, I. (2001). Modeling acoustics in virtual environments using the uniform theory of diffraction. SIGGRAPH 2001.",
+      "supports_claim": "Beam tracing that enumerates diffracting-edge sequences in densely occluded polyhedral scenes, with UTD edge diffraction and a shadow-region approximation.",
+      "url_or_doi": "https://pixl.cs.princeton.edu/pubs/Tsingos_2001_MAI/index.php",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Taylor, M., Chandak, A., Mo, Q., Lauterbach, C., Schissler, C., Manocha, D. (2012/2013). i-Sound: Interactive GPU-based sound auralization in dynamic scenes (UNC tech report / JASA).",
+      "supports_claim": "GPU image-source plus multi-view raycasting: 2-3 orders of reflection and 1 order of edge diffraction at about 33 fps on a GTX 280.",
+      "url_or_doi": "https://gamma.cs.unc.edu/Sound/iSound/",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Schissler, C. and Manocha, D. (2011). GSound: Interactive sound propagation for games. AES 41st Conf.",
+      "supports_claim": "Ray-based visibility for arbitrary-order reflection and diffraction path validation in real time.",
+      "url_or_doi": "https://gamma.cs.unc.edu/GSOUND",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Riegel, K. and Sparrow, V. W. (2024). Sonic boom propagation in urban canyons using a combined ray tracing/radiosity method. J. Acoust. Soc. Am. 155(2), 1527-1533.",
+      "supports_claim": "Elevated-arrival source into canyons. Without diffraction there are strong shadow zones (PL 0 to 94 PLdB), and 1-4 boom arrivals per lit receiver. Diffuse reflections had the largest effect on signatures.",
+      "url_or_doi": "https://doi.org/10.1121/10.0024980",
+      "verified_by_search": true
+     },
+     {
+      "citation": "(Authors not captured) Assessment of UAM and drone noise impact on the environment based on virtual flights. Aerospace Science and Technology (2021/2022), EnvARC Gaussian beam tracing.",
+      "supports_claim": "Building blocks raise ground-level drone noise by about 5 dB in illuminated areas through multiple reflections and create shadow zones. Shielding increases with frequency.",
+      "url_or_doi": "https://www.sciencedirect.com/science/article/abs/pii/S127096382100506X",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Acoustic radiosity for diffusely (Lambert) reflecting facades, and hybrid image-source + radiosity (Kang; Yu-Ma-Kang IMCRI)",
+    "physics_captured": "Lambertian (cosine-law) diffuse reflection. Facades and ground are split into patches, energy is exchanged through form factors, and time-dependent energy gives the decay (RT30, EDT) as well as steady levels. IMCRI splits each reflection order into a specular part (image sources) and a diffuse part (radiosity), weighted by the scattering coefficient, so it handles the realistic mixed case. Air and vegetation absorption are included along paths.",
+    "limitations": "Energy-only: no phase or interference and no diffraction, so building edges give hard shadows (Riegel and Sparrow). A pure Lambert assumption is an idealisation; real facade scattering is directional and frequency dependent, and no simple model exists for specific architectural surfaces. Form-factor matrices scale as N_patches^2, which is fine for one canyon and heavy for a city. The single-diffuse-bounce (Ismail and Oldham style) shortcut accumulates errors as the scattering coefficient and reflection order increase.",
+    "cost": "Single street canyon: N_patch ~ 1e3-1e4, so the form-factor matrix has 1e6-1e8 entries, built once. Each time step is a sparse matrix-vector product, taking seconds to minutes per geometry on CPU. This is an offline cost; the papers found give no exact timings.",
+    "niceops_fit": "Suits the offline table-building stage. A radiosity solve per canyon gives the diffuse reverberant part of the receiver gain table. For an elevated source the canyon top acts as an aperture: incident energy from direction (theta, phi) enters through it, and radiosity returns the steady energy at the receiver. This is direction- and band-dependent but range-independent, so it can be combined with the existing spreading and absorption. Per-receiver tables are then looked up at about 20 ns, which fits 1e8 evaluations. The time-domain output (multiple arrivals, which prolong events) matters for SEL less than for Lmax. Since SEL is an energy integral, the band-energy gain alone is enough.",
+    "references": [
+     {
+      "citation": "Kang, J. (2000). Sound propagation in street canyons: Comparison between diffusely and geometrically reflecting boundaries. J. Acoust. Soc. Am. 107.",
+      "supports_claim": "Radiosity for diffuse boundaries vs ISM for geometric ones; diffuse boundaries give more attenuation along the street and shorter RT30.",
+      "url_or_doi": "https://labs.sonicfield.org/library/sound-propagation-in-street-canyons-comparison-between-diffusely-and-geometrical",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Kang, J. (2001). Sound propagation in interconnected urban streets: a parametric study. Environment and Planning B 28(2), 281-294.",
+      "supports_claim": "Radiosity model applied to a main street with two side streets.",
+      "url_or_doi": "https://ideas.repec.org/a/sae/envirb/v28y2001i2p281-294.html",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Yu, H., Ma, H., Kang, J. (2019). An iterative model combining acoustic radiosity and the image source method (IMCRI) for sound propagation in urban street canyons. Applied Sciences 9(14), 2803.",
+      "supports_claim": "Hybrid specular (ISM) plus diffuse (radiosity) split per reflection order. Validated on full-scale data from five streets with different scattering conditions; good agreement for SPL and RT, and better than existing energy models, especially for RT. The single-diffuse-bounce scheme errs as scattering and order increase.",
+      "url_or_doi": "https://doaj.org/article/cb50b8de5f844096a0e248ab4246a5dc",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Riegel, K. and Sparrow, V. W. (2024). J. Acoust. Soc. Am. 155(2), 1527-1533.",
+      "supports_claim": "A combined ray tracing/radiosity model has no diffraction, which leaves silent shadow zones. Diffuse reflections had the largest effect on signatures.",
+      "url_or_doi": "https://doi.org/10.1121/10.0024980",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Diffusion-equation / transport-theory energy models for streets (Picaut et al.; Pasareanu-Remillieux-Burdisso)",
+    "physics_captured": "Treats the reverberant energy density in a street or cluttered district as a diffusing quantity. The diffusion coefficient follows from street width and the facade reflection laws (specular / Lambert / mixed), and an exchange coefficient carries absorption and leakage. The transport-equation form handles partially diffuse facades. A 3-D FD diffusion solver covers whole urban layouts, and FDTD + diffusion hybrids cover near-source and outer regions.",
+    "limitations": "Valid only once the field is diffuse: it fails near the source, in the direct-path region, and at low scattering. It does not resolve direct, first-order or diffracted arrivals, so it must be combined with a direct and diffracted field. It is a broadband or band-energy model only.",
+    "cost": "Billed as near-real-time: a 3-D FD solve of a single scalar PDE per band over the urban volume. Much cheaper than ray tracing with many orders.",
+    "niceops_fit": "A cheap way to supply the reverberant, multiply reflected tail added in energy to a direct plus rooftop-diffracted field, inside per-receiver or per-district tables. Probably secondary to IMCRI or ray tracing for receiver-specific tables, but attractive for whole-city maps where the per-receiver work must be minimal.",
+    "references": [
+     {
+      "citation": "Picaut, J., Colle, D., Bérengier, M. (2006); Le Pollès, T., Picaut, J., Bérengier, M., Bardos, C. (2004). Diffusion / transport models of street-canyon sound fields with partially diffusely reflecting facades.",
+      "supports_claim": "The diffusion coefficient depends on street width and the facade reflection laws; the transport equation handles mixed specular-diffuse boundaries.",
+      "url_or_doi": "https://sonicfield.org/library/sound-field-modeling-in-a-street-canyon-with-partially-diffusely-reflecting-boun",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Pasareanu, S. M., Remillieux, M. C., Burdisso, R. A. (2012). Energy-based method for near-real-time modeling of sound field in complex urban environments. J. Acoust. Soc. Am.",
+      "supports_claim": "3-D FD diffusion equation over urban layouts, with good overall agreement against FDTD and geometrical acoustics. Diffraction near building edges close to the source matters.",
+      "url_or_doi": "https://labs.sonicfield.org/library/energy-based-method-for-near-real-time-modeling-of-sound-field-in-complex-urban-",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Sound-particle (phonon) tracing with Uncertainty-Based Diffraction (Stephenson UBD) and Sound Particle Radiosity",
+    "physics_captured": "Energetic particles that reflect specularly or diffusely and are deflected near edges with a probability set by the Heisenberg uncertainty relation (diffraction angle probability, edge diffraction strength). This adds diffraction to an energy-ray framework. It is implemented for general 3-D geometry (SoundPLAN, Schaal and Judd). Second-order diffraction has an analytical UBD form (Pohl and Stephenson). Sound Particle Radiosity reunites split particles for efficiency.",
+    "limitations": "Energy-only, so there are no interference or ground-dip effects unless added. Agreement with Svensson's secondary-edge-source model is under 1 dB for most screen and slit cases, but validation beyond simple screens is mostly in conference papers. Particle splitting at each diffraction makes cost grow exponentially with diffraction order.",
+    "cost": "Monte Carlo, scaling with particle count and diffraction order. Splitting is exponential in order; SPR mitigates it.",
+    "niceops_fit": "A coherent energy-based way to put rooftop and corner diffraction into reciprocal (receiver-launched) table building without deterministic edge enumeration. The output is the same per-receiver direction x band gain table. Accuracy is unproven for deep shadows behind multiple rooftops (multi-order).",
+    "references": [
+     {
+      "citation": "Stephenson, U. M. (2010). An energetic approach for the simulation of diffraction within ray tracing based on the uncertainty relation. Acta Acustica united with Acustica.",
+      "supports_claim": "The UBD model, with agreement under 1 dB against Svensson's secondary-edge-source model for most screen and slit cases.",
+      "url_or_doi": "https://forschungsportal.hcu-hamburg.de/en/publications/an-energetic-approach-for-the-simulation-of-diffraction-within-ra/",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Pohl, A. and Stephenson, U. M. (2012). DAGA 2012: analytical UBD for second-order diffraction; Sound Particle Radiosity.",
+      "supports_claim": "A second-order UBD form. Particle splitting makes cost grow exponentially, and SPR is more efficient and accurate than QPBT.",
+      "url_or_doi": "https://pub.dega-akustik.de/DAGA_2012/data/articles/000063.pdf",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Schaal, J. and Judd, T. A 3D sound particle model with uncertainty-based diffraction for general geometries. Proc. Institute of Acoustics.",
+      "supports_claim": "A general-3-D UBD implementation in SoundPLAN; an improvement over detour methods.",
+      "url_or_doi": "https://www.ioa.org.uk/system/files/publications/J%20SCHAAL%20T%20JUDD%20A%203D%20SOUND%20PARTICLE%20MODEL%20WITH%20UNCERTAINTY-BASED%20DIFFRACTION%20FOR%20GENERAL%20GEOMETRIES.pdf",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Edge diffraction: UTD/GTD (frequency-domain) and Biot-Tolstoy-Medwin / Svensson secondary-edge-source (time-domain exact), with the Edge Source Integral Equation for all higher orders",
+    "physics_captured": "Diffraction over rooftops and around building corners. UTD (Kouyoumjian-Pathak, Keller GTD) gives a ray-like diffraction coefficient for infinite wedges, uniform across shadow and reflection boundaries. BTM in Svensson et al.'s 1999 line-integral form (JASA 106, 2331-2344) gives the exact impulse response of finite (even curved) rigid wedges, with zone-boundary singularities handled in the 2006 follow-up. Combined with image sources it gives reflection-diffraction-reflection paths. The ESIE (Asheim and Svensson 2013) solves an integral equation for all higher diffraction orders on convex polyhedra. Fast edge subdivision (Calamia and Svensson 2007) trades error for speed.",
+    "limitations": "BTM, and by extension UTD, assume rigid or ideal wedges; impedance facades and roofs need approximations. UTD assumes infinite edges and degrades for short edges and at low kr; real-time UTD implementations assume infinite edges. Ouis (2003) nevertheless finds frequency-domain models fairly accurate against Biot-Tolstoy for hard wedges even at relatively low frequencies. Multi-order edge sequences grow combinatorially with the number of edges, and ESIE has singularities at some source and receiver positions. Turbulence and refraction near rooftops, which strongly fill shadows, are not included.",
+    "cost": "UTD: a few complex Fresnel evaluations per edge per frequency, about 100 ns-1 us per path per band. BTM: a numerical line integral per edge per time sample, milliseconds per first-order path. Second order is a double integral, seconds per path for long edges. ESIE: an integral-equation solve per geometry, which beats BEM above some frequency for convex bodies.",
+    "niceops_fit": "Needed to make any urban table physically sensible for an elevated source whose line of sight to a canyon receiver is cut by the near rooftop: the dominant path is then rooftop diffraction plus canyon reflections. Recommended use: offline BTM, or UTD for speed, inside the receiver-reciprocity table builder. Combine image sources of the receiver canyon with first- and second-order rooftop edges. Store the result in H_r(f, theta, phi) for runtime lookup at about 20 ns, which fits 1e8. Where the edge is far enough from the source, UTD in the frequency domain is the natural partner for the spectral path. BTM serves as the validation reference, and the existing PE/benchmark machinery could cross-check 2-D cuts.",
+    "references": [
+     {
+      "citation": "Svensson, U. P., Fred, R. I., Vanderkooy, J. (1999). An analytic secondary source model of edge diffraction impulse responses. J. Acoust. Soc. Am. 106, 2331-2344.",
+      "supports_claim": "BTM reformulated as an edge line integral; exact impulse response for finite wedges.",
+      "url_or_doi": "https://asp-eurasipjournals.springeropen.com/counter/pdf/10.1155/2007/63560",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Svensson, U. P. and Calamia, P. T. (2006). Edge-diffraction impulse responses near specular-zone and shadow-zone boundaries. Acta Acustica united with Acustica 92(4).",
+      "supports_claim": "Analytical approximations removing the zone-boundary singularity of the 1999 model.",
+      "url_or_doi": "https://www.ingentaconnect.com/contentone/dav/aaua/2006/00000092/00000004/art00001",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Calamia, P. T. and Svensson, U. P. (2007). Fast time-domain edge-diffraction calculations for interactive acoustic simulations. EURASIP J. Adv. Signal Process., Article 63560.",
+      "supports_claim": "Edge subdivision trading accuracy for speed; GA-only rendering clicks at shadow boundaries.",
+      "url_or_doi": "https://doi.org/10.1155/2007/63560",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Asheim, A. and Svensson, U. P. (2013). An integral equation formulation for the diffraction from convex plates and polyhedra. J. Acoust. Soc. Am. 133, 3681-3691 (erratum 137, 2181, 2015).",
+      "supports_claim": "ESIE: explicit GA plus first-order terms, with higher orders from an integral equation. Cheaper than BEM above a certain frequency, with singularities at some positions.",
+      "url_or_doi": "https://ntnuopen.ntnu.no/ntnu-xmlui/handle/11250/2592097",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Ouis, D. (2003). Noise attenuation by a hard wedge-shaped barrier. J. Sound Vib. 262, 347-364.",
+      "supports_claim": "UTD and Hadden-Pierce vs exact time-domain Biot-Tolstoy: frequency-domain models are fairly accurate even at relatively low frequency, and UTD is recommended for hard wedges.",
+      "url_or_doi": "https://faculty.kfupm.edu.sa/ARE/djamel/Publications/noise_attenuation_hard_wedge.pdf",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Remillieux, M. C., Corcoran, J. M., Haac, T. R., Burdisso, R. A., Svensson, U. P. (2012). Experimental and numerical study on the propagation of impulsive sound around buildings. Applied Acoustics 73, 1029-1044.",
+      "supports_claim": "ISM plus BTM 3-D model with rigid surfaces, validated against BEM and explosive-boom measurements on a building at Virginia Tech with good overall agreement. Applied to a six-building cluster with elevated sources.",
+      "url_or_doi": "https://labs.sonicfield.org/library/experimental-and-numerical-study-on-the-propagation-of-impulsive-sound-around-bu",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Pisha, L. et al. (2020). Approximate diffraction modeling for real-time sound propagation simulation (VDaT). J. Acoust. Soc. Am.",
+      "supports_claim": "A GPU volumetric diffraction approximation to BTM, handling thousands of path segments in real time in small and medium scenes.",
+      "url_or_doi": "https://sonicfield.org/library/approximate-diffraction-modeling-for-real-time-sound-propagation-simulation",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Engineering canyon-to-canyon rooftop-diffraction model with multiple reflections (Wei, Botteldooren, Van Renterghem, Hornikx, Forssén, Salomons, Ögren 2014), fitted to 2-D FDTD",
+    "physics_captured": "Diffraction over rooftops with multiple reflections in the source and receiver canyons, building height variation, canyon width, facade roughness (diffusion), impedance and roof shape. It is written as A_diffr = -10lg(10^(-A_bar/10) + 10^(-A_can/10)) plus A_inter for intermediate canyons, with turbulence scattering added in energy. The coefficients are fitted to 565 2-D FDTD canyon configurations with irregular, diffusing facades.",
+    "limitations": "2.5-D (summed 2-D sections, with twisted facades). Designed for ground-level line or point traffic sources, not elevated ones. Fit errors are rms 3.0 dB on one term and SD 2.7 dB on A_can,flat. A_inter is simplified to 1 dB/100 m up to 5 dB. Building widths are limited to 4.8-42 m and heights to 0-16 m.",
+    "cost": "Closed-form: a few log and Fresnel-approximation evaluations, about 10-100 ns per source-receiver pair.",
+    "niceops_fit": "Directly fits the 1e8 loop as an analytic per-evaluation correction. However, it would need refitting for an elevated source, because the geometry (source above the roofline, steep incidence) differs from canyon-to-canyon traffic. The fitting methodology, a closed form regressed against full-wave FDTD/PSTD over a distribution of real city geometry, is the template for a fast NICEOPS urban correction. NICEOPS's PE could generate such fitting data for 2-D cuts.",
+    "references": [
+     {
+      "citation": "Wei, W., Botteldooren, D., Van Renterghem, T., Hornikx, M., Forssén, J., Salomons, E., Ögren, M. (2014). Urban background noise mapping: the general model. Acta Acustica united with Acustica 100(6), 1098-1111 (erratum 101(1), 204, 2015).",
+      "supports_claim": "Fitted on 565 FDTD configurations, with fit errors of 2.7-3.0 dB, gabled roofs about -5 dB, and A_inter about 1 dB/100 m up to 5 dB. Validated at 9 Ghent facades, 3 in inner yards; the END map underestimated a shielded facade by over 14 dBA, and the A_can term significantly improves shielded predictions.",
+      "url_or_doi": "https://doi.org/10.3813/aaa.918789",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Hornikx, M. and Forssén, J. (2007). The 2.5-dimensional equivalent sources method for directly exposed and shielded urban canyons. J. Acoust. Soc. Am.",
+      "supports_claim": "The wave-based reference for canyons. Multiple facade reflections are important at shielded positions, and a coherent line source overpredicts shielded levels; very fine frequency resolution is needed.",
+      "url_or_doi": "https://doi.org/10.1121/1.2783197",
+      "verified_by_search": true
+     }
+    ]
+   }
+  ],
+  "key_quantitative_findings": [
+   "Elevated VTOL source into an ideal canyon: up to +14 dB re free field when source and microphone are both in the canyon; near a corner about +8 dB (Forum Acusticum paper; a secondary summary of a JASA version cited about +9 dB, not verified). Octave bands 63 Hz-8 kHz; ray tracing (Mithra) agrees well with image-source references. [Malbéqui 2023, doi:10.61782/fa.2023.0104]",
+   "Rooftop source in a narrow canyon: opposite-building reflections raise the level by up to 12 dB. Facade tilting changes rooftop-source levels by -8.4 to +4.6 dB, and balconies by -3.5 to +6.3 dB (DG-FEM, validated against a 1:10 scale model). [Feriani, Engsig-Karup, Jeong 2025, Applied Acoustics 240, 110935, doi:10.1016/j.apacoust.2025.110935]",
+   "Measured aircraft flyovers into full-scale container courtyards near Schiphol: level differences between microphone positions of 8-9 dB(A) (straight facades) up to 14 dB(A) (slanted facade plus inset). [Lugten 2022 Internoise doi:10.3397/IN_2022_0976; Lugten et al. 2024 Building and Environment 255, 111400]",
+   "Drone in a city block (Gaussian beam tracing, EnvARC): about +5 dB at ground level in lit areas from multiple reflections; shielding grows with frequency. [Aerospace Sci. Technol. 2021, S127096382100506X]",
+   "Shielded facades: the standard END noise map underestimated a shielded courtyard facade by more than 14 dBA. Adding a multiple-reflection canyon term (fitted to 565 FDTD cases, fit SD 2.7-3.0 dB) strongly improved agreement at 9 Ghent facades. Gabled roofs about -5 dB; intermediate canyons about 1 dB/100 m capped at 5 dB. [Wei et al. 2014, doi:10.3813/aaa.918789]",
+   "Diffuse vs specular facades: replacing diffuse with specular boundaries gives significantly less along-street attenuation and much longer RT30 (Kang 2000 JASA 107). The IMCRI hybrid of ISM and radiosity was validated in five real streets for SPL and RT, beating pure energy models, especially for RT (Yu, Ma, Kang 2019).",
+   "Ray/radiosity without diffraction gives unphysical silent shadow zones: perceived level from 0 PLdB (shadow) to 94 PLdB, with 1-4 arrivals per lit receiver. [Riegel and Sparrow 2024 JASA 155, 1527, doi:10.1121/10.0024980]",
+   "GA frequency floor: modal and 2-D image models of a canyon agree with FDTD and a scale model only up to about 100 Hz at full scale (arXiv:0907.0605). Ray tracing is invalid below a few tens of Hz for building-scale geometry (Malbéqui). In practice NICEOPS's 50-~200 Hz bands need wave-based tables (FDTD/PSTD/ESM, or the PE in 2-D) for canyons 10-30 m wide.",
+   "Uncertainty-based particle diffraction agrees with Svensson's exact edge-source model to under 1 dB for most screen and slit cases; particle splitting is exponential in diffraction order. [Stephenson 2010 Acta Acustica]",
+   "UTD vs exact Biot-Tolstoy for hard wedges: frequency-domain models are fairly accurate even at relatively low frequency (Ouis 2003 JSV 262, 347). A learned BTM surrogate reached 1.0 dB mean absolute error for first-order diffraction (Surrey work, secondary report).",
+   "Costs: GPU Gaussian beam summation 790-798x faster than CPU in a city scene (RTX A6000; 10,201 receivers; 16,384 rays; reflection order 20) [arXiv:2501.13382]. CPU beam tracing of the Shinjuku district: 5392 s sequential, minutes on 8 workstations [arXiv:1912.03998]. GPU i-Sound: 2-3 reflection orders plus 1 diffraction at about 33 fps on a GTX 280.",
+   "Implication for NICEOPS: urban effects are +5 to +14 dB of reflection gain in lit canyons and of order -10 to -20+ dB of shielding in courtyards. Both are larger than most existing propagation refinements, so a receiver-side urban gain table is worth building. With 14,400 receivers x (36x72 directions) x ~30 bands the table holds about 1.1e9 floats (4.5 GB) at full resolution, so it must be compressed (coarser direction bins, broadband plus a few bands, or only for receivers inside canyons)."
+  ],
+  "open_questions": [
+   "Is the far-field/plane-wave separability assumption (canyon response depends on incidence direction and band only, not on source range) accurate enough for low-altitude (30-100 m) helicopter passes near the roofline, where the source is within a few canyon widths? Measure by comparing a full ISM+BTM point-source run against the direction-table approximation.",
+   "Should the urban table be coherent or incoherent? For a moving broadband source in 1/3-octave bands, incoherent energy summation is probably right above roughly 200 Hz. Below that, canyon interference and modes persist and Doppler does not wash them out within a band, so a wave-based table (2.5-D ESM, FDTD, PSTD or the existing PE in 2-D cuts) may be required.",
+   "How much rooftop diffraction order is needed for a courtyard receiver with an elevated source? First-order BTM/UTD may suffice for a single shielding roofline, but closed courtyards may need second order or ESIE. No elevated-source quantification was found.",
+   "What facade scattering coefficients (frequency dependent) are appropriate for helicopter-relevant geometries, and how much does the Lambert/specular split change SEL (not just RT)? Kang and IMCRI show large RT effects, but SEL sensitivity for elevated sources is unquantified.",
+   "Combined refraction and turbulence near rooftops: the existing PE turbulence and shadow-scattering work suggests that scattering fills rooftop shadows. How should the urban table be merged with NICEOPS's refraction (stratified/linear rays) when the source is 300-1500 m up and refraction changes the incidence angle at the canopy?",
+   "For inverse use (de-propagating flight-test data), urban reflections of +5 to +14 dB and 8-14 dB position-to-position spread (Lugten) argue for keeping inversion microphones in open terrain, or for modelling the facade explicitly with the receiver table. How invertible is a table built with diffuse components?",
+   "Not verified this session because the search budget ran out: Hornikx's urban computational acoustics review (Building and Environment 2016); Pierce's double-wedge diffraction; Hothersall/Horoshenkov BEM facade studies; Siltanen's acoustic radiance transfer; NVIDIA OptiX-based outdoor acoustics. These should be checked before any citation."
+  ]
+ },
+ "verdict": {
+  "family": "Geometric acoustics for urban street canyons (image sources, ray/beam tracing, radiosity/diffusion/particles, edge diffraction, engineering rooftop models, GPU)",
+  "checked": [
+   {
+    "item": "Malbequi (2023) Forum Acusticum pp. 1011-1014, doi:10.61782/fa.2023.0104: image-source references for corner/canyon, VTOL, octave bands 63 Hz-8 kHz, ray-tracing agreement, +14 dB in canyon, ~+8 dB near corner",
+    "status": "corrected",
+    "correction": "Paper exists (P. Malbequi, ONERA, pp. 1011-1014) and the abstract confirms the image-source references, 63-8000 Hz octave bands, good ray-tracing agreement and up to +14 dB with source and microphone in a canyon. But the abstract gives about +9 dB near a corner, not +8. The landing page does not name 'Mithra', the 'Marignane 500 ft' case or 'invalid below a few tens of Hz', so those details are unverifiable."
+   },
+   {
+    "item": "Li, K.M. and Lai, C.Y.C. (2009) 'A note on noise propagation in street canyons', JASA 126, 644",
+    "status": "confirmed",
+    "correction": "Full citation is JASA 126(2), 644-655, doi:10.1121/1.3158599. The abstract confirms an incoherent image-source sum generalised to line sources, an exact integral formulation, reverberation via Schroeder integration, and indoor and outdoor validation experiments."
+   },
+   {
+    "item": "arXiv:0907.0605 'Effect of the open roof on low frequency acoustic propagation in street canyons': modal + 2-D image model, FDTD and scale model agree up to ~100 Hz full scale",
+    "status": "corrected",
+    "correction": "Authors are O. Richoux, C. Ayrault, A. Pelat, S. Felix and B. Lihoreau (LAUM). 'Good agreement until f = 100 Hz at full scale' is confirmed (1000-2500 Hz at model scale). The JSON then misuses it as a geometric-acoustics frequency FLOOR. The paper shows its LOW-frequency modal/image model failing ABOVE ~100 Hz because of leaky roof modes. That says nothing about GA being invalid below 100-200 Hz."
+   },
+   {
+    "item": "Sheng, Duan, Jiang (2025) arXiv:2501.13382: GPU GBS 790x faster in city, 188x open plane, RTX A6000, 10,201 receivers, 16,384 rays, order 20, no diffraction",
+    "status": "corrected",
+    "correction": "The first author's name is Zhang Sheng. The numbers 790x (city), 188x (open plane), RTX A6000, 10,201 receivers, 16,384 rays and R_max = 20 are confirmed. 798x is the GBS stage alone with chunking. The paper also reports the OVERALL acceleration at 16,384 rays as only about 88x, which the JSON leaves out. Its speedup row therefore overstates the end-to-end gain by roughly 9x."
+   },
+   {
+    "item": "Gbikpi-Benissan and Magoules arXiv:1912.03998: Shinjuku beam tracing, 5392 s sequential, ~4 h case, minutes on 8 workstations",
+    "status": "confirmed",
+    "correction": "5392 s sequential and 8 workstations (2 quad-core CPUs each, 64 cores) are confirmed. However, '4 hours to 3 minutes' is stated as what DDM 'would allow', an extrapolation rather than a measured run."
+   },
+   {
+    "item": "Riegel and Sparrow (2024) JASA 155(2), 1527-1533, doi:10.1121/10.0024980: ray tracing/radiosity, no diffraction, shadow zones 0-94 PLdB, diffuse reflections most influential",
+    "status": "confirmed",
+    "correction": "Shadow zones, PLdB 0-94 and diffusion as the largest effect are confirmed by the PSU Pure and abstract summaries. '1-4 arrivals per lit receiver' could not be verified. The abstract also says results depend mainly on combinations of parameters."
+   },
+   {
+    "item": "Feriani, Engsig-Karup, Jeong (2025) Applied Acoustics 240, 110935: rooftop source +12 dB from opposite building; tilting -8.4 to +4.6 dB; balconies -3.5 to +6.3 dB; 1:10 scale model",
+    "status": "corrected",
+    "correction": "The citation, the DOI, +12 dB, tilting -8.4 to +4.6 dB for rooftop sources, DG-FEM and the 1:10 scale-model validation are confirmed. The balcony range of -3.5 to +6.3 dB is NOT for rooftop sources; it depends on source location (road sources). For rooftop sources the abstract says the balcony effect is minor, at most about +/-1 dB. Since NICEOPS's elevated source is the rooftop-like case, the misattribution matters."
+   },
+   {
+    "item": "Wei, Botteldooren, Van Renterghem, Hornikx, Forssen, Salomons, Ogren (2014) Acta Acustica 100(6) 1098-1111, doi:10.3813/aaa.918789: fitted to 565 FDTD configs, fit errors 2.7-3.0 dB, gabled -5 dB, A_inter 1 dB/100 m, 9 Ghent facades, >14 dBA END underestimate",
+    "status": "corrected",
+    "correction": "The citation, the authors, the fit to 'an extensive set of full-wave numerical calculations' and the validation at 9 facades (3 in inner yards in Ghent) with strongly improved shielded-facade accuracy are confirmed. The specific numbers (565 configurations, 2.7-3.0 dB fit errors, gabled -5 dB, 1 dB/100 m capped at 5 dB, >14 dBA) are not in the abstract and are unverifiable here."
+   },
+   {
+    "item": "Ouis (2003) JSV 262, 347-364: UTD and Hadden-Pierce vs exact Biot-Tolstoy fairly accurate even at relatively low frequency; UTD recommended",
+    "status": "confirmed",
+    "correction": "Confirmed verbatim from the abstract and conclusions (doi:10.1016/S0022-460X(02)01134-3)."
+   },
+   {
+    "item": "Stephenson (2010) Acta Acustica: UBD agrees with Svensson's secondary-edge-source model to <1 dB for most screen and slit cases",
+    "status": "confirmed",
+    "correction": "Acta Acust. united Acust. 96(3), 516-535 (2010). The abstract says the agreement is 'less than 1 dB' for most cases, not all."
+   },
+   {
+    "item": "Hornikx and Forssen (2007) 2.5-D equivalent sources method for directly exposed and shielded urban canyons, JASA, doi:10.1121/1.2783197",
+    "status": "confirmed",
+    "correction": "The DOI resolves to JASA 122(5), 2532. The specific claims (multiple reflections important at shielded positions, coherent line source overpredicts) were not checked against the text."
+   },
+   {
+    "item": "Bian et al. 'Assessment of UAM and drone noise impact on the environment based on virtual flights', Aerospace Sci. Technol.: about +5 dB in lit areas, shadow zones, shielding grows with frequency",
+    "status": "corrected",
+    "correction": "Authors are H. Bian, Q. Tan, S. Zhong and X. Zhang, Aerosp. Sci. Technol. 118, 106996 (2021), doi:10.1016/j.ast.2021.106996, reprinted in vol. 125, 107547 (2022). The method builds on Bian's rectilinear Gaussian beam tracing. The +5 dB figure could not be checked because the abstract is behind a paywall, so it is unverifiable."
+   },
+   {
+    "item": "Lugten et al. (2024) Building and Environment 255, 111400; Lugten 2022 Internoise: Schiphol courtyard flyovers, 8-9 to 14 dB(A) position differences",
+    "status": "unverifiable",
+    "correction": "The 2024 paper exists: 'Assessing the influence of street canyon shape on aircraft noise: Results from measurements in courtyards near Amsterdam Schiphol Airport' by M. Lugten, G. Wuite, Z. Peng and M. Tenpierik. The dB figures could not be verified because the abstract was not accessible."
+   },
+   {
+    "item": "Kang, J. (2000) JASA 107: diffuse vs geometric boundaries in street canyons",
+    "status": "unverifiable",
+    "correction": "The fetch failed. From prior knowledge it is JASA 107(3), 1394-1404, and its findings match the claim, but this was not checked this session."
+   },
+   {
+    "item": "Yu, Ma, Kang (2019) IMCRI, Applied Sciences 9(14), 2803: validated against five streets",
+    "status": "unverifiable",
+    "correction": "The MDPI and DOAJ pages returned 403 and the search budget was exhausted. The paper is plausible but the details are unchecked."
+   },
+   {
+    "item": "Picaut, Colle, Berengier (2006) diffusion model citation",
+    "status": "unverifiable",
+    "correction": "This is a vague composite citation. The verifiable transport-theory paper is Le Polles, Picaut, Berengier and Bardos, 'Sound field modeling in a street canyon with partially diffusely reflecting boundaries by the transport theory', JASA 116 (2004). The '2006 Picaut/Colle/Berengier' entry needs a precise reference."
+   },
+   {
+    "item": "Table size: 14,400 receivers x 36x72 directions x 30 bands ~ 1.1e9 floats ~ 4.5 GB",
+    "status": "confirmed",
+    "correction": "14400 x 2592 x 30 = 1.12e9, which is 4.48 GB in float32. The arithmetic is correct."
+   }
+  ],
+  "overstated_or_wrong_claims": [
+   "Using arXiv:0907.0605 as evidence for a GA frequency floor of about 100 Hz is a misreading. That paper shows a low-frequency modal/image model failing ABOVE 100 Hz (full scale) because of leaky roof modes. The conclusion that NICEOPS's 50-200 Hz bands need wave-based tables may still be right, but it needs a different source, such as the Hornikx/Forssen ESM work or a kd-based argument.",
+   "GPU speedup reported as 790-798x. That is the GBS field step only; the same paper reports about 88x overall at 16,384 rays. Absolute run times are not given, so 'milliseconds to seconds per receiver on GPU' and 'minutes to an hour for 14,400 receivers' are unsupported extrapolations.",
+   "The Feriani et al. balcony range of -3.5 to +6.3 dB is presented as if it applied to rooftop sources. For rooftop (elevated) sources the paper says balconies change levels by at most about +/-1 dB, while facade tilting (-8.4 to +4.6 dB) dominates.",
+   "Malbequi gives the corner increase as about +9 dB, not +8 dB. The JSON's own key finding even calls the +9 dB figure 'not verified' while it is in the Forum Acusticum abstract. The Mithra, Marignane and 'few tens of Hz' details are not in the abstract.",
+   "The Shinjuku '4 h reduced to about 3 min' figure is a projection ('would allow'), not a measured run. 5392 s sequential on 8 workstations is measured.",
+   "Wei et al. 2014 numerical details (565 FDTD configurations, 2.7-3.0 dB fit SD, gabled -5 dB, A_inter 1 dB/100 m capped at 5 dB, >14 dBA END underestimate) are stated as verified but appear nowhere in the abstract. Treat them as unconfirmed until checked against the full text.",
+   "The claim that the canyon response is a function of incidence direction and band only (plane-wave separability, '20 ns per evaluation, fits 1e8') is presented as the fit, but it is an untested assumption. For 30-100 m altitude passes near 10-30 m-high buildings the source is in the near field of the canyon geometry, and facade reflections depend on source position (image-source path differences, Fresnel-zone size on finite facades). Range dependence and Doppler or moving-source effects on coherent canyon interference are not addressed.",
+   "The statement that the uncertainty-based diffraction model agrees with Svensson's model to under 1 dB omits Stephenson's own 'for most cases' qualifier; validation is for screens and slits only.",
+   "'Incoherent summation is the right default above roughly 200 Hz' is asserted without a reference. Li and Lai and Kang note that coherent and incoherent canyon models differ at receiver positions close to facades (the ground/facade dip region), which is exactly where facade microphones sit.",
+   "The 'Picaut, Colle, Berengier (2006)' citation is not a precise, verifiable reference."
+  ],
+  "important_omissions": [
+   "Helicopter-specific urban work: Casalino, Barbarino et al. 'Simulation of helicopter community noise in complex urban geometry' (ca. 2011; it appears in Bian et al.'s reference list). It is the most directly relevant prior art for NICEOPS and is missing.",
+   "UAM/vertiport urban ray tracing with diffraction, e.g. Yunus, Casalino, Avallone, Ragni (TU Delft) on efficient prediction of UAM noise in vertiport/urban environments (Aerospace Sci. Technol. ca. 2023). Also NASA UAM urban propagation work.",
+   "Hornikx, 'Ten questions concerning computational urban acoustics' (Building and Environment, 2016) and the Hornikx/Van Renterghem PSTD/openPSTD wave-based urban work. These are the standard wave-based references for low-frequency canyon tables and for checking GA.",
+   "Engineering standards with urban reflection/diffraction terms: CNOSSOS-EU (Directive 2015/996), Nord2000, Harmonoise/Imagine (Salomons, van Maercke) and ISO 9613-2. Also the open-source NoiseModelling (Bocher, Fortin, Picaut/Gustave Eiffel), which implements CNOSSOS ray paths with lateral and vertical diffraction and could be wrapped or reused.",
+   "Particle and stochastic tools: I-Simpa/SPPS (Picaut, Fortin), and Marini and Riegel's stochastic ray tracing as a cheaper alternative to radiosity. The Lefkowitz and Sparrow ray/radiosity model with diffraction was found by search and also omitted.",
+   "Facade reflection from finite and scattering facades: Fresnel-zone / Kirchhoff finite-reflector corrections (e.g. Heutschi; ISO 17534/CNOSSOS facade terms), scattering-coefficient data for real facades, and Ogren and Kropp's statistical canyon work.",
+   "Double and multiple wedge diffraction models suited to rooftops: Pierce (1974) thick-barrier/double-wedge, Salomons' rooftop diffraction, and Deygout/Vogler-style multi-edge methods. The JSON's open questions also flag Pierce as unchecked.",
+   "Acoustic radiance transfer (Siltanen, Lokki, Savioja 2007) as a generalisation of radiosity to arbitrary BRDFs. It is directly relevant to building receiver-side direction-binned tables.",
+   "Explicit reciprocity / receiver-based table methods for moving or elevated sources: precomputed transfer or 'acoustic transfer function' work (e.g. Raghuvanshi et al.'s precomputed wave simulation and 'parametric directional coding' for games, Project Acoustics). It is the closest computational analogue to the proposed per-receiver H_r(f, theta, phi) tables and to compression of the 4.5 GB table.",
+   "Refraction combined with buildings: Van Renterghem and Botteldooren on wind and turbulence effects in canyons and rooftop shadows (PSTD/FDTD with wind). Needed to decide how NICEOPS's stratified rays hand off to an urban table.",
+   "Measured helicopter or aircraft-in-city validation data beyond Lugten, e.g. Schiphol courtyard studies, and urban UAM measurement campaigns (NASA, DLR) for testing any table approach."
+  ]
+ }
+}

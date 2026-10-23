@@ -77,6 +77,17 @@ while `niceops_core` linked `interpolator`. GNU ld walks archives in a single pa
 this breaks Linux only and a macOS build will not show it**. If you add a target, check that
 its dependencies point one direction.
 
+## GPU backend
+
+`NICEOPS_GPU` picks the backend of `src/gpu`: `AUTO` (the default) is Metal on macOS when the
+compiler is Clang and none elsewhere, since GCC cannot build the Objective-C++ that drives Metal;
+`METAL` and `OFF` force it. The Metal backend enables CMake's `OBJCXX` language for
+`gpu_metal.mm` alone (with ARC) and links the Metal and Foundation frameworks. No shader toolchain
+is involved: the kernels are compiled at run time from source that `cmake/embed_kernels.cmake`
+embeds as strings, rewriting the generated file only when a kernel changes. A new kernel source
+goes in `NICEOPS_KERNEL_SOURCES`. Without a backend, `gpu_disabled.cpp` stands in, and a run that
+asks for the GPU is refused. See [gpu.md](gpu.md).
+
 ## Plotting
 
 Plotting (`-p`, `-f`, `-F`) is the only thing that needs Python. `src/plotting.hpp` is a small
