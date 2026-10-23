@@ -1189,11 +1189,13 @@ set_tests_properties(propagation_table_plate_warns_raised_row PROPERTIES FIXTURE
 # no CTest that fails without it: on this database the table's own largest gain and the bound's
 # slack already cover the images (docs/internals/testing.md).
 set(URBAN_RUN niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --frame_bearing 210 -b tests/data/urban_observers.csv -L warn)
-# The runs over the test district (--buildings tests/data/urban_buildings.csv) take the demo track at
-# every 4th state (tests/data/urban_track_every4.csv): each microphone keeps its whole pass, the SELs
-# stay within 0.015 dB of the full track's, and each run costs a quarter.  On the full track these
-# were two thirds of CI's time.  Every comparison among them is between runs on the same track.
+# The runs over the test district (--buildings tests/data/urban_buildings.csv) were two thirds of the
+# suite's time on the full demo track.  The states sampled against every state, which needs whole
+# passes, take the track at every 4th state (tests/data/urban_track_every4.csv): each microphone keeps
+# its pass and the SELs stay within 0.015 dB of the full track's.  Every other district run checks an
+# option against the default and takes 4 s of the approach (URBAN_DISTRICT_SHORT), a tenth again.
 set(URBAN_DISTRICT niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tests/data/urban_track_every4.csv --frame_bearing 210 -b tests/data/urban_observers.csv -L warn)
+set(URBAN_DISTRICT_SHORT niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tests/data/urban_track_short.csv --frame_bearing 210 -b tests/data/urban_observers.csv -L warn)
 set(URBAN_SHORT_BARE niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tests/data/urban_track_short.csv --frame_bearing 210 -b tests/data/urban_shadow_observers.csv -L warn)
 set(URBAN_PLATE --flow_resistance 225 --ground_effect --plate_table plates/gr1425_db225.nc)
 add_test(NAME urban_table_build COMMAND niceops_urban_table --canyons tests/data/urban_canyons.csv --database databases/B407_fixed_load_factor.nod --frame_bearing 210 -o tables/urban_canyon_test.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -1325,32 +1327,36 @@ add_test(NAME buildings_sampled_run COMMAND ${URBAN_DISTRICT} --buildings tests/
 set_tests_properties(buildings_every_state_run buildings_sampled_run PROPERTIES FIXTURES_SETUP buildings_sampling_runs)
 add_test(NAME buildings_states_sampled COMMAND golden_compare integrated/buildings_sampled.csv integrated/buildings_every_state.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_states_sampled PROPERTIES FIXTURES_REQUIRED buildings_sampling_runs)
+# The option runs below take the district's default run over a short stretch of the track as their
+# reference: what they check (an option that changes nothing, or something) needs no whole pass.
+add_test(NAME buildings_short_run COMMAND ${URBAN_DISTRICT_SHORT} --buildings tests/data/urban_buildings.csv --no-gpu -o integrated/buildings_short.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_short_run PROPERTIES FIXTURES_SETUP buildings_short_runs)
 # --no-ground_effect is no clash (the run has no ground model among buildings); and a database
 # without spectra is refused, its rays reading each band.  (An observer's z is its floor's height
 # where it stands on no roof or wall: buildings_floor_at_observer_z below.)
-add_test(NAME buildings_no_ground_effect_run COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --no-ground_effect --no-gpu -o integrated/buildings_no_ground.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_no_ground_effect_run COMMAND ${URBAN_DISTRICT_SHORT} --buildings tests/data/urban_buildings.csv --no-ground_effect --no-gpu -o integrated/buildings_no_ground.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_no_ground_effect_run PROPERTIES FIXTURES_SETUP buildings_receiver_runs)
-add_test(NAME buildings_no_ground_effect_is_the_default COMMAND golden_compare integrated/buildings_no_ground.csv integrated/buildings_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(buildings_no_ground_effect_is_the_default PROPERTIES FIXTURES_REQUIRED "buildings_receiver_runs;buildings_sampling_runs")
+add_test(NAME buildings_no_ground_effect_is_the_default COMMAND golden_compare integrated/buildings_no_ground.csv integrated/buildings_short.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_no_ground_effect_is_the_default PROPERTIES FIXTURES_REQUIRED "buildings_receiver_runs;buildings_short_runs")
 # --no_profile_pe moves nothing here: no line from the track to these microphones crosses a row of
 # flat-roofed blocks with a street near grazing (the row's profile, src/profile_pe).
-add_test(NAME buildings_no_profile_pe_run COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --no_profile_pe --no-gpu -o integrated/buildings_no_profile_pe.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_no_profile_pe_run COMMAND ${URBAN_DISTRICT_SHORT} --buildings tests/data/urban_buildings.csv --no_profile_pe --no-gpu -o integrated/buildings_no_profile_pe.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_no_profile_pe_run PROPERTIES FIXTURES_SETUP buildings_no_profile_runs)
-add_test(NAME buildings_no_profile_pe_reaches_no_row COMMAND golden_compare integrated/buildings_no_profile_pe.csv integrated/buildings_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(buildings_no_profile_pe_reaches_no_row PROPERTIES FIXTURES_REQUIRED "buildings_no_profile_runs;buildings_sampling_runs")
+add_test(NAME buildings_no_profile_pe_reaches_no_row COMMAND golden_compare integrated/buildings_no_profile_pe.csv integrated/buildings_short.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_no_profile_pe_reaches_no_row PROPERTIES FIXTURES_REQUIRED "buildings_no_profile_runs;buildings_short_runs")
 # --path_radius is a fast mode: over the test district at 75 m (246 ft) rather than 150 the SEL moves by
-# 0.010 dB at most (0.009 on the full track, 0.014 there at 100 m); the default-radius run is its
-# reference.  That alone would pass with the option ignored, so two more runs pin it: 150 m given in
+# 0.0003 dB at most on the short track (0.009 on the full one, 0.014 there at 100 m); the default-radius
+# run is its reference.  That alone would pass with the option ignored, so two more runs pin it: 150 m given in
 # feet is the default run exactly (the radius is converted from --units: unconverted, 492 m changes the SELs), and 30 ft is not.
-add_test(NAME buildings_path_radius_run COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --path_radius 246 --no-gpu -o integrated/buildings_path_radius.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME buildings_path_radius_default_run COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --path_radius 492.1259842519685 --no-gpu -o integrated/buildings_path_radius_default.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME buildings_path_radius_short_run COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --path_radius 30 --no-gpu -o integrated/buildings_path_radius_short.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_path_radius_run COMMAND ${URBAN_DISTRICT_SHORT} --buildings tests/data/urban_buildings.csv --path_radius 246 --no-gpu -o integrated/buildings_path_radius.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_path_radius_default_run COMMAND ${URBAN_DISTRICT_SHORT} --buildings tests/data/urban_buildings.csv --path_radius 492.1259842519685 --no-gpu -o integrated/buildings_path_radius_default.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_path_radius_short_run COMMAND ${URBAN_DISTRICT_SHORT} --buildings tests/data/urban_buildings.csv --path_radius 30 --no-gpu -o integrated/buildings_path_radius_short.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_path_radius_run buildings_path_radius_default_run buildings_path_radius_short_run PROPERTIES FIXTURES_SETUP buildings_path_radius_runs)
-add_test(NAME buildings_path_radius_is_close COMMAND golden_compare integrated/buildings_path_radius.csv integrated/buildings_sampled.csv 0.03 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME buildings_path_radius_in_units COMMAND golden_compare integrated/buildings_path_radius_default.csv integrated/buildings_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME buildings_path_radius_takes_effect COMMAND golden_compare integrated/buildings_path_radius_short.csv integrated/buildings_sampled.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_path_radius_is_close COMMAND golden_compare integrated/buildings_path_radius.csv integrated/buildings_short.csv 0.03 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_path_radius_in_units COMMAND golden_compare integrated/buildings_path_radius_default.csv integrated/buildings_short.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_path_radius_takes_effect COMMAND golden_compare integrated/buildings_path_radius_short.csv integrated/buildings_short.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_path_radius_takes_effect PROPERTIES WILL_FAIL TRUE)
-set_tests_properties(buildings_path_radius_is_close buildings_path_radius_in_units buildings_path_radius_takes_effect PROPERTIES FIXTURES_REQUIRED "buildings_path_radius_runs;buildings_sampling_runs")
+set_tests_properties(buildings_path_radius_is_close buildings_path_radius_in_units buildings_path_radius_takes_effect PROPERTIES FIXTURES_REQUIRED "buildings_path_radius_runs;buildings_short_runs")
 add_test(NAME buildings_refuses_lone_path_radius COMMAND ${URBAN_RUN} --path_radius 246 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_lone_path_radius PROPERTIES PASS_REGULAR_EXPRESSION "--path_radius, --gpu and --no-gpu go with --buildings")
 add_test(NAME buildings_refuses_zero_path_radius COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --path_radius 0 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -1375,7 +1381,7 @@ set_tests_properties(buildings_floor_at_observer_z PROPERTIES FIXTURES_REQUIRED 
 add_test(NAME buildings_two_floors_run COMMAND ${URBAN_SHORT} -t tests/data/urban_track_short.csv -b tests/data/urban_observers_raised.csv -o integrated/urban_two_floors.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 # Pitched roofs (--roofs): the demo district's two terraces given gables runs through, and --roofs
 # alone is refused.
-add_test(NAME buildings_pitched_runs COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --roofs tests/data/urban_roofs.csv -o integrated/urban_pitched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_pitched_runs COMMAND ${URBAN_DISTRICT_SHORT} --buildings tests/data/urban_buildings.csv --roofs tests/data/urban_roofs.csv -o integrated/urban_pitched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 # A microphone flush on a slope of a gable (building 1's, 15 ft up the side from its eave) takes the slope's
 # reflection and runs; with a plate, which lies level, it is refused.
 set(URBAN_SLOPE niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tests/data/urban_track_short.csv --frame_bearing 210 -b tests/data/urban_on_slope.csv -L warn --buildings tests/data/urban_buildings.csv --roofs tests/data/urban_roofs.csv)
@@ -1388,21 +1394,21 @@ add_test(NAME buildings_refuses_negative_state_tolerance COMMAND ${URBAN_DISTRIC
 set_tests_properties(buildings_refuses_negative_state_tolerance PROPERTIES PASS_REGULAR_EXPRESSION "--state_tolerance is a non-negative number of dB")
 # Facades that scatter (--facade_scattering, diffuse_facades.hpp): each microphone's diffuse field, lit
 # by the source's specular paths with the sphere read along each one's launch, adds to its rays.  The
-# states sampled against every state evaluated, within 0.01 dB of SEL (0.001 measured), and the run
+# states sampled against every state evaluated, within 0.01 dB of SEL (0.004 measured), and the run
 # pinned (golden/buildings_scattering.csv, made by the build that added it).  A building outside every
 # microphone's --diffuse_radius keeps its whole rho, so with none in reach the run is the specular one.
 # A spectrum (--facade_scattering_spectrum) must reach every band the metric sums.  The library test
 # `a run's diffuse field is niceops_point_field's for an omnidirectional source` holds the field to the
 # tool's, on the CPU and the GPU.
-add_test(NAME buildings_scattering_run COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --facade_scattering 0.3 --patch_size 20 --no-gpu -o integrated/buildings_scattering.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME buildings_scattering_every_state_run COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --facade_scattering 0.3 --patch_size 20 --state_tolerance 0 --no-gpu -o integrated/buildings_scattering_every_state.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME buildings_scattering_out_of_reach_run COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --facade_scattering 0.5 --diffuse_radius 0.001 --no-gpu -o integrated/buildings_scattering_out_of_reach.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME buildings_scattering_spectrum_run COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --facade_scattering_spectrum tests/data/scattering_spectrum.csv --band_limits 100 2000 --patch_size 20 --no-gpu -o integrated/buildings_scattering_spectrum.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_scattering_run COMMAND ${URBAN_DISTRICT_SHORT} --buildings tests/data/urban_buildings.csv --facade_scattering 0.3 --patch_size 20 --no-gpu -o integrated/buildings_scattering.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_scattering_every_state_run COMMAND ${URBAN_DISTRICT_SHORT} --buildings tests/data/urban_buildings.csv --facade_scattering 0.3 --patch_size 20 --state_tolerance 0 --no-gpu -o integrated/buildings_scattering_every_state.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_scattering_out_of_reach_run COMMAND ${URBAN_DISTRICT_SHORT} --buildings tests/data/urban_buildings.csv --facade_scattering 0.5 --diffuse_radius 0.001 --no-gpu -o integrated/buildings_scattering_out_of_reach.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_scattering_spectrum_run COMMAND ${URBAN_DISTRICT_SHORT} --buildings tests/data/urban_buildings.csv --facade_scattering_spectrum tests/data/scattering_spectrum.csv --band_limits 100 2000 --patch_size 20 --no-gpu -o integrated/buildings_scattering_spectrum.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_scattering_run buildings_scattering_every_state_run buildings_scattering_out_of_reach_run buildings_scattering_spectrum_run PROPERTIES FIXTURES_SETUP buildings_scattering_runs)
 add_test(NAME buildings_scattering_states_sampled COMMAND golden_compare integrated/buildings_scattering.csv integrated/buildings_scattering_every_state.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME buildings_scattering_golden COMMAND golden_compare integrated/buildings_scattering.csv golden/buildings_scattering.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME buildings_scattering_out_of_reach_is_specular COMMAND golden_compare integrated/buildings_scattering_out_of_reach.csv integrated/buildings_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(buildings_scattering_states_sampled buildings_scattering_golden buildings_scattering_out_of_reach_is_specular PROPERTIES FIXTURES_REQUIRED "buildings_scattering_runs;buildings_sampling_runs")
+add_test(NAME buildings_scattering_out_of_reach_is_specular COMMAND golden_compare integrated/buildings_scattering_out_of_reach.csv integrated/buildings_short.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_scattering_states_sampled buildings_scattering_golden buildings_scattering_out_of_reach_is_specular PROPERTIES FIXTURES_REQUIRED "buildings_scattering_runs;buildings_short_runs")
 add_test(NAME buildings_refuses_scattering_out_of_range COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --facade_scattering 1.5 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_scattering_out_of_range PROPERTIES PASS_REGULAR_EXPRESSION "--facade_scattering is a share within")
 add_test(NAME buildings_refuses_short_scattering_spectrum COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --facade_scattering_spectrum tests/data/scattering_spectrum.csv -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -1411,12 +1417,12 @@ add_test(NAME buildings_refuses_lone_scattering COMMAND ${URBAN_RUN} --facade_sc
 set_tests_properties(buildings_refuses_lone_scattering PROPERTIES PASS_REGULAR_EXPRESSION "go with --buildings")
 # Turbulence scattering into the buildings' shadows (--scattering under --buildings,
 # turbulence_scattering.hpp): on the demo approach every microphone sees the helicopter at some
-# point, and strong turbulence moves no SEL by 0.01 dB (0.004 measured); without --buildings or
+# point, and strong turbulence moves no SEL by 0.01 dB (0.007 measured); without --buildings or
 # --refraction it is still refused.  The library tests hold the fit, the screen and the run.
-add_test(NAME buildings_turbulence_run COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --scattering 1e-5 --no-gpu -o integrated/buildings_turbulence.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_turbulence_run COMMAND ${URBAN_DISTRICT_SHORT} --buildings tests/data/urban_buildings.csv --scattering 1e-5 --no-gpu -o integrated/buildings_turbulence.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_turbulence_run PROPERTIES FIXTURES_SETUP buildings_turbulence_runs)
-add_test(NAME buildings_turbulence_is_small_on_the_demo COMMAND golden_compare integrated/buildings_turbulence.csv integrated/buildings_sampled.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(buildings_turbulence_is_small_on_the_demo PROPERTIES FIXTURES_REQUIRED "buildings_turbulence_runs;buildings_sampling_runs")
+add_test(NAME buildings_turbulence_is_small_on_the_demo COMMAND golden_compare integrated/buildings_turbulence.csv integrated/buildings_short.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_turbulence_is_small_on_the_demo PROPERTIES FIXTURES_REQUIRED "buildings_turbulence_runs;buildings_short_runs")
 add_test(NAME scattering_refuses_open_ground_without_refraction COMMAND ${URBAN_RUN} --scattering 1e-6 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(scattering_refuses_open_ground_without_refraction PROPERTIES PASS_REGULAR_EXPRESSION "give --refraction and --ground_effect, or --buildings")
 # One ray has no phase to be unsure of: both ends of the interval are the level.
@@ -1438,7 +1444,7 @@ set_tests_properties(buildings_refuses_coverage PROPERTIES PASS_REGULAR_EXPRESSI
 # building's run is the open one again, at 1e-9; and over the test district the interval's ends
 # bracket every microphone's SEL, some strictly.
 add_test(NAME buildings_far_measured_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_far_building.csv --floor_absorption 1 --ray_coherence measured --state_tolerance 0 --no-gpu -o integrated/buildings_far_measured.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME buildings_measured_run COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --ray_coherence measured --phase_interval 90 --no-gpu -o integrated/buildings_measured.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_measured_run COMMAND ${URBAN_DISTRICT_SHORT} --buildings tests/data/urban_buildings.csv --ray_coherence measured --phase_interval 90 --no-gpu -o integrated/buildings_measured.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_far_measured_run buildings_measured_run PROPERTIES FIXTURES_SETUP buildings_measured_runs)
 add_test(NAME buildings_far_measured_is_open COMMAND golden_compare integrated/buildings_far_measured.csv integrated/buildings_far_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_far_measured_is_open PROPERTIES FIXTURES_REQUIRED "buildings_measured_runs;buildings_far_runs")
@@ -1567,10 +1573,10 @@ add_test(NAME point_field_relief_flat_runs COMMAND niceops_point_field --buildin
 set_tests_properties(point_field_relief_flat_runs PROPERTIES FIXTURES_SETUP point_field_relief_flat)
 add_test(NAME point_field_relief_flat_is_plain COMMAND golden_compare integrated/point_field_relief_flat.csv integrated/point_field_sources.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(point_field_relief_flat_is_plain PROPERTIES FIXTURES_REQUIRED "point_field_relief_flat;point_field_sources")
-add_test(NAME buildings_relief_flat_run COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --facade_relief tests/data/relief_flat.csv --no-gpu -o integrated/buildings_relief_flat.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_relief_flat_run COMMAND ${URBAN_DISTRICT_SHORT} --buildings tests/data/urban_buildings.csv --facade_relief tests/data/relief_flat.csv --no-gpu -o integrated/buildings_relief_flat.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_relief_flat_run PROPERTIES FIXTURES_SETUP buildings_relief_flat_runs)
-add_test(NAME buildings_relief_flat_is_plain COMMAND golden_compare integrated/buildings_relief_flat.csv integrated/buildings_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(buildings_relief_flat_is_plain PROPERTIES FIXTURES_REQUIRED "buildings_relief_flat_runs;buildings_sampling_runs")
+add_test(NAME buildings_relief_flat_is_plain COMMAND golden_compare integrated/buildings_relief_flat.csv integrated/buildings_short.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_relief_flat_is_plain PROPERTIES FIXTURES_REQUIRED "buildings_relief_flat_runs;buildings_short_runs")
 add_test(NAME buildings_refuses_lone_relief COMMAND ${URBAN_RUN} --facade_relief tests/data/relief_test.csv -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_lone_relief PROPERTIES PASS_REGULAR_EXPRESSION "--facade_relief, --relief_scattering, --grating_reflections, --patch_size and --diffuse_radius go with --buildings")
 add_test(NAME buildings_refuses_relief_and_spectrum COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --facade_relief tests/data/relief_test.csv --facade_scattering_spectrum tests/data/scattering_spectrum.csv -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

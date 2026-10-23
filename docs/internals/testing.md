@@ -182,9 +182,9 @@ Notes on each:
   The moves are in [HISTORY](../HISTORY.md#changes-that-affect-results).
 - **`buildings_scattering.csv`** was made by the build that added `--facade_scattering` under
   `--buildings`: the test district's seven microphones in a trajectory run, every wall scattering
-  0.3, on the CPU (`--no-gpu`). Like every run over the test district, it takes the demo track at
-  every 4th state (`tests/data/urban_track_every4.csv`, a quarter of the cost; the golden moved
-  0.023 dB when it left the full track). It pins the run's own diffuse field, which no table carries, and
+  0.3, on the CPU (`--no-gpu`). Like the other option runs over the test district, it takes 4 s of
+  the demo approach (`tests/data/urban_track_short.csv`), for CI's cost; it was regenerated when it
+  left the full track. It pins the run's own diffuse field, which no table carries, and
   the point model's rays under it: it was regenerated with each deliberate change to those rays
   (reflections at a twice-diffracted ray's ends and between its edges, three roof edges, a floor
   bounce between two edges, UTD's edge ends, a shared face's aperture at its limit, a flat face's

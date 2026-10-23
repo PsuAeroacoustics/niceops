@@ -56,7 +56,7 @@ jobs:
     - name: Restore the compiler cache
       # Keyed by commit, restored from the newest: a push that touches a few
       # sources recompiles those and takes the rest from the cache.
-      uses: actions/cache@v4
+      uses: actions/cache/restore@v4
       with:
         path: .ccache
         key: ccache-${{ runner.os }}-${{ github.sha }}
@@ -71,6 +71,14 @@ jobs:
       run: |
         cmake --build build --config $BUILD_TYPE -j$(nproc)
         ccache --show-stats
+
+    - name: Save the compiler cache
+      # Before the tests, so that a red run still leaves its cache (actions/cache
+      # saves only when the whole job succeeds).
+      uses: actions/cache/save@v4
+      with:
+        path: .ccache
+        key: ccache-${{ runner.os }}-${{ github.sha }}
 
     - name: Check the plotting environment
       # CMake only warns when the venv or the matplotlib install fails, so that
