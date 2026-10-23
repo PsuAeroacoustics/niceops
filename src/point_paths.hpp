@@ -910,10 +910,10 @@ SharedFaceSamples shared_face_samples(const SharedFaceTerm& face, const std::vec
 std::complex<double> shared_face_amplitude(const PointRay& ray, double reflected, double k, std::complex<double> field);
 
 // A row's profile field is taken only up to a size: as k times the row's
-// extent (ProfileTerm::extent) goes from 6000 to 12000 radians it gives way,
+// extent (ProfileTerm::extent) goes from 3000 to 6000 radians it gives way,
 // a smoothstep in log k, to the rays it stands for, and beyond it is not
 // marched.  The march costs as the row's size in wavelengths squared: over a
-// terrace's 8 rows (160 m across, the fade 2-4 kHz) the bands above 4 kHz
+// terrace's 8 rows (160 m across, the fade 1-2 kHz) the bands above 4 kHz
 // were 78% of it, where it cost 37 times the rays it stands for (FIDELITY,
 // "Over a row of roofs").  One street's row (30 m) keeps it to 11 kHz, and a
 // scale model's to far beyond.  1 below the fade, 0 above.
