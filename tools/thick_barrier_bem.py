@@ -39,6 +39,13 @@ rays crossing it diffracted between two buildings' edges):
     tools/thick_barrier_bem.py --width 10 --height 10 --blocks '20,30,10' --sources='-100,12;-50,15' \
         --behind 2,5,10 --heights 1.2 --frequencies 125,250,500 --per_wavelength 30 --out street30.csv
 
+A dip, one block whose middle stands lower than its ends (touching blocks 10/8/10 m), is a --roof;
+--chief_top 0.7 keeps the CHIEF points below the dip's floor (tests/test_profile_pe.cpp):
+
+    tools/thick_barrier_bem.py --width 30 --height 10 --roof '10,10;10,8;20,8;20,10' --chief_top 0.7 \
+        --sources='-100,5;-100,12;-50,15' --behind 2,10 --heights 9.0,9.5,9.8,9.9,9.95,9.99,10.01,10.05,10.1,10.2,10.5,11.0 \
+        --frequencies 250 --per_wavelength 45 --out dip45.csv
+
 Needs numpy and scipy.  --check compares against the exact series for a rigid circular cylinder
 (0.005 dB at 800 Hz with 800 elements).
 """
@@ -128,7 +135,7 @@ def solve(a, b, normal, k, source, ground, chief):
 
 
 def block_case(args):
-    width, height, f, source, receivers, per_wavelength, roof, blocks = args
+    width, height, f, source, receivers, per_wavelength, roof, blocks, chief_top = args
     k = 2 * np.pi * f / C
     h = min(C / f / per_wavelength, 0.25)
     rng = np.random.default_rng(1)
@@ -139,7 +146,7 @@ def block_case(args):
         profile = [(x1, 0.0), (x1, top), *corners[::-1], (x0, top), (x0, 0.0)]
         meshes.append(mesh(profile, h, closed=False, grade=3))
         chief.append(np.stack([rng.uniform(x0 + 0.1 * (x1 - x0), x1 - 0.1 * (x1 - x0), 12),
-                               rng.uniform(0.1 * top, 0.9 * top, 12)], axis=1))
+                               rng.uniform(0.1 * top, chief_top * top, 12)], axis=1))
     a, b, normal = (np.concatenate(parts) for parts in zip(*meshes))
     field = solve(a, b, normal, k, np.asarray(source, float), True, np.concatenate(chief))
     return [(width, f, source[0], source[1], x, z, p.real, p.imag) for (x, z), p in zip(receivers, field(receivers))]
@@ -174,6 +181,9 @@ def main():
     parser.add_argument('--heights', default='1.2,4.8,5.1,5.26,5.6,6.5,8', help='receiver heights (m)')
     parser.add_argument('--frequencies', default='125,250,500,1000')
     parser.add_argument('--per_wavelength', type=float, default=60.0)
+    parser.add_argument('--chief_top', type=float, default=0.9,
+                        help='CHIEF points no higher than this fraction of each profile\'s height (0.7 keeps them '
+                             'out of a roof\'s dip, which is air)')
     parser.add_argument('--out', default='bem.csv')
     parser.add_argument('-j', type=int, default=os.cpu_count() // 2)
     args = parser.parse_args()
@@ -187,7 +197,7 @@ def main():
     roof = [] if args.ridge is None else [(0.5 * args.width, args.ridge)]
     if args.roof:
         roof = [tuple(float(v) for v in p.split(',')) for p in args.roof.split(';')]
-    jobs = [(args.width, args.height, float(f), s, receivers, args.per_wavelength, roof, blocks)
+    jobs = [(args.width, args.height, float(f), s, receivers, args.per_wavelength, roof, blocks, args.chief_top)
             for f, s in itertools.product(args.frequencies.split(','), sources)]
     with Pool(args.j) as pool:
         rows = sorted(row for rows in pool.imap_unordered(block_case, jobs) for row in rows)

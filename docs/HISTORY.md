@@ -4,6 +4,17 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## A dip takes its row's profile (October 2026)
+
+A row of touching blocks with a roof lower than both its neighbours (a dip) was left to the
+cascades of its roof edges, which stepped by up to 22 dB where a microphone crossed the roofs'
+plane and spiked at roof height. Such a row now takes its profile field, as a row with a street
+did already (THEORY §6.5, "Over a row of roofs"). Against boundary elements over a 10/8/10 m dip
+the error went from 4.92 to 1.39 dB rms at 125-500 Hz, 2.70 to 1.51 at 1 kHz, and the step at the
+plane to the exact field's own, 0.4 dB at most. Touching steps up or down keep their cascades.
+Streets, the stored tests and DigiCity do not move; of the EDGE scenes only UE05's LoD1 stand-in
+does (FIDELITY). `--no_profile_pe` gives the old field.
+
 ## A step's line no longer steps the level (October 2026)
 
 Where a microphone crossed the line through a step's two edges (a ridge or a taller roof's edge

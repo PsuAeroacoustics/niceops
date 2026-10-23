@@ -4548,11 +4548,18 @@ void PointSourceField::apply_profile(const Buildings& buildings, const Vec3& sou
             return;
         blocks.push_back(b);
     }
-    // At least one street between the blocks.
-    bool street = false;
+    // At least one street between the blocks, or a dip: a touching roof
+    // lower than both its neighbours.  Either way the cascade's collinear
+    // edges sit on each other's shadow boundaries at the roofs' plane, and
+    // only the 2-D field carries the grazing wave there.  Touching steps up
+    // or down keep the cascades (internals/ground.md, "Over a row of roofs").
+    bool takes_profile = false;
     for (std::size_t i = 1; i < blocks.size(); i++)
-        street = street || blocks[i].u0 > blocks[i - 1].u1 + 1e-6 * D;
-    if (!street)
+        takes_profile = takes_profile || blocks[i].u0 > blocks[i - 1].u1 + 1e-6 * D;
+    for (std::size_t i = 1; i + 1 < blocks.size(); i++)
+        takes_profile = takes_profile
+                || (blocks[i].h < blocks[i - 1].h - 1e-6 && blocks[i].h < blocks[i + 1].h - 1e-6);
+    if (!takes_profile)
         return;
     const double u_m = u_of(microphone.x, microphone.y);
     // March from the end nearer grazing over its neighbouring roof edge, so

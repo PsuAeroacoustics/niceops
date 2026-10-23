@@ -800,8 +800,21 @@ exactly. What to keep:
     the direct path's length also overstates late trips by up to 6 dB), and per combination over
     several streets. Score a row's change by band levels, not single frequencies. The patch and the
     BEM sets are in the session's scratch (`tmp/item3`).
-  - Touching blocks keep the cascades: the profile does no better there (2-D, a step up 2.04 dB
-    rms against the cascades' 1.99). So do a single block and a pitched roof.
+  - **A dip takes the profile; touching steps up or down keep the cascades.** The gate in
+    `apply_profile` is a street or a dip (a touching roof lower than both its neighbours), not
+    "touching": taking any touching row failed `over a step down to a lower roof the pair of edges
+    is uniform` (rms > 0.8, its bound then) and `over a roof with both ends above its plane the
+    field holds through it` (rms > 0.15). The earlier finding that touching
+    blocks do no better (2-D, a step up 2.04 dB rms against the cascades' 1.99) was measured 1.2 m
+    up across a monotone step, and still stands for steps. In a dip the cascades stepped up to
+    22 dB across the roofs' plane (FIDELITY "Over a row of roofs", Dip); `a dip takes the row's
+    profile` pins it to BEM, `touching steps keep their cascades` the gate. So do a single block
+    and a pitched roof.
+  - **Callers that sum rays themselves must apply `row_profile_factor`.** The three-argument
+    `point_ray_amplitude(ray, reflected, k)` omits it, so wherever a profile is taken the rays it
+    stands for are summed at full weight on top of the profile's. The validation harness's
+    `urban/edge/rays.cpp` did this (UE13 LoD1 moved by up to 6.63 dB once corrected; UE05's dip
+    stand-in by more).
 - **The 2-D field converts to 3-D per ray, by sin(beta)/sqrt(l_t).** At beta = 90° that is exact
   for every kind of ray, which is what lets a 2-D BEM test the whole 3-D implementation
   (`over a long block the point-source field is the boundary-element solution's`); it also

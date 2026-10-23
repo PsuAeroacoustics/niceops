@@ -1285,6 +1285,45 @@ block alone, and two touching (a step up or down, no street), are left to the ca
 rms for the block, 0.62 and 1.99 for the steps, which the profile field does not better (0.65 and
 2.03 in two dimensions).
 
+**Dip.** A touching roof lower than both its neighbours takes the profile field as a street does
+(THEORY §6.5). Blocks 10, 8 and 10 m high touching over 30 m, rigid ground, boundary elements with
+the CHIEF points below the dip's floor; line sources below the roofs' plane (100 m off), 1.15° and
+5.7° above it; microphones 2 and 10 m behind, 12 heights from 9 to 11 m through the plane. Error re
+the exact level, dB, mean, rms, worst:
+
+| Set | Cases | Profile field | Cascades (before) |
+| --- | --- | --- | --- |
+| 125-500 Hz (30 elements) | 216 | +1.02, 1.39, 2.86 | +1.48, 4.92, 16.26 |
+| 1 kHz (20) | 72 | −1.25, 1.51, 2.39 | −0.90, 2.70, 5.00 |
+| 250 Hz (45) | 72 | −0.17, 0.20, 0.47 | −1.13, 2.64, 6.07 |
+
+Averaged over the 125 and 500 Hz bands (8 frequencies each, x = 2 m behind): 0.49 and 0.17 dB rms,
+against the cascades' 3.32 and 3.01. Across the plane, 9.99 → 10.01 m, the cascades stepped −5.3 to
++22.5 dB; the profile field steps 0.00 to +0.39, as the boundary elements do (0.00 to 0.39). With
+the microphone exactly at roof height the cascades took a third ray set; source below the plane,
+1 kHz, z = 9.99 / 10.00 / 10.01: −10.9 / +3.7 / −3.7 dB before, −10.9 / −10.7 / −10.5 after. A dip
+pair costs about 128 ms over 21 bands, as a street does, against about 1 ms before.
+
+The dip is taken in no stored test and nowhere in DigiCity; of the EDGE scenes, only in UE05, a shed-roof terrace whose LoD1
+stand-ins (0.612 / 0.492 / 0.612 m, touching) are dips; UE05 has no FDTD. Against a 2-D BEM of that
+stand-in (2-16 kHz) the rms goes 1.27 → 1.26 dB, worst 2.83 → 2.14: the drone 1.28 → 0.65, the floor
+source 1.26 → 1.65 (mean −1.63, which the bare 2-D profile field gives too: its low bias near the
+floor). Against UE05's measurements, which are of the pitched roofs, the stand-in moves the floor
+source's rms from 4.64 to 6.10 dB (flat_mean) and 6.41 to 8.41 (flat_ridge), the drone's 2.21 →
+2.35 and 2.00 → 2.23; LoD2 does not move.
+
+Tried for the same cascades and not taken: a Vogler / Xia-Bertoni grazing multi-edge factor on the
+chain (its settled field, 1/(N+1), is wrong over rigid roofs: BEM gives −2.4 to −7.5 dB at the plane
+against the factor's −10 to −14; at 1 kHz the street went 2.8 → 5.0 dB rms and the dip 2.7 → 6.1,
+the stored step table 0.53 → 4-7); a Kirchhoff aperture march (within 0.12 dB of the profile field,
+no closer to BEM: street 1.47, dip 1.38 rms; it removes the steps above the fade but costs more
+than the profile field on a single street); and the edge-source integral (moves the step by 0.12 dB
+at most).
+
+Left: above the profile's fade ($kD$ from 3000; 5.5 kHz on a 30 m row) a row's cascades still step
+3-5 dB across the roofs' plane at 6.3-10 kHz and spike at roof height, and so do touching steps that
+are not dips and rows not crossed near grazing at every frequency.
+
 In a run, over a terraced district (8 flat-roofed rows 30 ft deep and high, 600 ft long, 40 ft
 streets, observers 4 ft up in the streets and behind) under the demo approach, 22% of the
 (observer, state) pairs take a row's profile. The profile gives way to the rays it stands for as

@@ -1789,12 +1789,15 @@ the ray runs along, being the limit with three edges as with four.
 
 **Over a row of roofs** (`profile_pe`; `--no_profile_pe` in `niceops_point_field`). Where three
 or more roof edges lie in each other's transition regions -- a street between two rows of roofs,
-crossed near grazing -- the cascades over two, three and four of them each carry a share of the
+or a dip between two higher roofs, crossed near grazing -- the cascades over two, three and four of them each carry a share of the
 field, and their sum does not settle as edges are added. There the rays over the row give way to
 its two-dimensional field, from a parabolic equation over its cross-section. The row is what the
 plan line from the source to the microphone crosses: two or more flat-roofed footprints, each
 entered and left once through two of its sides, every crossed side within 1° of parallel to the
-first, and a street between at least one pair. The rays it stands for are those whose points
+first, and either a street between at least one pair or a dip: a touching roof lower than both its
+neighbours. In a dip as over a street the cascade's collinear edges sit on each other's shadow
+boundaries at the roofs' plane, and only the two-dimensional field carries the grazing wave over the
+rigid roofs; touching blocks that step only up or down keep their cascades. The rays it stands for are those whose points
 between the ends all lie on its roof edges, its roofs, its crossed walls or the floor, and that
 reflect only in those roofs and walls: the direct and floor rays, the roofs' reflections, the
 diffracted rays and chains over it, and the walls' rays in its streets.

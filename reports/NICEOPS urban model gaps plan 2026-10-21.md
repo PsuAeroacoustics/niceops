@@ -60,7 +60,22 @@ LoD1 scenes and DigiCity unmoved. The edge-source integral near the line and Alb
 double-diffraction coefficient were prototyped and not taken (internals, ground.md). Also left: chains of three and
 four edges over a row of roofs still step 3.9 dB in the roofs' plane where no profile is taken; the
 reflection boundary's 0.94 dB is unchanged (where it meets the plane, 10 m behind, 1.05-4.16 ->
-0.86-1.16 dB).
+0.86-1.16 dB). **Chains partly closed (2026-10-23):** a dip (a touching roof lower than both its neighbours)
+now takes the row's profile as a street does. Against new 2-D BEM over a 10/8/10 m dip through the
+plane: 4.92 -> 1.39 dB rms (worst 16.3 -> 2.86) at 125-500 Hz, 2.70 -> 1.51 at 1 kHz, 2.64 -> 0.20 at
+250 Hz (45 a wavelength); band-averaged 3.32 / 3.01 -> 0.49 / 0.17; the step at the plane -5.3..+22.5
+-> 0.00..0.39 dB (BEM's own), the roof-height spike gone below the fade. Streets, stored tables,
+DigiCity and EDGE vs FDTD unmoved; UE05's LoD1 stand-in vs its own BEM 1.27 -> 1.26 (floor source
+1.26 -> 1.65, the profile's bias near the floor), vs measurement worse (E1 4.64 -> 6.10, a flat
+stand-in for pitched roofs). A Vogler / Xia-Bertoni factor (1/(N+1) is wrong over rigid roofs) and the
+edge-source integral were measured and not taken (FIDELITY "Over a row of roofs", Dip). Still left:
+chains above the profile's k D fade (3-5 dB steps at 6.3-10 kHz and the spike; a Kirchhoff aperture
+march is the measured candidate, within 0.12 dB of the PE and ~3x cheaper than unfading it on long
+rows, but slower on one street and with no BEM above 1 kHz), touching steps that are not dips, and the
+plane spike outside any profile. The tilted-step leftover is separate and unaffected. Open harness
+defect: niceops-validation `urban/edge/rays.cpp` calls the three-argument `point_ray_amplitude`, which
+omits `row_profile_factor`, double counting a row's rays wherever a profile is taken (UE13 LoD1 moves
+up to 6.63 dB once corrected; fix is one factor, scratch `rays_fixed.cpp` in job tmp/i2/proto-chains-0).
 
 **Item 3 closed (2026-10-22, not pursued).** Built (round trips across each street, faded out above
 k w = 120, the walls' reflection per band) and measured against new BEM: it held at single frequencies

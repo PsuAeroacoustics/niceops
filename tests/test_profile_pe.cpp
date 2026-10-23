@@ -333,6 +333,156 @@ TEST_CASE("over a street the point-source field takes the profile field", "[prof
     REQUIRE(std::sqrt(square[0] / n) > 3.0);
 }
 
+namespace {
+
+// Three long blocks touching, 10, 8 and 10 m high over u = 0-10, 10-20 and
+// 20-30: a dip.  Line sources below the roofs' plane, 1.15 and 5.7 degrees
+// above it; receivers 2 and 10 m behind, through the plane.  From
+// tools/thick_barrier_bem.py --roof '10,10;10,8;20,8;20,10' --chief_top 0.7
+// (the CHIEF points kept below the dip's floor, which is air), 45 elements a
+// wavelength at 250 Hz and 20 at 1 kHz.
+const std::vector<ProfileCase>& dip_cases()
+{
+    static const std::vector<ProfileCase> cases {
+        {250, -100, 5, 32, 9, -15.90}, {250, -100, 5, 32, 9.5, -11.85}, {250, -100, 5, 32, 9.8, -9.94},
+        {250, -100, 5, 32, 9.9, -9.70}, {250, -100, 5, 32, 9.95, -9.59}, {250, -100, 5, 32, 9.99, -9.49},
+        {250, -100, 5, 32, 10.01, -9.44}, {250, -100, 5, 32, 10.05, -9.31}, {250, -100, 5, 32, 10.1, -9.11},
+        {250, -100, 5, 32, 10.2, -8.55}, {250, -100, 5, 32, 10.5, -5.96}, {250, -100, 5, 32, 11, -2.67},
+        {250, -100, 5, 40, 9, -13.51}, {250, -100, 5, 40, 9.5, -10.86}, {250, -100, 5, 40, 9.8, -9.10},
+        {250, -100, 5, 40, 9.9, -8.82}, {250, -100, 5, 40, 9.95, -8.73}, {250, -100, 5, 40, 9.99, -8.69},
+        {250, -100, 5, 40, 10.01, -8.67}, {250, -100, 5, 40, 10.05, -8.65}, {250, -100, 5, 40, 10.1, -8.64},
+        {250, -100, 5, 40, 10.2, -8.65}, {250, -100, 5, 40, 10.5, -8.38}, {250, -100, 5, 40, 11, -5.78},
+        {250, -100, 12, 32, 9, -12.26}, {250, -100, 12, 32, 9.5, -8.20}, {250, -100, 12, 32, 9.8, -6.28},
+        {250, -100, 12, 32, 9.9, -6.03}, {250, -100, 12, 32, 9.95, -5.92}, {250, -100, 12, 32, 9.99, -5.82},
+        {250, -100, 12, 32, 10.01, -5.77}, {250, -100, 12, 32, 10.05, -5.64}, {250, -100, 12, 32, 10.1, -5.44},
+        {250, -100, 12, 32, 10.2, -4.87}, {250, -100, 12, 32, 10.5, -2.28}, {250, -100, 12, 32, 11, 0.91},
+        {250, -100, 12, 40, 9, -9.54}, {250, -100, 12, 40, 9.5, -6.86}, {250, -100, 12, 40, 9.8, -5.14},
+        {250, -100, 12, 40, 9.9, -4.87}, {250, -100, 12, 40, 9.95, -4.78}, {250, -100, 12, 40, 9.99, -4.74},
+        {250, -100, 12, 40, 10.01, -4.72}, {250, -100, 12, 40, 10.05, -4.70}, {250, -100, 12, 40, 10.1, -4.68},
+        {250, -100, 12, 40, 10.2, -4.69}, {250, -100, 12, 40, 10.5, -4.36}, {250, -100, 12, 40, 11, -1.79},
+        {250, -50, 15, 32, 9, -10.44}, {250, -50, 15, 32, 9.5, -6.37}, {250, -50, 15, 32, 9.8, -4.50},
+        {250, -50, 15, 32, 9.9, -4.27}, {250, -50, 15, 32, 9.95, -4.17}, {250, -50, 15, 32, 9.99, -4.08},
+        {250, -50, 15, 32, 10.01, -4.02}, {250, -50, 15, 32, 10.05, -3.90}, {250, -50, 15, 32, 10.1, -3.71},
+        {250, -50, 15, 32, 10.2, -3.15}, {250, -50, 15, 32, 10.5, -0.63}, {250, -50, 15, 32, 11, 2.26},
+        {250, -50, 15, 40, 9, -7.38}, {250, -50, 15, 40, 9.5, -4.64}, {250, -50, 15, 40, 9.8, -3.07},
+        {250, -50, 15, 40, 9.9, -2.86}, {250, -50, 15, 40, 9.95, -2.80}, {250, -50, 15, 40, 9.99, -2.78},
+        {250, -50, 15, 40, 10.01, -2.77}, {250, -50, 15, 40, 10.05, -2.77}, {250, -50, 15, 40, 10.1, -2.78},
+        {250, -50, 15, 40, 10.2, -2.82}, {250, -50, 15, 40, 10.5, -2.53}, {250, -50, 15, 40, 11, -0.10},
+        {1000, -100, 5, 32, 9, -18.53}, {1000, -100, 5, 32, 9.5, -14.46}, {1000, -100, 5, 32, 9.8, -11.16},
+        {1000, -100, 5, 32, 9.9, -10.50}, {1000, -100, 5, 32, 9.95, -9.45}, {1000, -100, 5, 32, 9.99, -8.55},
+        {1000, -100, 5, 32, 10.01, -8.16}, {1000, -100, 5, 32, 10.05, -7.54}, {1000, -100, 5, 32, 10.1, -7.05},
+        {1000, -100, 5, 32, 10.2, -6.19}, {1000, -100, 5, 32, 10.5, -2.62}, {1000, -100, 5, 32, 11, -2.69},
+        {1000, -100, 5, 40, 9, -15.04}, {1000, -100, 5, 40, 9.5, -12.01}, {1000, -100, 5, 40, 9.8, -10.76},
+        {1000, -100, 5, 40, 9.9, -9.34}, {1000, -100, 5, 40, 9.95, -8.89}, {1000, -100, 5, 40, 9.99, -8.76},
+        {1000, -100, 5, 40, 10.01, -8.75}, {1000, -100, 5, 40, 10.05, -8.81}, {1000, -100, 5, 40, 10.1, -8.84},
+        {1000, -100, 5, 40, 10.2, -8.08}, {1000, -100, 5, 40, 10.5, -6.49}, {1000, -100, 5, 40, 11, -3.47},
+        {1000, -100, 12, 32, 9, -13.80}, {1000, -100, 12, 32, 9.5, -9.66}, {1000, -100, 12, 32, 9.8, -6.36},
+        {1000, -100, 12, 32, 9.9, -5.66}, {1000, -100, 12, 32, 9.95, -4.61}, {1000, -100, 12, 32, 9.99, -3.72},
+        {1000, -100, 12, 32, 10.01, -3.33}, {1000, -100, 12, 32, 10.05, -2.72}, {1000, -100, 12, 32, 10.1, -2.24},
+        {1000, -100, 12, 32, 10.2, -1.37}, {1000, -100, 12, 32, 10.5, 1.99}, {1000, -100, 12, 32, 11, 0.59},
+        {1000, -100, 12, 40, 9, -9.89}, {1000, -100, 12, 40, 9.5, -6.69}, {1000, -100, 12, 40, 9.8, -5.33},
+        {1000, -100, 12, 40, 9.9, -3.95}, {1000, -100, 12, 40, 9.95, -3.54}, {1000, -100, 12, 40, 9.99, -3.42},
+        {1000, -100, 12, 40, 10.01, -3.42}, {1000, -100, 12, 40, 10.05, -3.46}, {1000, -100, 12, 40, 10.1, -3.46},
+        {1000, -100, 12, 40, 10.2, -2.65}, {1000, -100, 12, 40, 10.5, -1.15}, {1000, -100, 12, 40, 11, 1.44},
+        {1000, -50, 15, 32, 9, -9.84}, {1000, -50, 15, 32, 9.5, -5.57}, {1000, -50, 15, 32, 9.8, -2.34},
+        {1000, -50, 15, 32, 9.9, -1.63}, {1000, -50, 15, 32, 9.95, -0.59}, {1000, -50, 15, 32, 9.99, 0.26},
+        {1000, -50, 15, 32, 10.01, 0.63}, {1000, -50, 15, 32, 10.05, 1.19}, {1000, -50, 15, 32, 10.1, 1.61},
+        {1000, -50, 15, 32, 10.2, 2.37}, {1000, -50, 15, 32, 10.5, 4.97}, {1000, -50, 15, 32, 11, -1.44},
+        {1000, -50, 15, 40, 9, -5.28}, {1000, -50, 15, 40, 9.5, -2.03}, {1000, -50, 15, 40, 9.8, -0.93},
+        {1000, -50, 15, 40, 9.9, 0.29}, {1000, -50, 15, 40, 9.95, 0.56}, {1000, -50, 15, 40, 9.99, 0.57},
+        {1000, -50, 15, 40, 10.01, 0.52}, {1000, -50, 15, 40, 10.05, 0.40}, {1000, -50, 15, 40, 10.1, 0.38},
+        {1000, -50, 15, 40, 10.2, 1.19}, {1000, -50, 15, 40, 10.5, 1.88}, {1000, -50, 15, 40, 11, 2.48},
+    };
+    return cases;
+}
+
+} // namespace
+
+// A dip takes the row's profile, as a street does: its cascades' collinear
+// edges sit on each other's shadow boundaries at the roofs' plane, where they
+// stepped up to 22 dB and were 2.6 dB rms out at 250 Hz (FIDELITY, "Over a row
+// of roofs").  The profile is 0.2 dB rms out at 250 Hz and 1.5 at 1 kHz, and
+// steps across the plane as BEM does, by no more than 0.4 dB.
+TEST_CASE("a dip takes the row's profile", "[profile_pe][point_paths]")
+{
+    const Buildings city({box(0, -4000, 10, 4000, 10), box(10, -4000, 20, 4000, 8), box(20, -4000, 30, 4000, 10)});
+    double square[2][2] {{0.0, 0.0}, {0.0, 0.0}}, worst[2] {0.0, 0.0}, n[2] {0.0, 0.0};
+    double below[2] {0.0, 0.0};
+    double step[2] {0.0, 0.0}; // the largest across z = 9.99 to 10.01
+    for (const ProfileCase& c : dip_cases())
+    {
+        const double k = 2.0 * pi * c.f / 343.2;
+        const Vec3 s(c.su, 0.0, c.sz), m(c.ru, 0.0, c.rz);
+        const int set = c.f > 500.0 ? 1 : 0;
+        n[set]++;
+        for (int profile = 0; profile < 2; profile++)
+        {
+            const PointLevel l = point_level(city, s, m, k, profile == 1, true);
+            const double error = l.level - c.exact;
+            INFO(c.f << " Hz, source (" << c.su << ", " << c.sz << "), microphone (" << c.ru << ", " << c.rz << ")");
+            square[set][profile] += error * error;
+            if (profile == 1)
+            {
+                REQUIRE(l.profiles > 0);
+                worst[set] = std::max(worst[set], std::abs(error));
+            }
+            if (c.rz == 9.99)
+                below[profile] = l.level - c.exact;
+            else if (c.rz == 10.01)
+                step[profile] = std::max(step[profile], std::abs(l.level - c.exact - below[profile]));
+        }
+    }
+    INFO("250 Hz: rms " << std::sqrt(square[0][1] / n[0]) << " (cascades " << std::sqrt(square[0][0] / n[0])
+                        << "), worst " << worst[0] << "; 1 kHz: rms " << std::sqrt(square[1][1] / n[1]) << " (cascades "
+                        << std::sqrt(square[1][0] / n[1]) << "), worst " << worst[1] << "; step at the plane re BEM's "
+                        << step[1] << " (cascades " << step[0] << ")");
+    REQUIRE(std::sqrt(square[0][1] / n[0]) < 0.3);
+    REQUIRE(worst[0] < 0.6);
+    REQUIRE(std::sqrt(square[1][1] / n[1]) < 1.7);
+    REQUIRE(worst[1] < 2.6);
+    REQUIRE(step[1] < 0.5);
+    REQUIRE(std::sqrt(square[0][0] / n[0]) > 2.0);
+    REQUIRE(step[0] > 5.0);
+}
+
+// Touching blocks that step up, down, or stand proud in the middle are no
+// dip, and keep their cascades: the point field is the one without the
+// profile, to the bit.
+TEST_CASE("touching steps keep their cascades", "[profile_pe][point_paths]")
+{
+    PointPathOptions off;
+    off.profile_pe = false;
+    for (const std::vector<double>& tops : std::vector<std::vector<double>> {{10, 12}, {12, 10}, {8, 10, 12}, {10, 12, 10}})
+    {
+        std::vector<Footprint> blocks;
+        for (std::size_t i = 0; i < tops.size(); i++)
+            blocks.push_back(box(10.0 * i, -4000, 10.0 * (i + 1), 4000, tops[i]));
+        const Buildings city(blocks);
+        const std::vector<double> reflection(city.facades().size(), 1.0);
+        const double far = 10.0 * tops.size();
+        for (const Vec3& s : {Vec3(-100, 0, 5), Vec3(-100, 0, 12), Vec3(-50, 0, 15)})
+            for (const Vec3& m : {Vec3(far + 2, 0, 1.2), Vec3(far + 2, 0, tops.back() + 0.01), Vec3(far + 10, 0, 11)})
+            {
+                const PointSourceField with(city, s, m), without(city, s, m, off);
+                INFO("tops " << tops.size() << ", source z " << s.z << ", microphone (" << m.x << ", " << m.z << ")");
+                REQUIRE(with.rays().size() == without.rays().size());
+                for (const double f : {125.0, 1000.0})
+                {
+                    const double k = 2.0 * pi * f / 343.2;
+                    std::complex<double> a, b;
+                    for (const PointRay& ray : with.rays())
+                    {
+                        REQUIRE(!ray.profile);
+                        a += point_ray_amplitude(ray, reflection, 1.0, k) * std::polar(1.0, k * ray.length);
+                    }
+                    for (const PointRay& ray : without.rays())
+                        b += point_ray_amplitude(ray, reflection, 1.0, k) * std::polar(1.0, k * ray.length);
+                    REQUIRE(a == b);
+                }
+            }
+    }
+}
+
 // Swapped ends march the other way round and weigh the two the other way:
 // the same field, near grazing at both ends (both marches weighed), obliquely
 // across the row, and with a street's floor and a facade outside the row.
