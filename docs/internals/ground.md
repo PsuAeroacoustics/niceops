@@ -1439,7 +1439,10 @@ each part was measured; what to keep in the code:
   launches sorted by z (window and chord test at the reach plus 1e-6), sorted back into the
   all-pairs loop's (i, j) order: the live list is the same pairs in the same order with the same
   values, and the sums are the same to the bit. It sorts the rays and the ~1% of pairs in reach,
-  not the pairs the "No sort" note rejects. The variance (`--phase_interval`) and any non-finite
+  not the pairs the "No sort" note rejects. Once the sweep has found a fifth of all pairs it stops
+  and forms every pair directly, which costs less there than sorting that many candidates
+  ([performance](performance.md#urban-source-coherence-pairs)); the pairs past the reach are then
+  dropped at the first band as before, so the sums are the same either way. The variance (`--phase_interval`) and any non-finite
   launch keep the all-pairs loop, since the variance's slots take pairs whose mean is 0. Cone sum,
   thread CPU best of 3, alternated with the old build on a no-variance copy of the exactness dump:
   DigiCity 40 mics 0.461 -> 0.354 s, suburb 0.073 -> 0.049 and 0.082 -> 0.048 s, terraces

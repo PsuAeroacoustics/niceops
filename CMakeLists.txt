@@ -1316,11 +1316,18 @@ set_tests_properties(buildings_no_profile_pe_run PROPERTIES FIXTURES_SETUP build
 add_test(NAME buildings_no_profile_pe_reaches_no_row COMMAND golden_compare integrated/buildings_no_profile_pe.csv integrated/buildings_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_no_profile_pe_reaches_no_row PROPERTIES FIXTURES_REQUIRED "buildings_no_profile_runs;buildings_sampling_runs")
 # --path_radius is a fast mode: over the test district at 75 m (246 ft) rather than 150 the SEL moves by
-# 0.009 dB at most (0.014 at 100 m); the default-radius run is its reference.
+# 0.009 dB at most (0.014 at 100 m); the default-radius run is its reference.  That alone would pass
+# with the option ignored, so two more runs pin it: 150 m given in feet is the default run exactly
+# (the radius is converted from --units: unconverted, 492 m changes the SELs), and 30 ft is not.
 add_test(NAME buildings_path_radius_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --path_radius 246 --no-gpu -o integrated/buildings_path_radius.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(buildings_path_radius_run PROPERTIES FIXTURES_SETUP buildings_path_radius_runs)
+add_test(NAME buildings_path_radius_default_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --path_radius 492.1259842519685 --no-gpu -o integrated/buildings_path_radius_default.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_path_radius_short_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --path_radius 30 --no-gpu -o integrated/buildings_path_radius_short.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_path_radius_run buildings_path_radius_default_run buildings_path_radius_short_run PROPERTIES FIXTURES_SETUP buildings_path_radius_runs)
 add_test(NAME buildings_path_radius_is_close COMMAND golden_compare integrated/buildings_path_radius.csv integrated/buildings_sampled.csv 0.03 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(buildings_path_radius_is_close PROPERTIES FIXTURES_REQUIRED "buildings_path_radius_runs;buildings_sampling_runs")
+add_test(NAME buildings_path_radius_in_units COMMAND golden_compare integrated/buildings_path_radius_default.csv integrated/buildings_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_path_radius_takes_effect COMMAND golden_compare integrated/buildings_path_radius_short.csv integrated/buildings_sampled.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_path_radius_takes_effect PROPERTIES WILL_FAIL TRUE)
+set_tests_properties(buildings_path_radius_is_close buildings_path_radius_in_units buildings_path_radius_takes_effect PROPERTIES FIXTURES_REQUIRED "buildings_path_radius_runs;buildings_sampling_runs")
 add_test(NAME buildings_refuses_lone_path_radius COMMAND ${URBAN_RUN} --path_radius 246 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_lone_path_radius PROPERTIES PASS_REGULAR_EXPRESSION "--path_radius, --gpu and --no-gpu go with --buildings")
 add_test(NAME buildings_refuses_zero_path_radius COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --path_radius 0 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

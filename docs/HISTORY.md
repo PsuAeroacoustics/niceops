@@ -7,7 +7,9 @@ is, see [FIDELITY](FIDELITY.md).
 ## The urban model's search made faster, and a fast mode (October 2026)
 
 Eleven exact changes to the point-source model's path search and band sum left every ray and band
-level as it was, to the bit, and cut the search's time 5.4-5.8x on a pitched suburb and about 2x
+level as it was, to the bit with clang and on x86 builds without FMA (CI's). A GCC build with FMA,
+on arm64 or otherwise, moves the profile PE's band levels by about 4e-9 dB: its complex divides
+are now written out as compiler-rt's, where libgcc's are Smith's method. The changes cut the search's time 5.4-5.8x on a pitched suburb and about 2x
 on DigiCity. The largest was proving which part of an edge an image of two facades sees, where
 such images used to take the whole edge. `niceops --buildings` now takes `--path_radius`, the
 reach of each end's buildings, fixed at 150 m until now; below it is a fast mode, at a measured
