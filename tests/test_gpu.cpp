@@ -747,6 +747,8 @@ TEST_CASE("the GPU takes a tilted step's split as the CPU does", "[gpu]")
         return b;
     };
     const Buildings step({long_block(0.0, 10.0, 10.0), long_block(10.0, 20.0, 7.0)});
+    PointPathOptions split_on;
+    split_on.tilted_step_split = true;
     const std::vector<double> bands {125, 250, 500, 1000};
     const double c = 343.2;
     const std::vector<double> reflection(step.facades().size() * bands.size(), 0.9);
@@ -764,7 +766,7 @@ TEST_CASE("the GPU takes a tilted step's split as the CPU does", "[gpu]")
             for (int absorbed = 0; absorbed < 2; absorbed++)
             {
                 const Vec3 microphone(0.0, 30.0 + off * std::sin(t), 10.0 - 0.3 * 20.0 + off * std::cos(t));
-                const PointSourceField field(step, source, microphone);
+                const PointSourceField field(step, source, microphone, split_on);
                 const std::vector<double> absorption = absorbed ? absorbing : std::vector<double> {};
                 split += std::any_of(field.rays().begin(), field.rays().end(),
                         [](const PointRay& r) { return r.jump_weight != 0.0; });

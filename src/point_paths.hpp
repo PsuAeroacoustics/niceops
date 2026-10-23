@@ -201,12 +201,14 @@ struct PointPathOptions
     // the reference, and what the GPU takes.
     bool sample_shared_faces = true;
     // Split the jump at a tilted pair's line (TiltedStepSplit, THEORY 6.5
-    // "Across a step"); off, the field steps there, for comparison.  The
+    // "Across a step"); off by default, the field stepping there: the split's
+    // constants were fitted on one step, and on another it was worse above
+    // the line (FIDELITY, "Across a step").  The
     // split's microphones past the pair pay two more fields, at the foot of
     // the microphone on the line, wherever its fade at tilted_step_k_min is
     // above TiltedStepSplit::g_floor: callers set that to the run's lowest
     // wavenumber, and 0 takes the foot fields at every distance.
-    bool tilted_step_split = true;
+    bool tilted_step_split = false;
     double tilted_step_k_min = 0.0;
     // Per facade of the buildings, its relief (facade_relief.hpp), or null for
     // a plain facade; null for none.  A ray that reflects in a relief and

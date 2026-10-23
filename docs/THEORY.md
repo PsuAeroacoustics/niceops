@@ -1429,7 +1429,8 @@ and the fade's power were fitted against boundary-element solutions over one ste
 falls below $10^{-3}$ it is tapered to 0 and the two foot fields are not taken. A source on
 either side of the line takes it, the source before the first edge and the receiver past the
 second. $D$ is the difference of the two foot fields, ray by ray, and holds only where the rays add
-with their phases: summed in energy the twin rays each add, and the split is not taken.
+with their phases: summed in energy the twin rays each add, and the split is not taken. It is
+opt-in (`--tilted_step_split`): fitted over one step, on a second it was worse above the line.
 
 **The shared face sampled.** The integral is needed only where the second edge lies in the first's
 transition region. Its transition parameter there is

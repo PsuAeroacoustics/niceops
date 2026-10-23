@@ -45,6 +45,14 @@ std::vector<double> levels(const Buildings& city, const Vec3& source, const Vec3
     return out;
 }
 
+// The tilted-step split is opt-in; its tests take it on.
+PointPathOptions split_options()
+{
+    PointPathOptions options;
+    options.tilted_step_split = true;
+    return options;
+}
+
 // The shared face's aperture as it was first written, by the midpoint rule at
 // `division` points a wavelength: the reference for its Filon rule.
 std::complex<double> midpoint_aperture(const SharedFace& face, double sx, double sz, double rx, double rz, double k,
@@ -1692,8 +1700,8 @@ TEST_CASE("across the line through a stepped pair the field does not step", "[po
                 {
                     const Vec3 s = above_step_line(range, above);
                     const Vec3 lo = off_step_line(behind, -1e-4), hi = off_step_line(behind, 1e-4);
-                    const double step = line_source_level(city, s, hi, f, PointPathOptions())
-                            - line_source_level(city, s, lo, f, PointPathOptions());
+                    const double step = line_source_level(city, s, hi, f, split_options())
+                            - line_source_level(city, s, lo, f, split_options());
                     INFO(f << " Hz, source " << above << " degrees above the line, " << range << " m, microphone "
                            << behind << " m behind");
                     REQUIRE(std::abs(step) < 0.02);
@@ -1703,7 +1711,7 @@ TEST_CASE("across the line through a stepped pair the field does not step", "[po
                     // dB at 1 kHz).
                     double at[4];
                     for (int i = 0; i < 4; i++)
-                        at[i] = line_source_level(city, s, off_step_line(behind, (2 * i - 3) * 1e-3), f, PointPathOptions());
+                        at[i] = line_source_level(city, s, off_step_line(behind, (2 * i - 3) * 1e-3), f, split_options());
                     const double alone = 0.5 * (std::abs(at[1] - at[0]) + std::abs(at[3] - at[2]));
                     REQUIRE(std::abs(at[2] - at[1]) < alone + 0.002);
                     unsplit_worst = std::max(unsplit_worst, std::abs(line_source_level(city, s, hi, f, unsplit)
@@ -1715,8 +1723,8 @@ TEST_CASE("across the line through a stepped pair the field does not step", "[po
     const Vec3 s = above_step_line(60.0, 3.3);
     for (double behind : {2.0, 10.0})
     {
-        const std::vector<double> below = levels(city, s, off_step_line(behind, -1e-4), 0.9, 1.0);
-        const std::vector<double> over = levels(city, s, off_step_line(behind, 1e-4), 0.9, 1.0);
+        const std::vector<double> below = levels(city, s, off_step_line(behind, -1e-4), 0.9, 1.0, split_options());
+        const std::vector<double> over = levels(city, s, off_step_line(behind, 1e-4), 0.9, 1.0, split_options());
         for (std::size_t b = 0; b < bands.size(); b++)
         {
             INFO(bands[b] << " Hz, " << behind << " m behind");
@@ -1738,7 +1746,7 @@ TEST_CASE("past a stepped pair's ends the split goes on with its rays", "[point_
     {
         Vec3 lo = off_step_line(5.0, -1e-3), hi = off_step_line(5.0, 1e-3);
         lo.x = hi.x = x;
-        const std::vector<double> below = levels(city, s, lo, 0.9, 1.0), over = levels(city, s, hi, 0.9, 1.0);
+        const std::vector<double> below = levels(city, s, lo, 0.9, 1.0, split_options()), over = levels(city, s, hi, 0.9, 1.0, split_options());
         for (std::size_t b = 0; b < 3; b++)
         {
             INFO(bands[b] << " Hz, microphone at x = " << x);
@@ -1768,7 +1776,7 @@ TEST_CASE("where a stepped pair's line meets the floor the split goes on", "[poi
     {
         const Vec3 s(0.0, c.source_y, c.source_z), m(0.0, 20.0 + c.behind, c.z);
         INFO(c.f << " Hz, microphone " << c.behind << " m behind");
-        REQUIRE(std::abs(line_source_level(city, s, m, c.f, PointPathOptions()) - c.exact) < 0.8);
+        REQUIRE(std::abs(line_source_level(city, s, m, c.f, split_options()) - c.exact) < 0.8);
         REQUIRE(std::abs(line_source_level(city, s, m, c.f, unsplit) - c.exact) > 1.0);
     }
 }
@@ -1833,7 +1841,7 @@ TEST_CASE("by the line through a stepped pair the split field is the boundary-el
     for (const BlockCase& c : cases)
     {
         const Vec3 s(0.0, c.source_y, c.source_z), m(0.0, 20.0 + c.behind, c.z);
-        const double error = line_source_level(city, s, m, c.f, PointPathOptions()) - c.exact;
+        const double error = line_source_level(city, s, m, c.f, split_options()) - c.exact;
         INFO(c.f << " Hz, source " << c.source_y << " m, " << c.source_z << " m up, microphone " << c.behind
                   << " m behind, " << c.z << " m up");
         REQUIRE(std::abs(error) < 1.5);
@@ -1887,7 +1895,7 @@ TEST_CASE("past a stepped pair the split field is the boundary-element solution'
     for (const BlockCase& c : cases)
     {
         const Vec3 s(0.0, c.source_y, c.source_z), m(0.0, 20.0 + c.behind, c.z);
-        const double error = line_source_level(city, s, m, c.f, PointPathOptions()) - c.exact;
+        const double error = line_source_level(city, s, m, c.f, split_options()) - c.exact;
         INFO(c.f << " Hz, source " << c.source_y << " m, " << c.source_z << " m up, microphone " << c.behind
                   << " m behind, " << c.z << " m up");
         REQUIRE(std::abs(error) < 1.0);

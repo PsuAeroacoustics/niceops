@@ -4,6 +4,14 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## A step's split made opt-in (October 2026)
+
+The jump split across a step's line (below) is taken only with `--tilted_step_split` now, and a
+run's levels are again those before it: the level steps where a microphone crosses the line. Its two
+constants were fitted over one step; on a second it gained less overall and was worse above the
+line at 125 and 250 Hz (FIDELITY, "Across a step"), it roughly doubles the cost of the microphones
+it reaches, and no validated scene moved by more than 0.03 dB with it. It removes the seam in maps.
+
 ## A step's split reaches past the edges and the floor; a dip may be split between footprints (October 2026)
 
 The jump split across a step's line stopped where the microphone's foot left the edges or went
@@ -38,7 +46,7 @@ a step's line"), so the level is continuous there. Against boundary elements nea
 error went from 0.67 to 0.26 dB rms (352 cases) and from 1.21 to 0.47 (129 cases within a metre of
 it); the stored step cases from 0.53 to 0.48, EDGE's terrace from 0.32 to 0.27. Far above the line
 levels move by 0.04-0.08 dB rms. EDGE's LoD1 scenes and DigiCity do not move; EDGE's pitched
-scenes move by 0.21 dB at most. `--no_tilted_step_split` gives the old field.
+scenes move by 0.21 dB at most. It was made opt-in the same day (above).
 
 ## The urban model's search made faster, and a fast mode (October 2026)
 

@@ -141,9 +141,9 @@ public:
         // rather than the row's profile (PointPathOptions::profile_pe), for
         // comparison.
         bool no_profile_pe = false;
-        // Across a tilted pair's line, the rays' step rather than its jump
-        // split (PointPathOptions::tilted_step_split), for comparison.
-        bool no_tilted_step_split = false;
+        // Across a tilted pair's line, its jump split rather than the rays'
+        // step (PointPathOptions::tilted_step_split), opt-in.
+        bool tilted_step_split = false;
         // How far from a source or microphone, horizontally, buildings'
         // edges and walls enter its rays (PointPathOptions::radius), metres;
         // 0 for its default.  Less is a fast mode, at a cost in dB that

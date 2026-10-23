@@ -539,7 +539,7 @@ std::shared_ptr<const UrbanDistrict> UrbanDistrict::read(const std::string& file
     d.floor_reflection = 1.0 - input.floor_absorption;
     d.paths.sample_shared_faces = !input.exact_shared_faces;
     d.paths.profile_pe = !input.no_profile_pe;
-    d.paths.tilted_step_split = !input.no_tilted_step_split;
+    d.paths.tilted_step_split = input.tilted_step_split;
     if (input.path_radius > 0.0)
         d.paths.radius = input.path_radius;
     d.paths.edge_source = input.edge_source;

@@ -57,7 +57,9 @@ carried as the first edge's wave and faded by the second edge's Fresnel tail (TH
 across a step's line"). The step at the line 6.4 -> 0.001 dB; against the BEM 0.67 -> 0.26 dB rms
 (352 cases) and 1.21 -> 0.47 (129 near the line); no stored table worse, UE02 0.32 -> 0.27; EDGE's
 LoD1 scenes and DigiCity unmoved. The edge-source integral near the line and Albani's uniform
-double-diffraction coefficient were prototyped and not taken (internals, ground.md). Also left: chains of three and
+double-diffraction coefficient were prototyped and not taken (internals, ground.md). **Made opt-in
+(2026-10-23, the user's decision):** `--tilted_step_split`, off by default, fitted on one step and
+worse above the line on the second. Also left: chains of three and
 four edges over a row of roofs still step 3.9 dB in the roofs' plane where no profile is taken; the
 reflection boundary's 0.94 dB is unchanged (where it meets the plane, 10 m behind, 1.05-4.16 ->
 0.86-1.16 dB). **Chains partly closed (2026-10-23):** a dip (a touching roof lower than both its neighbours)
@@ -76,10 +78,10 @@ plane spike outside any profile. The tilted-step leftover is separate and unaffe
 (2026-10-23): a dip's floor split between footprints of one height is a dip; the tilted-step split
 goes on past the edges' ends and where its line meets the floor, and is not taken when rays are
 summed in energy; on a second step cross-section (14 m / 6 m) it gains less (0.57 -> 0.50 dB rms)
-and loses above the line at 125-250 Hz. Open harness
-defect: niceops-validation `urban/edge/rays.cpp` calls the three-argument `point_ray_amplitude`, which
-omits `row_profile_factor`, double counting a row's rays wherever a profile is taken (UE13 LoD1 moves
-up to 6.63 dB once corrected; fix is one factor, scratch `rays_fixed.cpp` in job tmp/i2/proto-chains-0).
+and loses above the line at 125-250 Hz. Harness
+defect, fixed in niceops-validation `c729c2d`: `urban/edge/rays.cpp` called the three-argument
+`point_ray_amplitude`, which omits `row_profile_factor`, double counting a row's rays wherever a profile
+is taken (UE13 LoD1 moves up to 6.63 dB once corrected); its RESULTS.md predates the fix until the re-score.
 
 **Item 3 closed (2026-10-22, not pursued).** Built (round trips across each street, faded out above
 k w = 120, the walls' reflection per band) and measured against new BEM: it held at single frequencies

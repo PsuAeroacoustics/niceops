@@ -1193,7 +1193,7 @@ cascade with both ends above its line, and there the level stepped where the mic
 the line, by up to 6.4 dB: 2.2-2.7 dB with the source 3.3° above it (0.35 at 13°, 0.13 at 43°).
 The direct ray and both edges' single diffractions are all at their boundaries there; mirroring
 the pair's term does not reach it (2.8 dB either way), and the mirror itself was 12 dB from the
-exact pair's field. The jump split takes it out: at 0.1 mm either side of the line, with sources
+exact pair's field. The jump split (opt-in, `--tilted_step_split`) takes it out: at 0.1 mm either side of the line, with sources
 0.5, 3.3 and 10° above it and 16° below, 20 and 60 m from the taller block's edge, microphones 2, 10
 and 20 m past the lower block, 125 Hz to 1 kHz (96 cases), the step is 0.001 dB at most. At 0.1 mm
 the microphone stands on the foot fields' own points, where the carry and the fade are 1, so that
@@ -1220,7 +1220,7 @@ the same cross-section, and UE02 above did not get worse. On a second cross-sect
 microphones 2 and 5 m past, 1 m below the line to 1 m above; 125-500 Hz; 72 cases; boundary
 elements at 45 a wavelength) the gain is smaller, 0.57 -> 0.50 dB rms, and above the line at 125
 and 250 Hz the split is worse (0.61 -> 0.70, 0.26 -> 0.39), below it better (0.96 -> 0.73, 0.71 ->
-0.54). Through the taller roof's plane with both ends above it (80
+0.54). That is why it is off by default. Through the taller roof's plane with both ends above it (80
 cases) it stays 0.10 dB rms (+0.27), and that plane's continuity 0.110 dB. On EDGE's LoD1 scenes
 against the FDTD nothing moves (all 13 runs bit for bit); on the pitched scenes (omnidirectional,
 no air) UE01, UE02 and UE05 move by 0.21 dB at most in a band and their scores against the

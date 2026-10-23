@@ -631,7 +631,7 @@ exactly. What to keep:
   function's kinks in a(beta) making high derivatives meaningless), and the first wedge's lit
   face's reflection in the aperture (over a 10 m roof at grazing it covers 4.5 cm of aperture).
 - **A tilted pair's line takes a jump split** (`TiltedStepSplit`, `PointSourceField::split_tilted_steps`,
-  `PointPathOptions::tilted_step_split`, `--no_tilted_step_split`; THEORY "The jump across a step's
+  `PointPathOptions::tilted_step_split`, `--tilted_step_split`, off by default; THEORY "The jump across a step's
   line"). Where the microphone crosses the line through a step's two edges the rays switch (the
   aperture and a blocked first-edge ray below, that ray and the cascade above) and the level
   stepped by up to 6.4 dB. The field's jump at the microphone's foot on the line is taken from two

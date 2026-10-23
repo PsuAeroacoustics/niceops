@@ -235,7 +235,7 @@ TEST_CASE("a run's shadows take the energy turbulence scatters into them", "[urb
 // A tilted step's split is the difference of the foot fields' twin rays, which
 // only cancel where the rays add with their phases.  Summed in energy the
 // twins would each add, so a run takes no split there: the same levels as
-// with --no_tilted_step_split, to the bit, where the coherent sum moves.
+// without --tilted_step_split, to the bit, where the coherent sum moves.
 TEST_CASE("a run summed in energy takes no tilted-step split", "[urban_point][point_paths]")
 {
     const std::vector<double> bands {125.0, 250.0, 500.0};
@@ -251,7 +251,7 @@ TEST_CASE("a run summed in energy takes no tilted-step split", "[urban_point][po
     UrbanDistrict::Input split, unsplit;
     split.units = unsplit.units = "m";
     split.to_meters = unsplit.to_meters = 1.0;
-    unsplit.no_tilted_step_split = true;
+    split.tilted_step_split = true;
     const auto with = UrbanDistrict::read(district_file, split), without = UrbanDistrict::read(district_file, unsplit);
     // The source 3.3 degrees above the pair's line, the microphones either
     // side of it 2 m past the lower block.

@@ -1335,7 +1335,7 @@ set_tests_properties(buildings_refuses_zero_path_radius PROPERTIES PASS_REGULAR_
 add_test(NAME buildings_refuses_no_spectra COMMAND niceops -d databases/S-76D_M3.nod -v databases/S-76D.json -t tracks/S-76D/197421AC.csv --frame_bearing 210 -b tests/data/urban_observers.csv -L warn --buildings tests/data/urban_buildings.csv -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_no_spectra PROPERTIES PASS_REGULAR_EXPRESSION "--buildings needs a database carrying per-band spectra")
 add_test(NAME buildings_refuses_lone_state_tolerance COMMAND ${URBAN_RUN} --state_tolerance 0.1 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(buildings_refuses_lone_state_tolerance PROPERTIES PASS_REGULAR_EXPRESSION "--exact_shared_faces, --no_profile_pe, --no_tilted_step_split, --edge_source, --state_tolerance, --path_radius, --gpu and --no-gpu go with --buildings")
+set_tests_properties(buildings_refuses_lone_state_tolerance PROPERTIES PASS_REGULAR_EXPRESSION "--exact_shared_faces, --no_profile_pe, --tilted_step_split, --edge_source, --state_tolerance, --path_radius, --gpu and --no-gpu go with --buildings")
 add_test(NAME buildings_refuses_lone_gpu COMMAND ${URBAN_RUN} --no-gpu -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_lone_gpu PROPERTIES PASS_REGULAR_EXPRESSION "--gpu and --no-gpu go with --buildings")
 # Each microphone's floor at its observer's z where it stands on no roof or wall: observers 5 ft up
