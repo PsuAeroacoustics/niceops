@@ -475,9 +475,14 @@ inline double end_surface_factor(std::size_t surface, bool on_face, const std::v
 // integral's (fresnel_tail) at x = k Delta, Delta the second edge's detour
 // for the microphone off the line.  A fitted transition, not a diffraction
 // coefficient: beta and the power were fitted against boundary-element
-// solutions over a 10 m to 7 m step (tests/test_point_paths.cpp), and hold on
-// the stored step tables and UE02.  Where g < g_floor the fade is 0 (a
-// cosine-squared taper to twice that), and the foot fields are not taken.
+// solutions over a 10 m to 7 m step (tests/test_point_paths.cpp).  The
+// stored step tables (the same cross-section) and UE02 did not get worse; on
+// a 14 m to 6 m step the gain is smaller (FIDELITY, "Across a step").  Where
+// g < g_floor the fade is 0 (a cosine-squared taper to twice that), and the
+// foot fields are not taken.  A foot whose fields would lie under the floor
+// or in a building slides back along the line to where they do not.  The
+// split is the difference of twin rays, and holds only where rays add with
+// their phases: a run summed in energy (RaySum::energy) takes none.
 struct TiltedStepSplit
 {
     static constexpr double beta = 0.85;

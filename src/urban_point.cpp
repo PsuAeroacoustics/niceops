@@ -669,6 +669,11 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     // lower edge is above its floor.
     if (first_band < last_band)
         paths.tilted_step_k_min = 2.0 * pi * centers[first_band] / std::pow(2.0, 1.0 / 6.0) / sound_speed;
+    // The split is the difference of the foot fields' twin rays, and only
+    // cancels where they add with their phases: summed in energy, every twin
+    // adds, so there is no split.
+    if (coherence.sum == RaySum::energy)
+        paths.tilted_step_split = false;
     first_band = std::min(first_band, last_band);
     const std::size_t nb = last_band - first_band, nm = microphones.size(), ns = states.size();
     constexpr double silence = -std::numeric_limits<double>::infinity();

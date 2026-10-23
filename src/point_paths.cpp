@@ -4553,12 +4553,19 @@ void PointSourceField::apply_profile(const Buildings& buildings, const Vec3& sou
     // edges sit on each other's shadow boundaries at the roofs' plane, and
     // only the 2-D field carries the grazing wave there.  Touching steps up
     // or down keep the cascades (internals/ground.md, "Over a row of roofs").
+    // A run of touching blocks with one top is one roof, so a dip whose
+    // floor is split between footprints (10/8/8/10) is still a dip.
     bool takes_profile = false;
-    for (std::size_t i = 1; i < blocks.size(); i++)
-        takes_profile = takes_profile || blocks[i].u0 > blocks[i - 1].u1 + 1e-6 * D;
-    for (std::size_t i = 1; i + 1 < blocks.size(); i++)
-        takes_profile = takes_profile
-                || (blocks[i].h < blocks[i - 1].h - 1e-6 && blocks[i].h < blocks[i + 1].h - 1e-6);
+    std::vector<double> tops;
+    for (std::size_t i = 0; i < blocks.size(); i++)
+    {
+        if (i > 0 && blocks[i].u0 > blocks[i - 1].u1 + 1e-6 * D)
+            takes_profile = true;
+        if (tops.empty() || std::abs(blocks[i].h - tops.back()) > 1e-6)
+            tops.push_back(blocks[i].h);
+    }
+    for (std::size_t i = 1; i + 1 < tops.size(); i++)
+        takes_profile = takes_profile || (tops[i] < tops[i - 1] && tops[i] < tops[i + 1]);
     if (!takes_profile)
         return;
     const double u_m = u_of(microphone.x, microphone.y);
@@ -4781,15 +4788,44 @@ void PointSourceField::split_tilted_steps(const Buildings& buildings, const Path
         if (!((s - g1.start).dot(t) < 0.0 && (microphone - g1.start).dot(t) > d1))
             continue;
         const double off = (microphone - g1.start).dot(n);
-        const Vec3 foot = microphone - off * n;
-        // The foot within both edges' lines, as far as each goes on.
-        const double a1 = (foot - g1.start).dot(g1.direction), a2 = (foot - g2.start).dot(g2.direction);
-        if (a1 < -g1.beyond[0] || a1 > g1.length + g1.beyond[1] || a2 < -g2.beyond[0]
-                || a2 > g2.length + g2.beyond[1])
-            continue;
-        const double d3 = normal_part(g2, foot - g2.start).norm();
+        Vec3 foot = microphone - off * n;
+        // Not gated on the foot's place along the edges: the pair is among
+        // `pairs` only while its rays reach the microphone, and past the
+        // edges' ends the foot fields hold the jump the rays still make, or
+        // none, so the split fades with the rays rather than at an end.
+        const Vec3 run = normal_part(g2, foot - g2.start);
+        double d3 = run.norm();
         if (!(d3 > 0.0))
             continue;
+        // A foot whose twins are not both in the open (the line gone into
+        // the floor or a building past the street) slides back along the line
+        // toward the second edge to the last point where they are, so the
+        // split carries the jump from where the line leaves the air rather
+        // than stopping there.
+        const auto in_open = [&](const Vec3& p) {
+            for (const double side : {1.0, -1.0})
+            {
+                const Vec3 at = p + (side * TiltedStepSplit::eps) * n;
+                if (!(at.z > 0.0) || buildings.buried(at))
+                    return false;
+            }
+            return true;
+        };
+        if (!in_open(foot))
+        {
+            const Vec3 u = run / d3;
+            const Vec3 base = foot - d3 * u;
+            double lo = std::min(d3, 1e-3), hi = d3;
+            if (!in_open(base + lo * u))
+                continue;
+            for (int i = 0; i < 60 && hi - lo > 1e-9; i++)
+            {
+                const double mid = 0.5 * (lo + hi);
+                (in_open(base + mid * u) ? lo : hi) = mid;
+            }
+            d3 = lo;
+            foot = base + lo * u;
+        }
         // The first edge's diffracted wave from the foot to the microphone:
         // its spreading's ratio, sqrt(s' / (s (s' + s))) at each, and the
         // path the microphone's ray adds.

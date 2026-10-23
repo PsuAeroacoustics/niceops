@@ -72,7 +72,11 @@ edge-source integral were measured and not taken (FIDELITY "Over a row of roofs"
 chains above the profile's k D fade (3-5 dB steps at 6.3-10 kHz and the spike; a Kirchhoff aperture
 march is the measured candidate, within 0.12 dB of the PE and ~3x cheaper than unfading it on long
 rows, but slower on one street and with no BEM above 1 kHz), touching steps that are not dips, and the
-plane spike outside any profile. The tilted-step leftover is separate and unaffected. Open harness
+plane spike outside any profile. The tilted-step leftover is separate and unaffected. Review fixes
+(2026-10-23): a dip's floor split between footprints of one height is a dip; the tilted-step split
+goes on past the edges' ends and where its line meets the floor, and is not taken when rays are
+summed in energy; on a second step cross-section (14 m / 6 m) it gains less (0.57 -> 0.50 dB rms)
+and loses above the line at 125-250 Hz. Open harness
 defect: niceops-validation `urban/edge/rays.cpp` calls the three-argument `point_ray_amplitude`, which
 omits `row_profile_factor`, double counting a row's rays wherever a profile is taken (UE13 LoD1 moves
 up to 6.63 dB once corrected; fix is one factor, scratch `rays_fixed.cpp` in job tmp/i2/proto-chains-0).

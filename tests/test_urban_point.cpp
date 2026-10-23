@@ -231,3 +231,53 @@ TEST_CASE("a run's shadows take the energy turbulence scatters into them", "[urb
     REQUIRE(gain[2] > gain[0]);
     REQUIRE(levels_stirred[1] == levels_quiet[1]);
 }
+
+// A tilted step's split is the difference of the foot fields' twin rays, which
+// only cancel where the rays add with their phases.  Summed in energy the
+// twins would each add, so a run takes no split there: the same levels as
+// with --no_tilted_step_split, to the bit, where the coherent sum moves.
+TEST_CASE("a run summed in energy takes no tilted-step split", "[urban_point][point_paths]")
+{
+    const std::vector<double> bands {125.0, 250.0, 500.0};
+    const Database database(write_omnidirectional_database(bands, 90.0, "niceops_omnidirectional_step.nod"));
+    const double radius = database.sphere_radius();
+    // The step of "a tilted step's split does not step": 10 m then 7 m.
+    const auto district_file = (std::filesystem::temp_directory_path() / "niceops_tilted_step.csv").string();
+    {
+        std::ofstream out(district_file);
+        out << "building,x,y,top\n1,-400,0,10\n1,400,0,10\n1,400,10,10\n1,-400,10,10\n"
+            << "2,-400,10,7\n2,400,10,7\n2,400,20,7\n2,-400,20,7\n";
+    }
+    UrbanDistrict::Input split, unsplit;
+    split.units = unsplit.units = "m";
+    split.to_meters = unsplit.to_meters = 1.0;
+    unsplit.no_tilted_step_split = true;
+    const auto with = UrbanDistrict::read(district_file, split), without = UrbanDistrict::read(district_file, unsplit);
+    // The source 3.3 degrees above the pair's line, the microphones either
+    // side of it 2 m past the lower block.
+    const double a = std::atan(0.3) + 3.3 * pi / 180.0, r = 60.0 + radius;
+    const Vec3 source(0.0, 10.0 - r * std::cos(a), 10.0 + r * std::sin(a));
+    const std::vector<Vec3> microphones {Vec3(0.0, 22.0, 6.45), Vec3(0.0, 22.0, 6.35)};
+    const std::vector<Database::SourceState> states {
+            database.source_state(source, Vec3(30.0, 0.0, 0.0), Vec3(0.0, 0.0, 1.0), 0.15, -4.0, 0.006)};
+    const std::vector<double> no_absorption(bands.size(), 0.0);
+    const std::vector<double> gains = a_weighting_gains(bands, BandLimits {});
+    for (const RaySum sum : {RaySum::energy, RaySum::coherent})
+    {
+        SourceCoherence coherence;
+        coherence.sum = sum;
+        std::vector<double> levels_with, bands_with, levels_without, bands_without;
+        with->levels(database, states, microphones, no_absorption.data(), gains, 0, bands.size(), 343.2, 1,
+                coherence, levels_with, &bands_with, nullptr, nullptr, 0.0);
+        without->levels(database, states, microphones, no_absorption.data(), gains, 0, bands.size(), 343.2, 1,
+                coherence, levels_without, &bands_without, nullptr, nullptr, 0.0);
+        double moved = 0.0;
+        for (std::size_t i = 0; i < bands_with.size(); i++)
+            moved = std::max(moved, std::abs(bands_with[i] - bands_without[i]));
+        INFO((sum == RaySum::energy ? "energy" : "coherent") << ": largest band change " << moved << " dB");
+        if (sum == RaySum::energy)
+            REQUIRE(bands_with == bands_without);
+        else
+            REQUIRE(moved > 0.1);
+    }
+}

@@ -1419,12 +1419,17 @@ $T$ the Fresnel integral's tail (`fresnel_tail`), $d_1$ the edges' separation an
 distance from the second edge, both in the plane normal to the edges: $x = \pi v^2/2$, $v$ the
 second edge's Fresnel parameter for the receiver off the line. The field is $p - \beta DCg$ on or
 above the line and $p + (1-\beta)DCg$ below it, $\beta = 0.85$, so it is continuous across the line
-by construction. $\beta$ puts most of the jump above the line, because the receiver's aperture is
+by construction. Along the line it lasts as long as the pair's rays reach the receiver, past the
+edges' ends too, and stops with them, where the rays themselves step. Where $F \pm \epsilon\hat n$
+would lie under the floor or in a building (the line gone into the ground or a wall past the
+street), $F$ slides back along the line toward the second edge to the last point where neither
+does, and $d_3$, $C$ and $g$ are taken from there. $\beta$ puts most of the jump above the line, because the receiver's aperture is
 the accurate field below it. This is a fitted transition, not a diffraction coefficient: $\beta$
 and the fade's power were fitted against boundary-element solutions over one step. Where $g$
 falls below $10^{-3}$ it is tapered to 0 and the two foot fields are not taken. A source on
 either side of the line takes it, the source before the first edge and the receiver past the
-second.
+second. $D$ is the difference of the two foot fields, ray by ray, and holds only where the rays add
+with their phases: summed in energy the twin rays each add, and the split is not taken.
 
 **The shared face sampled.** The integral is needed only where the second edge lies in the first's
 transition region. Its transition parameter there is
@@ -1795,7 +1800,7 @@ its two-dimensional field, from a parabolic equation over its cross-section. The
 plan line from the source to the microphone crosses: two or more flat-roofed footprints, each
 entered and left once through two of its sides, every crossed side within 1° of parallel to the
 first, and either a street between at least one pair or a dip: a touching roof lower than both its
-neighbours. In a dip as over a street the cascade's collinear edges sit on each other's shadow
+neighbours, a run of touching blocks with one top counting as one roof. In a dip as over a street the cascade's collinear edges sit on each other's shadow
 boundaries at the roofs' plane, and only the two-dimensional field carries the grazing wave over the
 rigid roofs; touching blocks that step only up or down keep their cascades. The rays it stands for are those whose points
 between the ends all lie on its roof edges, its roofs, its crossed walls or the floor, and that

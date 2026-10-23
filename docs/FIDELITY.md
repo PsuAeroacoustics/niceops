@@ -1195,7 +1195,11 @@ The direct ray and both edges' single diffractions are all at their boundaries t
 the pair's term does not reach it (2.8 dB either way), and the mirror itself was 12 dB from the
 exact pair's field. The jump split takes it out: at 0.1 mm either side of the line, with sources
 0.5, 3.3 and 10° above it and 16° below, 20 and 60 m from the taller block's edge, microphones 2, 10
-and 20 m past the lower block, 125 Hz to 1 kHz (96 cases), the step is 0.001 dB at most. Against
+and 20 m past the lower block, 125 Hz to 1 kHz (96 cases), the step is 0.001 dB at most. At 0.1 mm
+the microphone stands on the foot fields' own points, where the carry and the fade are 1, so that
+holds for any share or fade and says only that the sides' signs are right. At 1 mm either side the
+level changes across the line by 0.9 of what it changes over 2 mm on either side alone (up to
+0.16 dB at 1 kHz, 20 m past). Against
 boundary elements (45 elements a wavelength, within 0.15 dB of 30), error re the exact level, rms
 (worst), dB:
 
@@ -1210,8 +1214,13 @@ boundary elements (45 elements a wavelength, within 0.15 dB of 30), error re the
 
 By frequency over the 352, 0.74, 0.81, 0.60 and 0.47 dB rms become 0.25, 0.33, 0.25 and 0.19 at
 125 Hz to 1 kHz. Far above the line it costs 0.04-0.08 dB rms. Its share of the jump above the line
-(0.85) and its fade were fitted on these two sets, which share the geometry; the stored step tables
-and UE02 above did not get worse. Through the taller roof's plane with both ends above it (80
+(0.85) and its fade were fitted on these two sets, which share the geometry; the stored step tables,
+the same cross-section, and UE02 above did not get worse. On a second cross-section (a 14 m block
+8 m across over a 6 m one 15 m across, the line 28° down; sources 3-4° above it, 17 and 60 m off;
+microphones 2 and 5 m past, 1 m below the line to 1 m above; 125-500 Hz; 72 cases; boundary
+elements at 45 a wavelength) the gain is smaller, 0.57 -> 0.50 dB rms, and above the line at 125
+and 250 Hz the split is worse (0.61 -> 0.70, 0.26 -> 0.39), below it better (0.96 -> 0.73, 0.71 ->
+0.54). Through the taller roof's plane with both ends above it (80
 cases) it stays 0.10 dB rms (+0.27), and that plane's continuity 0.110 dB. On EDGE's LoD1 scenes
 against the FDTD nothing moves (all 13 runs bit for bit); on the pitched scenes (omnidirectional,
 no air) UE01, UE02 and UE05 move by 0.21 dB at most in a band and their scores against the
@@ -1219,6 +1228,21 @@ measurements by 0.03 dB at most (UE02's drone row +1.90 -> +1.87 dB mean, 3.30 r
 DigiCity's four microphones do not move. Over a grid of 1,617 microphones behind a 40 m step with
 the source 3.3° above the line, 78% take the two foot fields (the fade above 10^-3 at 125 Hz's lower
 edge), doubling the trace and the band levels' time there.
+
+Where the split could not take its foot fields it once stopped short, and the level stepped there.
+With blocks 40 m long and the source 15 m along them, the pair's rays reach microphones up to 2.6 m
+past the blocks' ends, and across the line 1-2 m past them the level stepped 1.0-2.1 dB at 125-500
+Hz with the split gated on the foot's place along the edges; taken wherever the pair's rays reach,
+it steps 0.01 dB. Where those rays stop, the level steps 1.3-1.9 dB along the edges, between the
+rays' own steps there above and below the line (0.5-0.9 and 1.4-2.0 dB). And where the line goes into the
+floor (23.3 m past the 10 m / 7 m step), a microphone 1.2 m up whose foot fields would lie under it
+lost the split, stepping 1.8 dB at 125 Hz; its foot now slides back along the line to the floor.
+Against boundary elements (45 a wavelength) either side of that point, 125 and 250 Hz (8 cases),
+the split is within 0.28 and 0.78 dB, the rays alone 2.0-2.4 dB low at 125 Hz and 1.1-1.4 high at
+250 (`where a stepped pair's line meets the floor the split goes on`). Summed in energy
+(`--ray_coherence energy`) the foot fields' twin rays each add rather than cancel; on the 10 m / 7 m
+step 2 m past, the split stepped 3.8 dB at the line and added 2.5 dB 0.3 m above it, and it is not
+taken there.
 A wall between two corners takes the same rule, the ends in front of it, and that is where the rule
 reaches ground microphones. On DigiCity's field 1.2 m up (3,000 of its microphones), with the
 loudspeaker at its hover spot 2 m up, 4.3% of the microphones move by more than 0.1 dB and none by
@@ -1302,7 +1326,10 @@ against the cascades' 3.32 and 3.01. Across the plane, 9.99 → 10.01 m, the cas
 +22.5 dB; the profile field steps 0.00 to +0.39, as the boundary elements do (0.00 to 0.39). With
 the microphone exactly at roof height the cascades took a third ray set; source below the plane,
 1 kHz, z = 9.99 / 10.00 / 10.01: −10.9 / +3.7 / −3.7 dB before, −10.9 / −10.7 / −10.5 after. A dip
-pair costs about 128 ms over 21 bands, as a street does, against about 1 ms before.
+pair costs about 128 ms over 21 bands, as a street does, against about 1 ms before. A dip whose
+floor is two footprints of one height (10/8/8/10, the same cross-section) was no dip block by block
+and kept the cascades, stepping 6.5 dB at 250 Hz and 7.2 at 1 kHz across the plane; a run of one
+top is now one roof, and it takes the 10/8/10 profile, within 0.01 dB.
 
 The dip is taken in no stored test and nowhere in DigiCity; of the EDGE scenes, only in UE05, a shed-roof terrace whose LoD1
 stand-ins (0.612 / 0.492 / 0.612 m, touching) are dips; UE05 has no FDTD. Against a 2-D BEM of that

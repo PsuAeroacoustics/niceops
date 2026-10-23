@@ -4,6 +4,19 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## A step's split reaches past the edges and the floor; a dip may be split between footprints (October 2026)
+
+The jump split across a step's line stopped where the microphone's foot left the edges or went
+under the floor, and the level stepped there instead: by 1.0-2.1 dB across the line just past the
+blocks' ends, and 1.8 dB where the line meets the floor. It now goes on as far as the pair's rays
+reach, and its foot slides back along the line to the floor; against boundary elements by the
+floor the error went from 2.0-2.4 dB to 0.3 at 125 Hz and from 1.1-1.4 to 0.65-0.78 at 250. Runs
+summed in energy took the split's twin rays as added energy, up to 3.8 dB too loud near the line;
+they take no split now. A dip whose low roof is two touching footprints of one height (10/8/8/10)
+was left to the cascades, stepping 6.5-7.2 dB through the roofs' plane; it takes the profile of the
+same dip in one piece. The stored tests, EDGE's LoD1 scenes against the FDTD, DigiCity and the
+verify cases do not move.
+
 ## A dip takes its row's profile (October 2026)
 
 A row of touching blocks with a roof lower than both its neighbours (a dip) was left to the

@@ -1673,7 +1673,12 @@ Vec3 off_step_line(double behind, double off)
 // sources 0.5, 3.3 and 10 degrees above the line and 16 below, 20 and 60 m
 // from the taller block's edge, microphones 2, 10 and 20 m past the lower
 // block, 0.1 mm either side, 125 Hz to 1 kHz: within 0.001 dB, and the band
-// levels as close.
+// levels as close.  At 0.1 mm the microphone is on the foot fields' own
+// points, where the carry and the fade are 1 and the sides agree for any
+// beta: that pins the sides' shares and signs.  At 1 mm, where the carry and
+// the fade are the microphone's own, the field changes across the line by no
+// more than it does over 2 mm on either side alone.  Neither says what beta
+// or the fade should be: that is the boundary-element tables' to say.
 TEST_CASE("across the line through a stepped pair the field does not step", "[point_paths]")
 {
     const Buildings city({long_block(0.0, 10.0, 10.0), long_block(10.0, 20.0, 7.0)});
@@ -1693,6 +1698,14 @@ TEST_CASE("across the line through a stepped pair the field does not step", "[po
                            << behind << " m behind");
                     REQUIRE(std::abs(step) < 0.02);
                     worst = std::max(worst, std::abs(step));
+                    // At 1 mm either side, no more than the field changes
+                    // over 2 mm on either side alone (0.9 of it, up to 0.16
+                    // dB at 1 kHz).
+                    double at[4];
+                    for (int i = 0; i < 4; i++)
+                        at[i] = line_source_level(city, s, off_step_line(behind, (2 * i - 3) * 1e-3), f, PointPathOptions());
+                    const double alone = 0.5 * (std::abs(at[1] - at[0]) + std::abs(at[3] - at[2]));
+                    REQUIRE(std::abs(at[2] - at[1]) < alone + 0.002);
                     unsplit_worst = std::max(unsplit_worst, std::abs(line_source_level(city, s, hi, f, unsplit)
                                                                     - line_source_level(city, s, lo, f, unsplit)));
                 }
@@ -1709,6 +1722,54 @@ TEST_CASE("across the line through a stepped pair the field does not step", "[po
             INFO(bands[b] << " Hz, " << behind << " m behind");
             REQUIRE(std::abs(over[b] - below[b]) < 0.02);
         }
+    }
+}
+
+// Blocks 40 m long and the source 15 m along them, so the pair's rays reach
+// microphones past the blocks' ends: the split goes on as far as they do,
+// not only where the microphone's foot is within the edges.  It stopped at
+// the ends, and the field stepped 1.0-2.1 dB across the line 1-2 m past them.
+TEST_CASE("past a stepped pair's ends the split goes on with its rays", "[point_paths]")
+{
+    const Buildings city({box(-20.0, 0.0, 20.0, 10.0, 10.0), box(-20.0, 10.0, 20.0, 20.0, 7.0)});
+    Vec3 s = above_step_line(60.0, 3.3);
+    s.x = -15.0;
+    for (double x : {19.0, 21.0, 22.0})
+    {
+        Vec3 lo = off_step_line(5.0, -1e-3), hi = off_step_line(5.0, 1e-3);
+        lo.x = hi.x = x;
+        const std::vector<double> below = levels(city, s, lo, 0.9, 1.0), over = levels(city, s, hi, 0.9, 1.0);
+        for (std::size_t b = 0; b < 3; b++)
+        {
+            INFO(bands[b] << " Hz, microphone at x = " << x);
+            REQUIRE(std::abs(over[b] - below[b]) < 0.05);
+        }
+    }
+}
+
+// Where the line through the step's far edges goes into the floor, 23.3 m
+// past the lower block, a microphone 1.2 m up still stands by it, and its
+// foot slides back along the line to where the line leaves the air.  The
+// split was dropped there, and the level stepped by up to 1.8 dB onto the
+// rays alone.  Boundary elements, 45 elements a wavelength: the split within
+// 0.8 dB on both sides of that point; the rays alone 1.1-2.4 dB out.
+TEST_CASE("where a stepped pair's line meets the floor the split goes on", "[point_paths]")
+{
+    const Buildings city({long_block(0.0, 10.0, 10.0), long_block(10.0, 20.0, 7.0)});
+    static const std::vector<BlockCase> cases {
+            {125, -46.3818, 30.5205, 22.8, 1.2, -3.48}, {125, -46.3818, 30.5205, 23.6, 1.2, -2.99},
+            {125, -46.3818, 30.5205, 23.7, 1.2, -2.93}, {125, -46.3818, 30.5205, 24.4, 1.2, -2.53},
+            {250, -46.3818, 30.5205, 22.8, 1.2, -6.25}, {250, -46.3818, 30.5205, 23.6, 1.2, -6.59},
+            {250, -46.3818, 30.5205, 23.7, 1.2, -6.63}, {250, -46.3818, 30.5205, 24.4, 1.2, -6.96},
+    };
+    PointPathOptions unsplit;
+    unsplit.tilted_step_split = false;
+    for (const BlockCase& c : cases)
+    {
+        const Vec3 s(0.0, c.source_y, c.source_z), m(0.0, 20.0 + c.behind, c.z);
+        INFO(c.f << " Hz, microphone " << c.behind << " m behind");
+        REQUIRE(std::abs(line_source_level(city, s, m, c.f, PointPathOptions()) - c.exact) < 0.8);
+        REQUIRE(std::abs(line_source_level(city, s, m, c.f, unsplit) - c.exact) > 1.0);
     }
 }
 

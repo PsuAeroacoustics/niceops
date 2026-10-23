@@ -657,8 +657,20 @@ exactly. What to keep:
   - **Any source side.** The source must project before the first edge and the microphone past the
     second; a source 16° below the line (the stored step table's) stepped 2.8 dB too.
   - **Only pairs straight from the source to the microphone** (`tilted_pairs`: no facade, floor or
-    roof reflection on the ray), each pair once. The foot must lie within both edges' lines (with
-    `Edge::beyond`), above the floor and outside every building, or the pair is skipped.
+    roof reflection on the ray), each pair once. Not gated on where the foot lies along the edges:
+    `tilted_pairs` holds a pair only while its rays reach the microphone, so past the edges' ends the
+    split goes on as far as they do (`past a stepped pair's ends the split goes on with its rays`).
+    Gating on the foot within the edges stopped it at the ends, and the level stepped 1.0-2.1 dB
+    across the line 1-2 m past them.
+  - **A foot whose fields would be under the floor or in a building slides back** along the line
+    toward the second edge (bisection) to the last point where both are in the open, and d3, the
+    carry and the fade are taken from there. Skipping the pair there stepped the level by 1.8 dB
+    where the line goes into the floor (`where a stepped pair's line meets the floor the split
+    goes on`). A foot on an edge (`PathEnd` throws) still skips the pair.
+  - **Not under `RaySum::energy`** (`UrbanDistrict::levels` turns `tilted_step_split` off): the
+    split is twin rays of opposite sign, which cancel only coherently; summed in energy they each
+    add (+3.8 dB at the line). The cone and the measured coherence keep it: the twins leave 0.2 mm
+    apart, well inside any pair's coherence (`a run summed in energy takes no tilted-step split`).
   - **The cutoff.** The fade is 0 below g = 1e-3 (a cosine-squared taper to 2e-3), which bounds the
     cut's step well under 0.01 dB. Callers set `tilted_step_k_min` to the lowest band's lower edge
     (`niceops`, `niceops_point_field`); a microphone whose fade is 0 there takes no foot fields.
@@ -666,7 +678,11 @@ exactly. What to keep:
   - **Under `--edge_source` it stays.** V1 with the split against the BEM (88 of tilt45's 352
     cases): 0.48 -> 0.26 dB rms.
   - **The constants were fitted on one cross-section** (the 10 m / 7 m step, sources 0.5-10° above
-    the line) and validated on the stored step tables and UE02, which did not get worse. Not taken:
+    the line). The stored step tables are the same cross-section, and they and UE02 did not get
+    worse, which is no independent validation; on a 14 m / 6 m step the gain is smaller and above the
+    line at 125-250 Hz it is a loss (FIDELITY "Across a step"). The continuity test at 0.1 mm holds
+    for any beta or fade (the microphone is on the foot points), and its 1 mm check only that the
+    carry and fade tend to 1. Not taken:
     the pair and the first edge's once ray by the edge-source integral near the line (continuous,
     but second-order BTM is 1-2 dB low near grazing on both sides, so worse on 3 of the 4 stored
     tables and UE02 1.25-1.97 dB rms against 0.32); and a uniform double-diffraction coefficient
@@ -801,14 +817,16 @@ exactly. What to keep:
     several streets. Score a row's change by band levels, not single frequencies. The patch and the
     BEM sets are in the session's scratch (`tmp/item3`).
   - **A dip takes the profile; touching steps up or down keep the cascades.** The gate in
-    `apply_profile` is a street or a dip (a touching roof lower than both its neighbours), not
+    `apply_profile` is a street or a dip (a touching roof lower than both its neighbours, a run of
+    touching blocks with one top being one roof, so 10/8/8/10 is the dip 10/8/10), not
     "touching": taking any touching row failed `over a step down to a lower roof the pair of edges
     is uniform` (rms > 0.8, its bound then) and `over a roof with both ends above its plane the
     field holds through it` (rms > 0.15). The earlier finding that touching
     blocks do no better (2-D, a step up 2.04 dB rms against the cascades' 1.99) was measured 1.2 m
     up across a monotone step, and still stands for steps. In a dip the cascades stepped up to
     22 dB across the roofs' plane (FIDELITY "Over a row of roofs", Dip); `a dip takes the row's
-    profile` pins it to BEM, `touching steps keep their cascades` the gate. So do a single block
+    profile` pins it to BEM, `a dip split between footprints is still a dip` the runs, and
+    `touching steps keep their cascades` the gate. So do a single block
     and a pitched roof.
   - **Callers that sum rays themselves must apply `row_profile_factor`.** The three-argument
     `point_ray_amplitude(ray, reflected, k)` omits it, so wherever a profile is taken the rays it

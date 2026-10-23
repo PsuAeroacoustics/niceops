@@ -192,7 +192,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--roofs` | With a CSV `--buildings`: pitched roofs (LoD2), one row per roof plane ([Buildings around the microphones](#buildings-around-the-microphones)). |
 | `--edge_source` | With `--buildings`: diffraction by the edge-source integral, on the CPU, as `niceops_point_field --edge_source` takes it. |
 | `--patch_size`, `--diffuse_radius` | With scattering facades: the diffuse field's patches' size at most (default 4 m (13.123 ft)), and the horizontal distance from a microphone within which a building scatters (default the rays' own reach, `--path_radius`). |
-| `--ray_coherence` | With `--buildings`: how rays leaving the source in different directions add. `cone`, `measured`, `coherent` or `energy`. Default `measured` where the database records its vehicle's coherence, `cone` otherwise ([Buildings around the microphones](#buildings-around-the-microphones)). |
+| `--ray_coherence` | With `--buildings`: how rays leaving the source in different directions add. `cone`, `measured`, `coherent` or `energy` (which takes no jump split across a step's line: see `--no_tilted_step_split`). Default `measured` where the database records its vehicle's coherence, `cone` otherwise ([Buildings around the microphones](#buildings-around-the-microphones)). |
 | `--coherence_angle` | With `--buildings`: the cone's half-angle, degrees, within which rays leaving the source add with their phases. Default 1. Given alone, it selects `cone`. |
 | `--phase_interval` | With `--buildings`, under `cone` or `measured`: also write the SEL at each end of this percent interval over the source's unknown phases, as `<output>_phase_lower` and `<output>_phase_upper`. |
 | `--state_tolerance` | With `--buildings`: dB by which the buildings' effect, taken linearly between the states evaluated, may miss a state's A-weighted level. Default 0.02; 0 evaluates every state ([Buildings around the microphones](#buildings-around-the-microphones)). |
@@ -1997,7 +1997,7 @@ absorption: a level roof replaces the floor, and reaches an end or an edge above
 may reflect with walls and the floor on either side, or next to the edge of a once-diffracted
 ray. A twice-diffracted ray may reflect in a level roof or a slope between either end, or both, and its edge.
 Over a row of two or more flat-roofed blocks with a street between, or touching with a roof lower
-than both its neighbours (a dip), crossed near grazing, where
+than both its neighbours (a dip; touching blocks of one height count as one roof), crossed near grazing, where
 the cascades over three and four roof edges do not settle, the rays over the row give way to its
 two-dimensional field from a parabolic equation over its cross-section ([THEORY §6.5](THEORY.md),
 "Over a row of roofs"), its floor bounces at the ends taking the floor as any ray's do. It is taken

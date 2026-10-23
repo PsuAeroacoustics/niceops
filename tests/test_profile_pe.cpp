@@ -445,14 +445,34 @@ TEST_CASE("a dip takes the row's profile", "[profile_pe][point_paths]")
     REQUIRE(step[0] > 5.0);
 }
 
-// Touching blocks that step up, down, or stand proud in the middle are no
-// dip, and keep their cascades: the point field is the one without the
+// A dip whose floor is two footprints of one height, 10/8/8/10, is the same
+// cross-section as 10/8/10 and takes the same profile: a run of touching
+// blocks with one top is one roof.  Tested block by block, it was no dip, and
+// kept the cascades, which stepped 6.5-7.2 dB across the roofs' plane.
+TEST_CASE("a dip split between footprints is still a dip", "[profile_pe][point_paths]")
+{
+    const Buildings dip({box(0, -4000, 10, 4000, 10), box(10, -4000, 20, 4000, 8), box(20, -4000, 30, 4000, 10)});
+    const Buildings split({box(0, -4000, 10, 4000, 10), box(10, -4000, 15, 4000, 8), box(15, -4000, 20, 4000, 8),
+            box(20, -4000, 30, 4000, 10)});
+    for (const ProfileCase& c : dip_cases())
+    {
+        const double k = 2.0 * pi * c.f / 343.2;
+        const Vec3 s(c.su, 0.0, c.sz), m(c.ru, 0.0, c.rz);
+        const PointLevel whole = point_level(dip, s, m, k, true, true), parts = point_level(split, s, m, k, true, true);
+        INFO(c.f << " Hz, source (" << c.su << ", " << c.sz << "), microphone (" << c.ru << ", " << c.rz << ")");
+        REQUIRE(parts.profiles > 0);
+        REQUIRE(std::abs(parts.level - whole.level) < 0.01);
+    }
+}
+
+// Touching blocks that step up, down, or stand proud in the middle, as one
+// block or as a run of two, are no dip, and keep their cascades: the point field is the one without the
 // profile, to the bit.
 TEST_CASE("touching steps keep their cascades", "[profile_pe][point_paths]")
 {
     PointPathOptions off;
     off.profile_pe = false;
-    for (const std::vector<double>& tops : std::vector<std::vector<double>> {{10, 12}, {12, 10}, {8, 10, 12}, {10, 12, 10}})
+    for (const std::vector<double>& tops : std::vector<std::vector<double>> {{10, 12}, {12, 10}, {8, 10, 12}, {10, 12, 10}, {10, 10, 12}, {10, 12, 12, 10}})
     {
         std::vector<Footprint> blocks;
         for (std::size_t i = 0; i < tops.size(); i++)
