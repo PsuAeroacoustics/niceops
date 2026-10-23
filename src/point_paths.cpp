@@ -1,6 +1,7 @@
 #include "point_paths.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -606,14 +607,40 @@ EdgePair edge_pair(const Edge& g1, const Edge& g2)
     return p;
 }
 
+// A set of source ends a twice-diffracted pair is tried from (twice_pair):
+// the source's image `which` at its k-th edge, off the floor or not, or its
+// bounce `which` at the bounce's k-th edge.  Whether those ends reach a pair's
+// first edge depends on nothing else, and the loops meet each set once per
+// microphone image.
+struct SourceEnds
+{
+    enum Kind : std::uint32_t { none, image, bounce };
+    Kind kind = none;
+    std::uint32_t which = 0, k = 0;
+    bool operator==(const SourceEnds& o) const { return kind == o.kind && which == o.which && k == o.k; }
+};
+
 // The edge pairs a field has met, by their two edges: worked out once per
 // field however many images meet them.  Open addressing, and a generation per
 // slot so that the next field starts empty without clearing; its memory
 // follows the pairs met, not the square of the edges near.  A reference it
-// returns lasts until the next get().
+// returns lasts until the next get() or met().
 class PairTable
 {
 public:
+    // A pair; which of the last source ends tried on it reached its first
+    // edge straight (bit k for end k), and whether any did by any way; and
+    // where the field keeps the facades between its edges, once worked out.
+    struct Met
+    {
+        static constexpr std::uint32_t no_list = std::numeric_limits<std::uint32_t>::max();
+        EdgePair pair;
+        SourceEnds from;
+        std::uint8_t reach = 0;
+        bool any = false;
+        std::uint32_t between = no_list;
+    };
+
     void start()
     {
         pairs_.clear();
@@ -625,6 +652,11 @@ public:
     }
 
     const EdgePair& get(const std::vector<Edge>& edges, std::size_t e1, std::size_t e2)
+    {
+        return met(edges, e1, e2).pair;
+    }
+
+    Met& met(const std::vector<Edge>& edges, std::size_t e1, std::size_t e2)
     {
         if (2 * (pairs_.size() + 1) > key_.size())
             grow();
@@ -639,7 +671,7 @@ public:
         stamp_[i] = generation_;
         key_[i] = key;
         value_[i] = static_cast<std::uint32_t>(pairs_.size());
-        pairs_.push_back(edge_pair(edges[e1], edges[e2]));
+        pairs_.push_back({edge_pair(edges[e1], edges[e2]), {}, 0, false, Met::no_list});
         return pairs_.back();
     }
 
@@ -677,7 +709,7 @@ private:
 
     std::vector<std::uint64_t> key_;
     std::vector<std::uint32_t> stamp_, value_;
-    std::vector<EdgePair> pairs_;
+    std::vector<Met> pairs_;
     std::uint32_t generation_ = 0;
     unsigned shift_ = 54;
 };
@@ -2337,22 +2369,24 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
     // it: the crossings fill the hull of the four from end to end.  Facades
     // farther off than the pair's own extent, at least 1 m, are not tried.
     // The floor is always a candidate, last.  Worked out once a field for each
-    // pair met.
+    // pair met.  `reach` is twice_pair's: which of the pair's last source ends
+    // reached its first edge this way.
     struct Between
     {
         std::size_t facade;
         Edge mirror;
         EdgePair pair;
         bool floor = false;
+        std::uint8_t reach = 0;
     };
-    std::unordered_map<std::uint64_t, std::vector<Between>> between_lists;
+    std::vector<std::vector<Between>> between_lists;
     std::vector<std::uint32_t> nearby;
-    auto between_of = [&](std::size_t e1, std::size_t e2) -> const std::vector<Between>& {
-        const std::uint64_t key = (static_cast<std::uint64_t>(e1) << 32) | static_cast<std::uint64_t>(e2);
-        const auto found = between_lists.find(key);
-        if (found != between_lists.end())
-            return found->second;
-        std::vector<Between>& list = between_lists[key];
+    auto between_of = [&](PairTable::Met& met, std::size_t e1, std::size_t e2) -> std::vector<Between>& {
+        if (met.between != PairTable::Met::no_list)
+            return between_lists[met.between];
+        assert(between_lists.size() < PairTable::Met::no_list);
+        met.between = static_cast<std::uint32_t>(between_lists.size());
+        std::vector<Between>& list = between_lists.emplace_back();
         const Edge& g1 = edges[e1];
         const Edge& g2 = edges[e2];
         const Vec3 ends[4] = {g1.start, g1.start + g1.length * g1.direction, g2.start,
@@ -2697,19 +2731,27 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
     };
     // Every way between e1 and e2 for a few ends on each side: straight, and
     // by each facade or the floor between them; the ends that cannot reach
-    // the pair's stretch ruled out first, for each way.
+    // the pair's stretch ruled out first, for each way.  `from` names the
+    // source's ends, so that a pair met again from them, as it is once per
+    // microphone image, takes their reach from the last time, and one they
+    // reach by no way goes no further.
     const auto twice_pair = [&](std::size_t e1, std::size_t e2, const TwiceEnd* as, int na, const TwiceEnd* bs,
-                                    int nb) {
-        const EdgePair& direct = pairs.get(edges, e1, e2);
+                                    int nb, const SourceEnds& from) {
+        PairTable::Met& met = pairs.met(edges, e1, e2);
+        const bool known = options.prune && met.from == from;
+        if (known && !met.any)
+            return;
+        const EdgePair& direct = met.pair;
         // The ray straight between the edges, then by each facade
         // between them, the second edge mirrored in it (h2) and
         // the microphone's image with it: the path unfolds about
         // the facade into a double diffraction of its own.
-        const std::vector<Between>* middle = options.max_between_reflections > 0 ? &between_of(e1, e2) : nullptr;
+        std::vector<Between>* middle = options.max_between_reflections > 0 ? &between_of(met, e1, e2) : nullptr;
         const std::size_t ways = 1 + (middle != nullptr ? middle->size() : 0);
+        bool any_way = false;
         for (std::size_t way = 0; way < ways; way++)
         {
-            const Between* via = way > 0 ? &(*middle)[way - 1] : nullptr;
+            Between* via = way > 0 ? &(*middle)[way - 1] : nullptr;
             const EdgePair& pair = via != nullptr ? via->pair : direct;
             // Which of the source's ends can reach the first edge's
             // segment, and the microphone's the second's: the pre-checks
@@ -2719,17 +2761,25 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
             if (options.prune)
             {
                 // The microphone's ends only where a source's end reaches:
-                // a pitched suburb's pairs mostly reach from neither.
-                bool any = false;
-                for (int k = 0; k < na; k++)
+                // a pitched suburb's pairs mostly reach from neither.  Every
+                // way is tried the first time, so each holds its bits.
+                std::uint8_t& bits = via != nullptr ? via->reach : met.reach;
+                if (!known)
                 {
-                    const PathEnd::View& p = *as[k].view;
-                    reach_a[k] = p.lit && keller_between(p, pair.on1, reach_slack)
-                            && keller_can_reach(p, pair.on1, reach_slack);
-                    any = any || reach_a[k];
+                    bits = 0;
+                    for (int k = 0; k < na; k++)
+                    {
+                        const PathEnd::View& p = *as[k].view;
+                        if (p.lit && keller_between(p, pair.on1, reach_slack)
+                                && keller_can_reach(p, pair.on1, reach_slack))
+                            bits |= static_cast<std::uint8_t>(1u << k);
+                    }
                 }
-                if (!any)
+                for (int k = 0; k < na; k++)
+                    reach_a[k] = (bits >> k & 1u) != 0;
+                if (bits == 0)
                     continue;
+                any_way = true;
                 for (int k = 0; k < nb; k++)
                 {
                     const PathEnd::View& p = *bs[k].view;
@@ -2742,6 +2792,15 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                     if (reach_a[ka] && reach_b[kb])
                         twice(as[ka], bs[kb], e1, e2, via, pair);
         }
+        if (options.prune)
+        {
+            met.from = from;
+            met.any = any_way;
+        }
+    };
+    const auto ends_index = [](std::size_t i) {
+        assert(i <= std::numeric_limits<std::uint32_t>::max());
+        return static_cast<std::uint32_t>(i);
     };
     // Each image's ends at its k-th edge, off the floor or not.
     const auto image_ends = [&](const Ends& end, std::size_t i, std::size_t k, int floors, TwiceEnd* out) {
@@ -2764,7 +2823,7 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                     if (e1 == e2)
                         continue;
                     image_ends(mic, j, k2, 2, bs);
-                    twice_pair(e1, e2, as, source_floors, bs, 2);
+                    twice_pair(e1, e2, as, source_floors, bs, 2, {SourceEnds::image, ends_index(i), k1});
                 }
             }
         }
@@ -2798,10 +2857,12 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                         if (eo == er)
                             continue;
                         image_ends(other, o, ko, other_floors, plain);
+                        // The source's plain ends are the main loop's, so
+                        // they share its name.
                         if (at_source)
-                            twice_pair(er, eo, roof, 1, plain, other_floors);
+                            twice_pair(er, eo, roof, 1, plain, other_floors, {SourceEnds::bounce, ends_index(r), kr});
                         else
-                            twice_pair(eo, er, plain, other_floors, roof, 1);
+                            twice_pair(eo, er, plain, other_floors, roof, 1, {SourceEnds::image, ends_index(o), ko});
                     }
                 }
             }
@@ -2824,7 +2885,8 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                     if (em == es)
                         continue;
                     bs[0] = {at_microphone.image, &at_microphone.views[km], &bare, 0, &at_microphone};
-                    twice_pair(es, em, as, 1, bs, 1);
+                    // The source's bounce, as in the bounce loop above.
+                    twice_pair(es, em, as, 1, bs, 1, {SourceEnds::bounce, ends_index(rs), ks});
                 }
             }
         }

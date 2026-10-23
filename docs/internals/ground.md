@@ -908,6 +908,20 @@ it bought:
   source's and microphone's places from their ends (`PathEnd::View`), so `keller_point` takes
   one square root an edge, not two, and a once-diffracted ray's Keller point takes none: both
   ends' places are the views', worked out once an end rather than once a pair of images.
+- **The source's reach pre-checks are kept on the pair** (`PairTable::Met`, `Between::reach`).
+  Which of the source's ends reach the first edge, by each way, depends only on those ends and
+  the way's `Side`, and the loops meet a pair from the same ends once per microphone image.
+  `twice_pair` takes a name for the ends (`SourceEnds`: an image at its k-th edge, or a bounce at
+  its k-th), and a pair met again from them reuses the bits. Where no way reached, it returns
+  before the between list. The mic-side bounce loop's plain source ends are the main loop's own
+  views, so they share its name. The same booleans come from the same inputs and the skipped
+  calls are ones that already made no ray, so the order of `twice` calls is unchanged and the
+  ray dumps did not change by a byte. All of it is under `prune`. The pair entry also indexes
+  its between list, which had been a second hash lookup on every call. Tracing on the suburb,
+  thread CPU, best of 3, alternated twice against the previous commit: 0.968 -> 0.937 s (mic 1),
+  1.153 -> 1.123 s (mic 300), 0.894 -> 0.868 s (mic 5), about 3%. DigiCity at 12 m: 0.115 ->
+  0.113 s. The prototype's 12% was measured before the chain, convex-piece and slope-edge cuts,
+  which removed most of the work this skips.
 - **A moving source traces each end once** (`PathEnd`, `--sources`). A field's image trees depend
   on the pair only through which near edges each image keeps, so an end traced with the edges
   near every end it will meet (its `partners`, `edges_near` over their points, ascending), each
