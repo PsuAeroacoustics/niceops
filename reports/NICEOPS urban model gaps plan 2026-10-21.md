@@ -51,7 +51,7 @@ over 0.1 dB with a source 12 m up (to 4.4 dB), its measured microphones by 0.04 
 scores do not move (UE20 and UE27 by 0.38 dB at most in a band). Left: a
 step's tilted pair with the source just above its line steps 2.2-2.7 dB where the microphone crosses
 the line; there the direct ray and both single diffractions are at their boundaries at once, the
-mirror is 12 dB off, and neither the cascade nor the mirror fixes it. **Done (2026-10-23):**
+mirror is 12 dB off, and neither the cascade nor the mirror fixes it. **Done (2026-10-23, `283e07d`):**
 the field's jump at the microphone's foot on the line is split between the sides, 0.85 above,
 carried as the first edge's wave and faded by the second edge's Fresnel tail (THEORY "The jump
 across a step's line"). The step at the line 6.4 -> 0.001 dB; against the BEM 0.67 -> 0.26 dB rms
