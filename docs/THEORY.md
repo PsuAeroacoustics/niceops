@@ -1365,7 +1365,7 @@ A wall between two corners is the same problem turned on its side, the ends in f
 beyond its corners, and takes the same rule. The mirror needs the face along the line between the
 edges. Across a step (below), the near edge's
 transition at the far one is not odd in that sense: the mirrored field was 12 dB from the
-boundary-element solution there, and the cascade stands.
+boundary-element solution there; the cascade stands, and the jump at the line is split (below).
 
 **Across a step.** Two parallel edges that share no face -- a ridge above a step down to a lower
 roof's edge, a taller block's far edge above a lower neighbour's -- take the same integral where the
@@ -1392,6 +1392,39 @@ that point, which judges a roof's edge within $10^{-9}$ m: an end in the plane i
 the ray over the first edge alone is blocked, and a receiver on the boundary is in the reflection,
 where the roof's reflected ray is traced. With $\delta_1 = \delta_2 = 0$ all of
 this is the shared face's.
+
+**The jump across a step's line.** Where the receiver crosses the line through the two edges the
+rays change: below it the pair is the receiver's aperture and the first edge's ray is blocked;
+above it that ray appears beside the pair's cascade. With the second edge deep in the first's
+transition, the once-diffracted ray (distance parameter $s_1(s_2+s_3)/S$) is not the jump the
+aperture and the cascade make (theirs $s_1s_2/(s_1+s_2)$ and Kirchhoff's), and the level stepped by
+up to 6 dB with the source near the line. The jump is split between the two sides. With $\hat n$
+the normal to the plane through both edges, toward the open air, the receiver $R$ off it by
+$o = (R - E_1)\cdot\hat n$, and its foot $F = R - o\,\hat n$, the field's jump there is
+
+$$
+D = p(F + \epsilon\hat n) - p(F - \epsilon\hat n), \qquad \epsilon = 10^{-4}\ \mathrm{m},
+$$
+
+each $p$ the whole field as the rays give it. It is carried from $F$ to $R$ as the first edge's
+diffracted wave, $C = \sqrt{s'_R\,e_F(s'_F + e_F) / (s'_F\,e_R(s'_R + e_R))}\;e^{ik\Delta}$, $s'$ and
+$e$ the distances from the source and to the end from the edge's Keller point for each, $\Delta$ the
+difference in their paths; and faded by
+
+$$
+g = \left(\frac{|T(x)|}{|T(0)|}\right)^{2}, \qquad x = k\sin\beta\,\frac{h^2(d_1+d_3)}{2d_1d_3},\quad h = |o|\,\frac{d_1}{d_1+d_3},
+$$
+
+$T$ the Fresnel integral's tail (`fresnel_tail`), $d_1$ the edges' separation and $d_3$ the foot's
+distance from the second edge, both in the plane normal to the edges: $x = \pi v^2/2$, $v$ the
+second edge's Fresnel parameter for the receiver off the line. The field is $p - \beta DCg$ on or
+above the line and $p + (1-\beta)DCg$ below it, $\beta = 0.85$, so it is continuous across the line
+by construction. $\beta$ puts most of the jump above the line, because the receiver's aperture is
+the accurate field below it. This is a fitted transition, not a diffraction coefficient: $\beta$
+and the fade's power were fitted against boundary-element solutions over one step. Where $g$
+falls below $10^{-3}$ it is tapered to 0 and the two foot fields are not taken. A source on
+either side of the line takes it, the source before the first edge and the receiver past the
+second.
 
 **The shared face sampled.** The integral is needed only where the second edge lies in the first's
 transition region. Its transition parameter there is

@@ -94,7 +94,8 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
     for (std::size_t i = 0; i < order.size(); i++)
         order[i] = i;
     // The order sub_band_problems sums them in.
-    std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) { return rays[a].length < rays[b].length; });
+    std::sort(order.begin(), order.end(),
+            [&](std::size_t a, std::size_t b) { return summed_length(rays[a]) < summed_length(rays[b]); });
 
     // The problems, and every wavenumber an aperture is wanted at.
     std::vector<double> centres;
@@ -119,9 +120,11 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
         throw std::invalid_argument("pack_point_rays: the floor's admittance is not three per band");
     const double floor_reflection = floor.impedance() ? 1.0 : floor.reflection;
     // A relief's share changes across a band too.
-    // So does a row's profile field (PointRay::profile), computed here.
+    // So does a row's profile field (PointRay::profile), computed here, and
+    // a tilted step's jump split (PointRay::jump_weight), whose fade the
+    // CPU takes at each sub-band's middle wavenumber too.
     set.complex_reflections = floor.impedance() || field.reliefs() != nullptr
-            || std::any_of(rays.begin(), rays.end(), [](const PointRay& r) { return r.profile; });
+            || std::any_of(rays.begin(), rays.end(), [](const PointRay& r) { return r.profile || r.jump_weight != 0.0; });
     std::vector<double> frequencies(centres.size());
     for (std::size_t j = 0; j < centres.size(); j++)
         frequencies[j] = centres[j] * sound_speed / (2.0 * pi);
@@ -141,7 +144,9 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
         const PointRay& ray = rays[index];
         GpuRay r {};
         r.reflected = static_cast<uint32_t>(set.reflected.size());
-        r.length = static_cast<float>(ray.length);
+        // Its absorption over the length it is summed at, a split's carry
+        // included; its terms' own phases are its own length's.
+        r.length = static_cast<float>(summed_length(ray));
         if (floor.plate)
         {
             double elevation, azimuth;
@@ -164,6 +169,9 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
             if (ray.row_share > 0.0)
                 for (std::size_t j = 0; j < centres.size(); j++)
                     floor_factor[j] *= row_profile_factor(ray, centres[j]);
+            if (ray.jump_weight != 0.0)
+                for (std::size_t j = 0; j < centres.size(); j++)
+                    floor_factor[j] *= jump_factor(ray, centres[j]);
         }
         for (std::size_t band = 0; band < nb; band++)
         {
@@ -282,7 +290,7 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
                 put_wedge(wedge_term(ray, w), 1.0);
         }
         set.rays.push_back(r);
-        set.length.push_back(ray.length);
+        set.length.push_back(summed_length(ray));
     }
     plan_nodes(set.length, set.k1, set.k2, set.nodes);
     // The quadrature integrates every pair with its phases.

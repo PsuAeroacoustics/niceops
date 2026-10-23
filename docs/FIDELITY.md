@@ -1156,10 +1156,14 @@ to 1 µm above (125 Hz, the source 0.3° over the taller roof, the microphone 40
 0.15 dB or less with the source 2° over it or higher), across the reflection boundary by 0.94 dB at
 most, 125-1000 Hz: the switch from the aperture to the cascade there. Where the two boundaries meet,
 10 m behind the step, the level steps by 0.86-1.16 dB. Across the line through the two edges the uniform form's
-level steps by 0.45 to 2.1 dB from 1 mm below to 1 mm above, the cascade's by 0.02 to 1.5. The
-worst is a source 0.26° over the taller block's roof: the end correction is 2.1 there, the
-first wedge's coefficient taking that roof's reflection as if the roof went on, which the
-three edges over it (its near edge too) would put right and two do not. Where the microphone's
+level stepped by 0.45 to 2.1 dB from 1 mm below to 1 mm above (the cascade's by 0.02 to 1.5),
+the worst a source 0.26° over the taller block's roof, where the end correction is 2.1, the
+first wedge's coefficient taking that roof's reflection as if the roof went on. The jump split
+(THEORY §6.5, "The jump across a step's line") takes the step out: 0.001 dB at most at 0.1 mm
+either side (next paragraph but one). Of the first row, the 98 cases the tests hold go from 0.53 dB
+rms, +2.16 worst, to 0.48 and +1.75 with it, the 72 above the lower roof stay 0.26 (−1.00), and
+UE02's six terrace cases go from 0.32 rms (−0.53) to 0.27 (−0.44); the row itself is not
+re-measured. Where the microphone's
 image in the step's own wall lies behind the first edge, or the source sees the lower roof's plane
 while the microphone takes that roof's reflection, the cascade stands; THEORY has why.
 
@@ -1185,13 +1189,36 @@ the two forms agree: with the source 0.5-40° over the roof 60 m off and the mic
 10.5-25 m up (336 cases), the uniform form is 0.18 dB rms (worst −1.73) and the cascade 0.68
 (worst −5.10); from 20° up they are within 0.03 dB rms of each other (0.36 and 0.33 at 20°, 0.14 and
 0.13 at 40°), and the cascade is off only below 5°, by up to 5 dB. A step's tilted pair keeps the
-cascade with both ends above its line, and there the level still steps where the microphone crosses
-the line: by 2.2-2.7 dB with the source 3.3° above it (0.35 at 13°, 0.13 at 43°), and against
-boundary elements with the source 0.5-10° above the line and the microphone from 2.4 m below it to
-3.4 m above (352 cases), 0.67 dB rms and −4.2 at worst, 2.8 rms 0.1 m above the line with the source
-0.5° above it. The direct ray
-and both edges' single diffractions are all at their boundaries there; mirroring the pair's term
-does not reach it (2.8 dB either way), and the mirror itself was 12 dB from the exact pair's field.
+cascade with both ends above its line, and there the level stepped where the microphone crosses
+the line, by up to 6.4 dB: 2.2-2.7 dB with the source 3.3° above it (0.35 at 13°, 0.13 at 43°).
+The direct ray and both edges' single diffractions are all at their boundaries there; mirroring
+the pair's term does not reach it (2.8 dB either way), and the mirror itself was 12 dB from the
+exact pair's field. The jump split takes it out: at 0.1 mm either side of the line, with sources
+0.5, 3.3 and 10° above it and 16° below, 20 and 60 m from the taller block's edge, microphones 2, 10
+and 20 m past the lower block, 125 Hz to 1 kHz (96 cases), the step is 0.001 dB at most. Against
+boundary elements (45 elements a wavelength, within 0.15 dB of 30), error re the exact level, rms
+(worst), dB:
+
+| Cases | Without the split | Split |
+| --- | --- | --- |
+| Sources 0.5-10° above the line 60 m off, microphones 5 and 10 m past the lower block, 2.4 m below the line to 3.4 m above, 125 Hz-1 kHz (352) | 0.67 (−4.24) | 0.26 (+0.86) |
+| The same, 0.1 m below / above the line | 0.45 / 1.68 | 0.21 / 0.17 |
+| The same, 2.4 m / 3.4 m above the line | 0.10 / 0.14 | 0.18 / 0.17 |
+| The same by the edge-source integral (88 of the 352) | 0.48 (−2.18) | 0.26 (+0.76) |
+| Sources 1 and 3.3° above the line, 20 and 60 m off, microphones 2, 10 and 20 m past, within 1.05 m of the line, 125 and 250 Hz (129) | 1.21 (−4.05) | 0.47 (−1.15) |
+| The same, 0.02 m below / above the line | 0.78 / 1.81 | 0.61 / 0.55 |
+
+By frequency over the 352, 0.74, 0.81, 0.60 and 0.47 dB rms become 0.25, 0.33, 0.25 and 0.19 at
+125 Hz to 1 kHz. Far above the line it costs 0.04-0.08 dB rms. Its share of the jump above the line
+(0.85) and its fade were fitted on these two sets, which share the geometry; the stored step tables
+and UE02 above did not get worse. Through the taller roof's plane with both ends above it (80
+cases) it stays 0.10 dB rms (+0.27), and that plane's continuity 0.110 dB. On EDGE's LoD1 scenes
+against the FDTD nothing moves (all 13 runs bit for bit); on the pitched scenes (omnidirectional,
+no air) UE01, UE02 and UE05 move by 0.21 dB at most in a band and their scores against the
+measurements by 0.03 dB at most (UE02's drone row +1.90 -> +1.87 dB mean, 3.30 rms either way);
+DigiCity's four microphones do not move. Over a grid of 1,617 microphones behind a 40 m step with
+the source 3.3° above the line, 78% take the two foot fields (the fade above 10^-3 at 125 Hz's lower
+edge), doubling the trace and the band levels' time there.
 A wall between two corners takes the same rule, the ends in front of it, and that is where the rule
 reaches ground microphones. On DigiCity's field 1.2 m up (3,000 of its microphones), with the
 loudspeaker at its hover spot 2 m up, 4.3% of the microphones move by more than 0.1 dB and none by

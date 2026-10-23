@@ -1335,12 +1335,14 @@ PointSourceField::PointSourceField(const Buildings& buildings, const Vec3& sourc
     const PathEnd source_end(buildings, source, true, options, edges_near(buildings, microphone, options.radius));
     const PathEnd microphone_end(buildings, microphone, false, options, edges_near(buildings, source, options.radius));
     trace(buildings, source_end, microphone_end, options);
+    const auto pairs = tilted_pairs();
     apply_profile(buildings, source, microphone, options);
     for (PointRay& ray : rays_)
     {
         ray.source_surface = source_end.surface();
         ray.microphone_surface = microphone_end.surface();
     }
+    split_tilted_steps(buildings, source_end, pairs, microphone, options);
 }
 
 PointSourceField::PointSourceField(const Buildings& buildings, const PathEnd& source, const PathEnd& microphone,
@@ -1353,12 +1355,14 @@ PointSourceField::PointSourceField(const Buildings& buildings, const PathEnd& so
     , edge_source_threads_(options.edge_source_threads)
 {
     trace(buildings, source, microphone, options);
+    const auto pairs = tilted_pairs();
     apply_profile(buildings, source.point(), microphone.point(), options);
     for (PointRay& ray : rays_)
     {
         ray.source_surface = source.surface();
         ray.microphone_surface = microphone.surface();
     }
+    split_tilted_steps(buildings, source, pairs, microphone.point(), options);
 }
 
 void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_end, const PathEnd& microphone_end,
@@ -2906,8 +2910,11 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                 pair = true;
             }
             else
+            {
                 pair = via == nullptr
                         && tilted_pair(buildings, g1, h2, q1, width, x, z, term.face);
+                ray.tilted = pair;
+            }
             const Vec3 sa = pa - q1, sb = pb - q1;
             term.sx = sa.dot(x);
             term.sz = sa.dot(z);
@@ -3701,7 +3708,21 @@ void relief_factors(const PointRay& ray, const std::vector<const FacadeRelief*>&
 std::complex<double> point_ray_amplitude(const PointRay& ray, const std::vector<double>& reflection,
         double floor_reflection, double k)
 {
-    return row_profile_factor(ray, k) * point_ray_amplitude(ray, reflected_amplitude(ray, reflection, floor_reflection), k);
+    const std::complex<double> a
+            = row_profile_factor(ray, k) * point_ray_amplitude(ray, reflected_amplitude(ray, reflection, floor_reflection), k);
+    return ray.jump_weight != 0.0 ? a * jump_factor(ray, k) * std::polar(1.0, k * ray.jump_delay) : a;
+}
+
+double tilted_step_fade(double x)
+{
+    const double g = std::pow(2.0 * std::abs(fresnel_tail(x)), TiltedStepSplit::fade_power);
+    const double lo = TiltedStepSplit::g_floor;
+    if (!(g > lo))
+        return 0.0;
+    if (g >= 2.0 * lo)
+        return g;
+    const double s = std::sin(0.5 * pi * (g - lo) / lo);
+    return g * s * s;
 }
 
 std::complex<double> point_ray_amplitude(const PointRay& ray, double reflected, double k)
@@ -4233,12 +4254,13 @@ void PointSourceField::sub_band_problems(const std::vector<double>& reflection, 
     std::vector<std::size_t> order(rays_.size());
     for (std::size_t i = 0; i < order.size(); i++)
         order[i] = i;
-    std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) { return rays_[a].length < rays_[b].length; });
+    std::sort(order.begin(), order.end(),
+            [&](std::size_t a, std::size_t b) { return summed_length(rays_[a]) < summed_length(rays_[b]); });
     if (order_out != nullptr)
         *order_out = order;
     std::vector<double> length(order.size());
     for (std::size_t i = 0; i < order.size(); i++)
-        length[i] = rays_[order[i]].length;
+        length[i] = summed_length(rays_[order[i]]);
     std::vector<std::complex<double>> amplitude(order.size());
     std::vector<double> band_reflection(facade_count_);
     // The edge-source integral's factors, every sub-band at once.
@@ -4348,7 +4370,7 @@ void PointSourceField::sub_band_problems(const std::vector<double>& reflection, 
                     amplitude[i] = shared_face_amplitude(ray, band_reflected[i], kc, shared[i][3 * band + part]);
                 else
                     amplitude[i] = plain[i * problems + 3 * band + part];
-                amplitude[i] *= row_profile_factor(ray, kc);
+                amplitude[i] *= row_profile_factor(ray, kc) * jump_factor(ray, kc);
             }
             for (std::size_t i = 0; i < floor_factor.size(); i++)
                 if (!floor_factor[i].empty())
@@ -4703,6 +4725,140 @@ void PointSourceField::apply_profile(const Buildings& buildings, const Vec3& sou
     }
     for (PointRay& ray : parts)
         rays_.push_back(std::move(ray));
+}
+
+std::vector<std::pair<std::size_t, std::size_t>> PointSourceField::tilted_pairs() const
+{
+    std::vector<std::pair<std::size_t, std::size_t>> pairs;
+    for (const PointRay& ray : rays_)
+        if (ray.tilted && ray.facades.empty() && ray.floor == 0 && ray.roof_facades.empty())
+        {
+            const std::pair<std::size_t, std::size_t> p(ray.edge_source.edges[0], ray.edge_source.edges[1]);
+            if (std::find(pairs.begin(), pairs.end(), p) == pairs.end())
+                pairs.push_back(p);
+        }
+    return pairs;
+}
+
+void PointSourceField::split_tilted_steps(const Buildings& buildings, const PathEnd& source,
+        const std::vector<std::pair<std::size_t, std::size_t>>& pairs, const Vec3& microphone,
+        const PointPathOptions& options)
+{
+    if (!options.tilted_step_split || pairs.empty())
+        return;
+    // The foot fields are the field as it is taken without the split: they
+    // must not split again.
+    PointPathOptions plain = options;
+    plain.tilted_step_split = false;
+    const auto& edges = buildings.edges();
+    const Vec3& s = source.point();
+    std::vector<PointRay> added;
+    for (const auto& [e1, e2] : pairs)
+    {
+        const Edge& g1 = edges[e1];
+        const Edge& g2 = edges[e2];
+        // The plane through the two edges: t across it from the first edge to
+        // the second, normal to them, and n off it into the open air, the
+        // side away from the faces below the line (tilted_pair).
+        const Vec3 across = normal_part(g1, g2.start - g1.start);
+        const double d1 = across.norm();
+        if (!(d1 > 0.0))
+            continue;
+        const Vec3 t = across / d1;
+        Vec3 n = g1.direction.cross(t);
+        double below, above;
+        faces_either_side(g1, t, n, below, above);
+        if (below > above)
+            n = -1.0 * n;
+        // The source before the first edge, the microphone past the second.
+        if (!((s - g1.start).dot(t) < 0.0 && (microphone - g1.start).dot(t) > d1))
+            continue;
+        const double off = (microphone - g1.start).dot(n);
+        const Vec3 foot = microphone - off * n;
+        // The foot within both edges' lines, as far as each goes on.
+        const double a1 = (foot - g1.start).dot(g1.direction), a2 = (foot - g2.start).dot(g2.direction);
+        if (a1 < -g1.beyond[0] || a1 > g1.length + g1.beyond[1] || a2 < -g2.beyond[0]
+                || a2 > g2.length + g2.beyond[1])
+            continue;
+        const double d3 = normal_part(g2, foot - g2.start).norm();
+        if (!(d3 > 0.0))
+            continue;
+        // The first edge's diffracted wave from the foot to the microphone:
+        // its spreading's ratio, sqrt(s' / (s (s' + s))) at each, and the
+        // path the microphone's ray adds.
+        double ta, ra, path[2], spread[2], sin_beta = 1.0;
+        {
+            const Edge::Projection ps = g1.project(s);
+            ta = ps.along;
+            ra = ps.normal.norm();
+        }
+        bool reached = true;
+        for (int i = 0; i < 2; i++)
+        {
+            const Vec3 end = i == 0 ? foot : microphone;
+            const Edge::Projection pe = g1.project(end);
+            double at;
+            if (!keller_point(ta, ra, pe.along, pe.normal.norm(), at))
+            {
+                reached = false;
+                break;
+            }
+            const Vec3 q = g1.start + at * g1.direction;
+            const double sp = (s - q).norm(), se = (end - q).norm();
+            path[i] = sp + se;
+            spread[i] = std::sqrt(sp / (se * (sp + se)));
+            sin_beta = std::clamp(normal_part(g1, q - s).norm() / sp, 1e-6, 1.0);
+        }
+        if (!reached || !(spread[0] > 0.0))
+            continue;
+        // The second edge's detour for the microphone off the line, in the
+        // plane normal to the edges at the wavenumber there, k sin(beta):
+        // k Delta = (pi / 2) v^2, v its Fresnel parameter, per unit k.
+        const double h = std::abs(off) * d1 / (d1 + d3);
+        const double x = 0.5 * h * h * sin_beta * (d1 + d3) / (d1 * d3);
+        if (options.tilted_step_k_min > 0.0 && tilted_step_fade(x * options.tilted_step_k_min) == 0.0)
+            continue;
+        const double carry = spread[1] / spread[0], delay = path[1] - path[0];
+        // On the line counts as above it, as the rays take it.
+        const bool over = off > -1e-9;
+        const double share = over ? -TiltedStepSplit::beta : 1.0 - TiltedStepSplit::beta;
+        for (int side = 0; side < 2; side++)
+        {
+            const Vec3 at = foot + ((side == 0 ? 1.0 : -1.0) * TiltedStepSplit::eps) * n;
+            if (!(at.z > 0.0) || buildings.buried(at))
+            {
+                added.clear();
+                break;
+            }
+            try
+            {
+                const PathEnd end(buildings, at, false, plain, source.near());
+                const std::vector<std::size_t> near_edges = joined(source.near(), end.near());
+                const bool shared = std::includes(source.candidates().begin(), source.candidates().end(),
+                        near_edges.begin(), near_edges.end());
+                const PointSourceField field = shared
+                        ? PointSourceField(buildings, source, end, plain)
+                        : PointSourceField(buildings, PathEnd(buildings, s, true, plain, end.near()), end, plain);
+                for (PointRay ray : field.rays())
+                {
+                    ray.jump_weight = (side == 0 ? share : -share) * carry;
+                    ray.jump_x = x;
+                    ray.jump_delay = delay;
+                    ray.tilted = false;
+                    added.push_back(std::move(ray));
+                }
+            }
+            catch (const std::invalid_argument&)
+            {
+                // A foot on an edge, where no field is taken.
+                added.clear();
+                break;
+            }
+        }
+        for (PointRay& ray : added)
+            rays_.push_back(std::move(ray));
+        added.clear();
+    }
 }
 
 } // namespace niceops

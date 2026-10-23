@@ -5010,6 +5010,7 @@ int run(int argc, char* argv[])
     double path_radius = 0.0;     // m; 0 for PointPathOptions' 150 m
     bool exact_shared_faces = false;
     bool no_profile_pe = false;
+    bool no_tilted_step_split = false;
     bool buildings_edge_source = false;
     double state_tolerance = 0.02;
     bool use_gpu = true;
@@ -5550,6 +5551,10 @@ int run(int argc, char* argv[])
     app.add_flag("--no_profile_pe", no_profile_pe,
             "With --buildings: over a row of flat-roofed blocks with a street, crossed near grazing, the cascades' "
             "rays rather than the row's profile marched by a parabolic equation, for comparison.");
+    app.add_flag("--no_tilted_step_split", no_tilted_step_split,
+            "With --buildings: across the line through a ridge or roof edge and the edge of the lower roof it steps "
+            "down to, the field as the rays leave it, stepping where the microphone crosses the line, rather than "
+            "its jump split either side, for comparison.");
     app.add_flag("--gpu,!--no-gpu", use_gpu,
             "With --buildings: form and sum each pair's rays on the GPU (on by default wherever there is one and the "
             "run's sum is 'cone', 'coherent' or 'energy' without --phase_interval). --gpu asks for it, and is "
@@ -6396,10 +6401,11 @@ int run(int argc, char* argv[])
             || app.count("--relief_scattering") > 0 || app.count("--grating_reflections") > 0)
         input_error("--facade_scattering, --facade_scattering_spectrum, --facade_relief, --relief_scattering, "
                     "--grating_reflections, --patch_size and --diffuse_radius go with --buildings.");
-    else if (exact_shared_faces || no_profile_pe || buildings_edge_source || app.count("--state_tolerance") > 0
-            || app.count("--path_radius") > 0 || app.count("--gpu") > 0 || app.count("--no-gpu") > 0)
-        input_error("--exact_shared_faces, --no_profile_pe, --edge_source, --state_tolerance, --path_radius, --gpu "
-                    "and --no-gpu go with --buildings.");
+    else if (exact_shared_faces || no_profile_pe || no_tilted_step_split || buildings_edge_source
+            || app.count("--state_tolerance") > 0 || app.count("--path_radius") > 0 || app.count("--gpu") > 0
+            || app.count("--no-gpu") > 0)
+        input_error("--exact_shared_faces, --no_profile_pe, --no_tilted_step_split, --edge_source, "
+                    "--state_tolerance, --path_radius, --gpu and --no-gpu go with --buildings.");
     else if (app.count("--ray_coherence") > 0 || app.count("--coherence_angle") > 0
             || app.count("--phase_interval") > 0)
         input_error("--ray_coherence, --coherence_angle and --phase_interval go with --buildings.");
@@ -6727,6 +6733,7 @@ int run(int argc, char* argv[])
         input.turbulence = scattering;
         input.exact_shared_faces = exact_shared_faces;
         input.no_profile_pe = no_profile_pe;
+        input.no_tilted_step_split = no_tilted_step_split;
         input.edge_source = buildings_edge_source;
         if (buildings_edge_source && use_gpu && app.count("--gpu") > 0)
             input_error("--edge_source is the CPU's; --gpu does not take it.");

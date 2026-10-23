@@ -57,6 +57,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <utility>
 #include <vector>
 
 #include "atmosphere.hpp"
@@ -199,6 +200,14 @@ struct PointPathOptions
     // integral at every wavenumber.  Off, the integral at every wavenumber:
     // the reference, and what the GPU takes.
     bool sample_shared_faces = true;
+    // Split the jump at a tilted pair's line (TiltedStepSplit, THEORY 6.5
+    // "Across a step"); off, the field steps there, for comparison.  The
+    // split's microphones past the pair pay two more fields, at the foot of
+    // the microphone on the line, wherever its fade at tilted_step_k_min is
+    // above TiltedStepSplit::g_floor: callers set that to the run's lowest
+    // wavenumber, and 0 takes the foot fields at every distance.
+    bool tilted_step_split = true;
+    double tilted_step_k_min = 0.0;
     // Per facade of the buildings, its relief (facade_relief.hpp), or null for
     // a plain facade; null for none.  A ray that reflects in a relief and
     // diffracts nowhere takes its specular order's share there, at the
@@ -413,6 +422,18 @@ struct PointRay
     // A partner made by the fade: the edges it diffracts at besides the
     // ray's own (its length includes their detours).
     std::vector<MadeEdge> made_edges;
+    // Twice diffracted at a tilted pair (tilted_pair): two parallel edges
+    // that share no face, a ridge or a roof's edge over a step down to a
+    // lower roof's, straight from the source to the microphone or by images.
+    bool tilted = false;
+    // A ray of the field at the microphone's foot on a tilted pair's line,
+    // its share of that field's jump carried to the microphone
+    // (TiltedStepSplit): its amplitude times jump_weight times the fade at
+    // k Delta = jump_x k (jump_factor), summed at its length plus jump_delay,
+    // the carry's path (summed_length).  0 weight on every other ray.
+    double jump_weight = 0.0;
+    double jump_x = 0.0;
+    double jump_delay = 0.0;
     // The surface a raised end lies on -- a wall, a level roof or a slope,
     // never the floor, whose partners are traced -- by the facade whose reflection
     // coefficient it takes (no_facade: a rigid one), or no_surface.  Every
@@ -440,6 +461,43 @@ inline double end_surface_factor(std::size_t surface, bool on_face, const std::v
         return 1.0;
     const double r = surface == PointRay::no_facade ? 1.0 : std::sqrt(reflection[surface]);
     return (1.0 + r) * (on_face ? 0.5 : 1.0);
+}
+
+// The jump split across a tilted pair's line (THEORY 6.5, "Across a step").
+// Below the line the pair is the receiver's aperture over the step, above it
+// the cascade beside the first edge's once-diffracted ray, and the field jumps
+// by up to 6 dB where the microphone crosses the line.  At the microphone's
+// foot F on the line, D is the field just above it less the field just below
+// (every ray, as the field is taken: two more fields, `eps` either side).
+// Above the line the field takes -beta D, below it +(1 - beta) D, so it is
+// continuous across it; each carried from F as the first edge's diffracted
+// wave and faded by g = (|tail(x)| / |tail(0)|)^fade_power, tail the Fresnel
+// integral's (fresnel_tail) at x = k Delta, Delta the second edge's detour
+// for the microphone off the line.  A fitted transition, not a diffraction
+// coefficient: beta and the power were fitted against boundary-element
+// solutions over a 10 m to 7 m step (tests/test_point_paths.cpp), and hold on
+// the stored step tables and UE02.  Where g < g_floor the fade is 0 (a
+// cosine-squared taper to twice that), and the foot fields are not taken.
+struct TiltedStepSplit
+{
+    static constexpr double beta = 0.85;
+    static constexpr double fade_power = 2.0;
+    static constexpr double eps = 1e-4;
+    static constexpr double g_floor = 1e-3;
+};
+// The fade g at k Delta = x, tapered to 0 at g_floor.
+double tilted_step_fade(double x);
+// A ray's jump-split factor at wavenumber k: jump_weight tilted_step_fade(jump_x k),
+// and 1 for a ray that is no split's.
+inline double jump_factor(const PointRay& ray, double k)
+{
+    return ray.jump_weight != 0.0 ? ray.jump_weight * tilted_step_fade(ray.jump_x * k) : 1.0;
+}
+// The length a ray's phase and absorption are summed over: its own, and a
+// split's carry.
+inline double summed_length(const PointRay& ray)
+{
+    return ray.length + ray.jump_delay;
 }
 
 // A ray's wedge term w < ray.wedges, in order from the source.
@@ -690,6 +748,14 @@ private:
     };
     void trace(const Buildings& buildings, const PathEnd& source, const PathEnd& microphone,
             const PointPathOptions& options);
+    // PointPathOptions::tilted_step_split: the foot fields' rays for each
+    // tilted pair among `pairs` the microphone stands past (TiltedStepSplit).
+    void split_tilted_steps(const Buildings& buildings, const PathEnd& source,
+            const std::vector<std::pair<std::size_t, std::size_t>>& pairs, const Vec3& microphone,
+            const PointPathOptions& options);
+    // The tilted pairs the traced rays diffract at straight from the source
+    // to the microphone, each once, edges in order from the source.
+    std::vector<std::pair<std::size_t, std::size_t>> tilted_pairs() const;
     // PointPathOptions::profile_pe: a row's rays to its profile field.
     void apply_profile(const Buildings& buildings, const Vec3& source, const Vec3& microphone,
             const PointPathOptions& options);
@@ -791,7 +857,9 @@ Vec3 point_ray_launch(const PointRay& ray);
 // A ray's complex amplitude at wavenumber k; `reflection` is the facades'
 // energy reflection coefficients for one band, [facade].  It is what the
 // ray's spreading and reflections leave (reflected_amplitude), the same at
-// every wavenumber of the band, times what its wedges do at k.
+// every wavenumber of the band, times what its wedges do at k.  The facade
+// overload takes a jump split's factor too, and its carry's phase,
+// exp(i k jump_delay), for a caller that sums each ray at its own length.
 std::complex<double> point_ray_amplitude(const PointRay& ray, const std::vector<double>& reflection,
         double floor_reflection, double k);
 double reflected_amplitude(const PointRay& ray, const std::vector<double>& reflection, double floor_reflection);

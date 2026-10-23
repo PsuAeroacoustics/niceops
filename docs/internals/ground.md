@@ -571,9 +571,9 @@ exactly. What to keep:
     the near edge, which no ray carries, is subtracted with the unbounded field.
   - **Not across a step.** For the tilted pair with the source 0.5° above its line the receiver's
     aperture gave the pair −40 dB and the source's mirror −28; the BEM sided with the aperture. The
-    cascade stands there, and the level still steps 2.2-2.7 dB where the microphone crosses the
-    line, the direct ray and both single diffractions at their boundaries at once; swapping the
-    pair's term for the mirror does not touch it.
+    cascade stands there; the step it left where the microphone crosses the line (2.2-2.7 dB, the
+    direct ray and both single diffractions at their boundaries at once) is the jump split's
+    (below), which swapping the pair's term for the mirror did not touch.
 - **An aperture's source within 1e-3 rad of the line is taken at 1e-3 rad**, at its own distance
   (`off_the_line`, in `aperture`, `aperture_spectrum` and `aperture_geometry`, so the GPU's
   sampled geometry too); its weight stays its own angle. With the receiver above the line the
@@ -621,7 +621,8 @@ exactly. What to keep:
     against the BEM; one on the reflection boundary took the aperture and the reflected ray, 13 dB
     at a point (`above a step's lower roof the field holds to its boundaries`). The switch across
     the reflection boundary still steps the level by up to 0.94 dB.
-  Known: across the line the level steps by 0.5-2 dB where the cascade steps 0-1.5. The end
+  Known: across the line the level stepped by 0.5-2 dB where the cascade steps 0-1.5, until the
+  jump split (next item) took the step out. The end
   correction `c` reaches 2.1 for a source grazing the first wedge's other face (a flat roof), whose
   reflection UTD takes as infinite; on a shared face `c` is near 1 wherever the edges are in
   transition, so its subtraction matches the traced ray and it is continuous. Fixing it means the
@@ -629,6 +630,50 @@ exactly. What to keep:
   (Holm's higher-order series, rederived; diverged from the second order, the transition
   function's kinks in a(beta) making high derivatives meaningless), and the first wedge's lit
   face's reflection in the aperture (over a 10 m roof at grazing it covers 4.5 cm of aperture).
+- **A tilted pair's line takes a jump split** (`TiltedStepSplit`, `PointSourceField::split_tilted_steps`,
+  `PointPathOptions::tilted_step_split`, `--no_tilted_step_split`; THEORY "The jump across a step's
+  line"). Where the microphone crosses the line through a step's two edges the rays switch (the
+  aperture and a blocked first-edge ray below, that ray and the cascade above) and the level
+  stepped by up to 6.4 dB. The field's jump at the microphone's foot on the line is taken from two
+  more fields 0.1 mm either side, carried to the microphone as the first edge's wave, faded by the
+  second edge's Fresnel tail squared, and shared 0.85 above the line and 0.15 below. A fitted
+  transition, not a coefficient. What to keep:
+  - **The foot's rays are rays of the field** (`PointRay::jump_weight`, `jump_x`, `jump_delay`):
+    each foot field's rays are appended with the share and the carry's spreading as a weight, the
+    fade's k Delta per unit k, and the carry's extra path. `jump_factor` is applied wherever a ray's
+    band amplitude is formed (`sub_band_problems`, `point_ray_amplitude`'s facade overload, the GPU's
+    per-sub-band complex factors), and `summed_length` -- the own length plus the carry -- is what
+    the phases, the sort and the air's absorption take. Each ray's own terms (the shared face's
+    in-plane phase, the edge-source factors' phase) keep its own length. So the band sums, the
+    edge-source integral, the directional weights (one per ray of `rays()`), the cone and the GPU
+    all take the split with no code of their own. On the GPU (`pack_point_rays`) the fade rides in
+    the per-sub-band complex factors (a set with a split ray takes `complex_reflections`), and the
+    rays are sorted and absorbed over `summed_length`; a shared face's phase offset keeps its own
+    length, as on the CPU.
+  - **The foot fields do not split again** (`tilted_step_split` off in them). They reuse the
+    source's `PathEnd` where its candidates hold the foot's near edges, and trace a new one where not.
+  - **On the line counts as above it** (off > -1e-9 m), as the rays take it (`on the line through a
+    stepped pair ...`). Putting it below broke that test by 0.5-2.2 dB in the prototype.
+  - **Any source side.** The source must project before the first edge and the microphone past the
+    second; a source 16° below the line (the stored step table's) stepped 2.8 dB too.
+  - **Only pairs straight from the source to the microphone** (`tilted_pairs`: no facade, floor or
+    roof reflection on the ray), each pair once. The foot must lie within both edges' lines (with
+    `Edge::beyond`), above the floor and outside every building, or the pair is skipped.
+  - **The cutoff.** The fade is 0 below g = 1e-3 (a cosine-squared taper to 2e-3), which bounds the
+    cut's step well under 0.01 dB. Callers set `tilted_step_k_min` to the lowest band's lower edge
+    (`niceops`, `niceops_point_field`); a microphone whose fade is 0 there takes no foot fields.
+    0 (the default) takes them for every microphone past a pair.
+  - **Under `--edge_source` it stays.** V1 with the split against the BEM (88 of tilt45's 352
+    cases): 0.48 -> 0.26 dB rms.
+  - **The constants were fitted on one cross-section** (the 10 m / 7 m step, sources 0.5-10° above
+    the line) and validated on the stored step tables and UE02, which did not get worse. Not taken:
+    the pair and the first edge's once ray by the edge-source integral near the line (continuous,
+    but second-order BTM is 1-2 dB low near grazing on both sides, so worse on 3 of the 4 stored
+    tables and UE02 1.25-1.97 dB rms against 0.32); and a uniform double-diffraction coefficient
+    (Albani's bivariate Fresnel corner terms), which was better on the diagnosis sets (0.23 and 0.37
+    rms against the split's 0.26 and 0.47) but took the both-ends-above table from 0.10 to 0.146
+    against its 0.15 bound and cost 0.2 ms per pair per wavenumber. That is the route if a cheap
+    table of its T(c1, c2, rho) is ever built.
 - **A row of roofs crossed near grazing takes a parabolic equation** (`profile_pe.{hpp,cpp}`,
   `PointSourceField::apply_profile`, `PointPathOptions::profile_pe`, `--no_profile_pe`; THEORY
   "Over a row of roofs"). Three or more roof edges in each other's transitions are past what any

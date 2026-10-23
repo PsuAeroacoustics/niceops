@@ -4,6 +4,18 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## A step's line no longer steps the level (October 2026)
+
+Where a microphone crossed the line through a step's two edges (a ridge or a taller roof's edge
+and the edge of the lower roof it steps down to) the point-source model's level stepped by up to
+6.4 dB: below the line the pair was the receiver's aperture, above it the first edge's ray and the
+cascade. The field's jump at the line is now split between its sides (THEORY §6.5, "The jump across
+a step's line"), so the level is continuous there. Against boundary elements near such a line the
+error went from 0.67 to 0.26 dB rms (352 cases) and from 1.21 to 0.47 (129 cases within a metre of
+it); the stored step cases from 0.53 to 0.48, EDGE's terrace from 0.32 to 0.27. Far above the line
+levels move by 0.04-0.08 dB rms. EDGE's LoD1 scenes and DigiCity do not move; EDGE's pitched
+scenes move by 0.21 dB at most. `--no_tilted_step_split` gives the old field.
+
 ## The urban model's search made faster, and a fast mode (October 2026)
 
 Eleven exact changes to the point-source model's path search and band sum left every ray and band

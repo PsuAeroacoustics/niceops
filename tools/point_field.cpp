@@ -126,6 +126,7 @@ int main(int argc, char** argv)
     bool no_twice_roofs = false;
     bool no_roof_lighting = false;
     bool no_profile_pe = false;
+    bool no_tilted_step_split = false;
     bool unending_edges = false;
     bool exact_shared_faces = false;
     bool cascade = false;
@@ -211,6 +212,10 @@ int main(int argc, char** argv)
     app.add_flag("--no_profile_pe", no_profile_pe,
             "Over a row of flat-roofed blocks with a street, crossed near grazing, the cascades' rays rather than the "
             "row's profile marched by a parabolic equation, for comparison.");
+    app.add_flag("--no_tilted_step_split", no_tilted_step_split,
+            "Across the line through a ridge or roof edge and the edge of the lower roof it steps down to, the field "
+            "as the rays leave it, stepping where the microphone crosses the line, rather than its jump split "
+            "either side, for comparison.");
     app.add_flag("--no_twice_roofs", no_twice_roofs,
             "No level roof's or slope's reflection on a twice-diffracted ray, for comparison.");
     app.add_flag("--unending_edges", unending_edges,
@@ -463,6 +468,7 @@ int main(int argc, char** argv)
         options.slope_facades = !no_slope_facades;
         options.twice_roofs = !no_twice_roofs;
         options.profile_pe = !no_profile_pe;
+        options.tilted_step_split = !no_tilted_step_split;
         options.edge_ends = !unending_edges;
         options.shared_face = !cascade;
         options.sample_shared_faces = !exact_shared_faces;
@@ -479,6 +485,9 @@ int main(int argc, char** argv)
         options.edge_source_reach = 100.0 / lowest_k;
         // UTD's end waves fade out by end_fade_hi radians, at the lowest band last.
         options.end_reach = end_fade_hi / lowest_k;
+        // The split's foot fields are taken where its fade at the lowest
+        // sub-band's lower edge is above its floor.
+        options.tilted_step_k_min = lowest_k / std::pow(2.0, 1.0 / 6.0);
         // The GPU wherever there is one and the run is one it takes; asked
         // for (--gpu), it must be.  The flag's count takes --no-gpu too, so
         // asking is its value as well.

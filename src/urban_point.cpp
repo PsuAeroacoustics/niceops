@@ -539,6 +539,7 @@ std::shared_ptr<const UrbanDistrict> UrbanDistrict::read(const std::string& file
     d.floor_reflection = 1.0 - input.floor_absorption;
     d.paths.sample_shared_faces = !input.exact_shared_faces;
     d.paths.profile_pe = !input.no_profile_pe;
+    d.paths.tilted_step_split = !input.no_tilted_step_split;
     if (input.path_radius > 0.0)
         d.paths.radius = input.path_radius;
     d.paths.edge_source = input.edge_source;
@@ -664,6 +665,10 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     // UTD's end waves fade out by end_fade_hi radians, at the lowest band last.
     if (first_band < last_band)
         paths.end_reach = end_fade_hi / (2.0 * pi * centers[first_band] / sound_speed);
+    // The tilted steps' foot fields where their fade at the lowest band's
+    // lower edge is above its floor.
+    if (first_band < last_band)
+        paths.tilted_step_k_min = 2.0 * pi * centers[first_band] / std::pow(2.0, 1.0 / 6.0) / sound_speed;
     first_band = std::min(first_band, last_band);
     const std::size_t nb = last_band - first_band, nm = microphones.size(), ns = states.size();
     constexpr double silence = -std::numeric_limits<double>::infinity();

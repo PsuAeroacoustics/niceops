@@ -1300,7 +1300,8 @@ namespace {
 // --width 20 --height 7 --roof '0,10;10,10;10,7', 45 elements a wavelength,
 // converged to 0.15 dB against 30), BlockCase's columns, the microphone's
 // distance behind the lower block; none on the line through the two blocks'
-// far edges, where the uniform form's level steps (FIDELITY, "Across a step").
+// far edges, where the uniform form's level stepped before the jump split
+// (FIDELITY, "Across a step").
 const std::vector<BlockCase>& step_cases()
 {
     static const std::vector<BlockCase> cases {
@@ -1435,8 +1436,9 @@ Footprint long_block(double y0, double y1, double top)
 // both wedges from above, the lower roof tilted 16.7 degrees below it, and the
 // aperture over the pair (double_wedge.hpp) takes the transition the cascade
 // loses.  98 cases, sources 10.5-15 m up and 30-100 m off, microphones 2-10 m
-// behind and 1.2-7 m up, 125-500 Hz: within 2.2 dB, rms 0.53, mean +0.03,
-// where the cascade is rms 0.80 and its mean 0.37 dB low.
+// behind and 1.2-7 m up, 125-500 Hz: within 1.8 dB, rms 0.48, with the jump
+// split at the line through the far edges (0.53 and 2.2 without), where the
+// cascade is rms 0.80 and its mean 0.37 dB low.
 TEST_CASE("over a step down to a lower roof the pair of edges is uniform", "[point_paths]")
 {
     const Buildings city({long_block(0.0, 10.0, 10.0), long_block(10.0, 20.0, 7.0)});
@@ -1464,7 +1466,7 @@ TEST_CASE("over a step down to a lower roof the pair of edges is uniform", "[poi
     const double n = static_cast<double>(cases.size());
     INFO("uniform rms " << std::sqrt(square[1] / n) << " mean " << mean[1] / n << " worst " << worst << "; cascade rms "
                         << std::sqrt(square[0] / n) << " mean " << mean[0] / n);
-    REQUIRE(std::sqrt(square[1] / n) < 0.8);
+    REQUIRE(std::sqrt(square[1] / n) < 0.65);
     REQUIRE(std::abs(mean[1] / n) < 0.25);
     REQUIRE(std::sqrt(square[0] / n) > std::sqrt(square[1] / n) + 0.2);
 }
@@ -1643,6 +1645,199 @@ TEST_CASE("on the line through a stepped pair the field is the field just above 
         const double above = line_source_level(city, s, Vec3(0.0, 30.0, 4.001), f, PointPathOptions());
         REQUIRE(std::abs(on - above) < 0.05);
     }
+}
+
+namespace {
+
+// A source `above` degrees above the line through the step's far edges,
+// `range` m from the taller block's, and a point `off` m off the line along
+// its normal, at `behind` m past the lower block.
+Vec3 above_step_line(double range, double above)
+{
+    const double a = std::atan(0.3) + above * pi / 180.0;
+    return Vec3(0.0, 10.0 - range * std::cos(a), 10.0 + range * std::sin(a));
+}
+Vec3 off_step_line(double behind, double off)
+{
+    const double t = std::atan(0.3), y = 20.0 + behind;
+    return Vec3(0.0, y + off * std::sin(t), 10.0 - 0.3 * (y - 10.0) + off * std::cos(t));
+}
+
+} // namespace
+
+// Where the microphone crosses the line through the step's far edges the
+// rays change: below it the pair is the receiver's aperture and the first
+// edge's ray is blocked, above it the first edge's ray appears beside the
+// cascade, and the level stepped by up to 6 dB with the source near the
+// line.  The jump split (TiltedStepSplit) shares the jump between the sides:
+// sources 0.5, 3.3 and 10 degrees above the line and 16 below, 20 and 60 m
+// from the taller block's edge, microphones 2, 10 and 20 m past the lower
+// block, 0.1 mm either side, 125 Hz to 1 kHz: within 0.001 dB, and the band
+// levels as close.
+TEST_CASE("across the line through a stepped pair the field does not step", "[point_paths]")
+{
+    const Buildings city({long_block(0.0, 10.0, 10.0), long_block(10.0, 20.0, 7.0)});
+    PointPathOptions unsplit;
+    unsplit.tilted_step_split = false;
+    double worst = 0.0, unsplit_worst = 0.0;
+    for (double range : {60.0, 20.0})
+        for (double above : {0.5, 3.3, 10.0, -16.0})
+            for (double behind : {2.0, 10.0, 20.0})
+                for (double f : {125.0, 250.0, 500.0, 1000.0})
+                {
+                    const Vec3 s = above_step_line(range, above);
+                    const Vec3 lo = off_step_line(behind, -1e-4), hi = off_step_line(behind, 1e-4);
+                    const double step = line_source_level(city, s, hi, f, PointPathOptions())
+                            - line_source_level(city, s, lo, f, PointPathOptions());
+                    INFO(f << " Hz, source " << above << " degrees above the line, " << range << " m, microphone "
+                           << behind << " m behind");
+                    REQUIRE(std::abs(step) < 0.02);
+                    worst = std::max(worst, std::abs(step));
+                    unsplit_worst = std::max(unsplit_worst, std::abs(line_source_level(city, s, hi, f, unsplit)
+                                                                    - line_source_level(city, s, lo, f, unsplit)));
+                }
+    INFO("worst " << worst << " dB, unsplit " << unsplit_worst);
+    REQUIRE(unsplit_worst > 2.0);
+    // The band levels too: a point source, a rigid floor and walls absorbing.
+    const Vec3 s = above_step_line(60.0, 3.3);
+    for (double behind : {2.0, 10.0})
+    {
+        const std::vector<double> below = levels(city, s, off_step_line(behind, -1e-4), 0.9, 1.0);
+        const std::vector<double> over = levels(city, s, off_step_line(behind, 1e-4), 0.9, 1.0);
+        for (std::size_t b = 0; b < bands.size(); b++)
+        {
+            INFO(bands[b] << " Hz, " << behind << " m behind");
+            REQUIRE(std::abs(over[b] - below[b]) < 0.02);
+        }
+    }
+}
+
+// The same step near the line through its far edges (boundary elements, 45
+// elements a wavelength, within 0.15 dB of 30): sources 1 and 3.3 degrees
+// above it, 60 and 20 m from the taller block's edge, microphones 2, 10 and
+// 20 m past the lower block, 0.02 to 1 m either side, 125 and 250 Hz.  Split,
+// within 1.2 dB, rms 0.47; the rays alone stepped there and were rms 1.21,
+// up to 4.1 dB low just above the line.
+TEST_CASE("by the line through a stepped pair the split field is the boundary-element solution's", "[point_paths]")
+{
+    const Buildings city({long_block(0.0, 10.0, 10.0), long_block(10.0, 20.0, 7.0)});
+    static const std::vector<BlockCase> cases {
+            {125, -47.1599, 28.2412, 2, 5.4, -7.22}, {125, -47.1599, 28.2412, 2, 6.1, -2.61}, {125, -47.1599, 28.2412, 2, 6.3, -2.85},
+            {125, -47.1599, 28.2412, 2, 6.38, -3.03}, {125, -47.1599, 28.2412, 2, 6.42, -3.13}, {125, -47.1599, 28.2412, 2, 6.5, -3.29},
+            {125, -47.1599, 28.2412, 2, 6.7, -3.35}, {125, -47.1599, 28.2412, 2, 7.4, 0.78}, {125, -47.1599, 28.2412, 10, 3, -5.84},
+            {125, -47.1599, 28.2412, 10, 3.7, -7.43}, {125, -47.1599, 28.2412, 10, 3.9, -5.25}, {125, -47.1599, 28.2412, 10, 3.98, -4.46},
+            {125, -47.1599, 28.2412, 10, 4.02, -4.09}, {125, -47.1599, 28.2412, 10, 4.1, -3.40}, {125, -47.1599, 28.2412, 10, 4.3, -2.06},
+            {125, -47.1599, 28.2412, 10, 5, -0.77}, {125, -47.1599, 28.2412, 20, 0.7, -1.11}, {125, -47.1599, 28.2412, 20, 0.9, -2.36},
+            {125, -47.1599, 28.2412, 20, 0.98, -2.99}, {125, -47.1599, 28.2412, 20, 1.02, -3.34}, {125, -47.1599, 28.2412, 20, 1.1, -4.10},
+            {125, -47.1599, 28.2412, 20, 1.3, -6.46}, {125, -47.1599, 28.2412, 20, 2, -8.96}, {125, -46.3818, 30.5205, 2, 5.4, -7.71},
+            {125, -46.3818, 30.5205, 2, 6.1, -3.18}, {125, -46.3818, 30.5205, 2, 6.3, -3.45}, {125, -46.3818, 30.5205, 2, 6.38, -3.64},
+            {125, -46.3818, 30.5205, 2, 6.42, -3.74}, {125, -46.3818, 30.5205, 2, 6.5, -3.91}, {125, -46.3818, 30.5205, 2, 6.7, -3.98},
+            {125, -46.3818, 30.5205, 2, 7.4, 0.10}, {125, -46.3818, 30.5205, 10, 3, -6.26}, {125, -46.3818, 30.5205, 10, 3.7, -7.34},
+            {125, -46.3818, 30.5205, 10, 3.9, -5.20}, {125, -46.3818, 30.5205, 10, 3.98, -4.44}, {125, -46.3818, 30.5205, 10, 4.02, -4.09},
+            {125, -46.3818, 30.5205, 10, 4.1, -3.44}, {125, -46.3818, 30.5205, 10, 4.3, -2.19}, {125, -46.3818, 30.5205, 10, 5, -1.21},
+            {125, -46.3818, 30.5205, 20, 0.7, -1.14}, {125, -46.3818, 30.5205, 20, 0.9, -2.47}, {125, -46.3818, 30.5205, 20, 0.98, -3.15},
+            {125, -46.3818, 30.5205, 20, 1.02, -3.52}, {125, -46.3818, 30.5205, 20, 1.1, -4.34}, {125, -46.3818, 30.5205, 20, 1.3, -6.90},
+            {125, -46.3818, 30.5205, 20, 2, -8.20}, {125, -8.7939, 16.8402, 2, 5.4, -6.89}, {125, -8.7939, 16.8402, 2, 6.1, -2.34},
+            {125, -8.7939, 16.8402, 2, 6.3, -2.62}, {125, -8.7939, 16.8402, 2, 6.38, -2.82}, {125, -8.7939, 16.8402, 2, 6.42, -2.92},
+            {125, -8.7939, 16.8402, 2, 6.5, -3.10}, {125, -8.7939, 16.8402, 2, 6.7, -3.21}, {125, -8.7939, 16.8402, 2, 7.4, 0.83},
+            {125, -8.7939, 16.8402, 10, 3, -5.34}, {125, -8.7939, 16.8402, 10, 3.7, -7.18}, {125, -8.7939, 16.8402, 10, 3.9, -4.91},
+            {125, -8.7939, 16.8402, 10, 3.98, -4.09}, {125, -8.7939, 16.8402, 10, 4.02, -3.72}, {125, -8.7939, 16.8402, 10, 4.1, -3.02},
+            {125, -8.7939, 16.8402, 10, 4.3, -1.67}, {125, -8.7939, 16.8402, 10, 5, -0.49}, {125, -8.7939, 16.8402, 20, 0.7, -0.51},
+            {125, -8.7939, 16.8402, 20, 0.9, -1.76}, {125, -8.7939, 16.8402, 20, 0.98, -2.39}, {125, -8.7939, 16.8402, 20, 1.02, -2.73},
+            {125, -8.7939, 16.8402, 20, 1.1, -3.50}, {125, -8.7939, 16.8402, 20, 1.3, -5.90}, {125, -8.7939, 16.8402, 20, 2, -9.43},
+            {250, -47.1599, 28.2412, 2, 5.4, -10.03}, {250, -47.1599, 28.2412, 2, 6.1, -5.02}, {250, -47.1599, 28.2412, 2, 6.3, -5.92},
+            {250, -47.1599, 28.2412, 2, 6.38, -6.09}, {250, -47.1599, 28.2412, 2, 6.42, -6.00}, {250, -47.1599, 28.2412, 2, 6.5, -5.43},
+            {250, -47.1599, 28.2412, 2, 6.7, -2.96}, {250, -47.1599, 28.2412, 2, 7.4, -1.35}, {250, -47.1599, 28.2412, 10, 3.7, -4.17},
+            {250, -47.1599, 28.2412, 10, 4.3, -6.37}, {250, -47.1599, 28.2412, 10, 5, -1.92}, {250, -47.1599, 28.2412, 20, 0.7, -9.01},
+            {250, -47.1599, 28.2412, 20, 0.98, -14.52}, {250, -47.1599, 28.2412, 20, 1.02, -12.83}, {250, -47.1599, 28.2412, 20, 1.1, -9.71},
+            {250, -47.1599, 28.2412, 20, 1.3, -4.65}, {250, -47.1599, 28.2412, 20, 2, -0.51}, {250, -46.3818, 30.5205, 2, 5.4, -10.40},
+            {250, -46.3818, 30.5205, 2, 6.1, -5.37}, {250, -46.3818, 30.5205, 2, 6.3, -6.28}, {250, -46.3818, 30.5205, 2, 6.38, -6.42},
+            {250, -46.3818, 30.5205, 2, 6.42, -6.31}, {250, -46.3818, 30.5205, 2, 6.5, -5.71}, {250, -46.3818, 30.5205, 2, 6.7, -3.25},
+            {250, -46.3818, 30.5205, 2, 7.4, -2.13}, {250, -46.3818, 30.5205, 10, 3, -10.71}, {250, -46.3818, 30.5205, 10, 3.7, -4.10},
+            {250, -46.3818, 30.5205, 10, 3.9, -5.38}, {250, -46.3818, 30.5205, 10, 3.98, -6.06}, {250, -46.3818, 30.5205, 10, 4.02, -6.37},
+            {250, -46.3818, 30.5205, 10, 4.1, -6.75}, {250, -46.3818, 30.5205, 10, 4.3, -5.69}, {250, -46.3818, 30.5205, 10, 5, -1.92},
+            {250, -46.3818, 30.5205, 20, 0.7, -8.83}, {250, -46.3818, 30.5205, 20, 0.9, -15.29}, {250, -46.3818, 30.5205, 20, 0.98, -12.75},
+            {250, -46.3818, 30.5205, 20, 1.02, -11.05}, {250, -46.3818, 30.5205, 20, 1.1, -8.10}, {250, -46.3818, 30.5205, 20, 1.3, -3.42},
+            {250, -46.3818, 30.5205, 20, 2, -0.04}, {250, -8.7939, 16.8402, 2, 5.4, -11.15}, {250, -8.7939, 16.8402, 2, 6.1, -6.15},
+            {250, -8.7939, 16.8402, 2, 6.3, -7.11}, {250, -8.7939, 16.8402, 2, 6.38, -7.28}, {250, -8.7939, 16.8402, 2, 6.42, -7.19},
+            {250, -8.7939, 16.8402, 2, 6.5, -6.61}, {250, -8.7939, 16.8402, 2, 6.7, -4.13}, {250, -8.7939, 16.8402, 2, 7.4, -2.84},
+            {250, -8.7939, 16.8402, 10, 3, -11.85}, {250, -8.7939, 16.8402, 10, 3.7, -4.84}, {250, -8.7939, 16.8402, 10, 4.1, -7.86},
+            {250, -8.7939, 16.8402, 10, 4.3, -7.01}, {250, -8.7939, 16.8402, 10, 5, -2.78}, {250, -8.7939, 16.8402, 20, 0.7, -9.38},
+            {250, -8.7939, 16.8402, 20, 0.9, -17.08}, {250, -8.7939, 16.8402, 20, 0.98, -15.29}, {250, -8.7939, 16.8402, 20, 1.02, -13.45},
+            {250, -8.7939, 16.8402, 20, 1.1, -10.16}, {250, -8.7939, 16.8402, 20, 1.3, -5.00}, {250, -8.7939, 16.8402, 20, 2, -0.92},
+    };
+    PointPathOptions unsplit;
+    unsplit.tilted_step_split = false;
+    double square = 0.0, unsplit_square = 0.0;
+    for (const BlockCase& c : cases)
+    {
+        const Vec3 s(0.0, c.source_y, c.source_z), m(0.0, 20.0 + c.behind, c.z);
+        const double error = line_source_level(city, s, m, c.f, PointPathOptions()) - c.exact;
+        INFO(c.f << " Hz, source " << c.source_y << " m, " << c.source_z << " m up, microphone " << c.behind
+                  << " m behind, " << c.z << " m up");
+        REQUIRE(std::abs(error) < 1.5);
+        square += error * error;
+        const double unsplit_error = line_source_level(city, s, m, c.f, unsplit) - c.exact;
+        unsplit_square += unsplit_error * unsplit_error;
+    }
+    const double n = static_cast<double>(cases.size());
+    INFO("rms " << std::sqrt(square / n) << ", unsplit " << std::sqrt(unsplit_square / n));
+    REQUIRE(std::sqrt(square / n) < 0.6);
+    REQUIRE(std::sqrt(unsplit_square / n) > 1.0);
+}
+
+// Further from the line (boundary elements, 45 elements a wavelength,
+// within 0.15 dB of 30): sources 0.5, 2, 5 and 10 degrees above it, 60 m
+// from the taller block's edge, microphones 5 and 10 m past the lower block,
+// 2.4 m below the line to 3.4 m above, 125 Hz to 1 kHz; 68 of 352 cases.
+// Split, rms 0.27 (0.26 over all 352, within 0.9 dB); the rays alone 0.57
+// (0.67, up to 4.2 dB low).
+TEST_CASE("past a stepped pair the split field is the boundary-element solution's", "[point_paths]")
+{
+    const Buildings city({long_block(0.0, 10.0, 10.0), long_block(10.0, 20.0, 7.0)});
+    static const std::vector<BlockCase> cases {
+            {125, -47.3169, 27.7417, 5, 3, -7.65}, {125, -47.3169, 27.7417, 5, 5, -3.50}, {125, -47.3169, 27.7417, 5, 7.5, 1.73},
+            {125, -47.3169, 27.7417, 10, 4.5, -1.28}, {125, -47.3169, 27.7417, 10, 5, -0.81}, {125, -47.3169, 27.7417, 10, 7.5, 1.98},
+            {125, -46.8329, 29.2360, 5, 4.5, -8.81}, {125, -46.8329, 29.2360, 5, 6.5, -2.91}, {125, -46.8329, 29.2360, 5, 7.5, 1.33},
+            {125, -46.8329, 29.2360, 10, 4.5, -1.27}, {125, -46.8329, 29.2360, 10, 6.5, -0.56}, {125, -45.7482, 32.1841, 5, 4.1, -8.80},
+            {125, -45.7482, 32.1841, 10, 6.5, 0.25}, {125, -43.6026, 36.9584, 5, 4.1, -8.33}, {125, -43.6026, 36.9584, 5, 6, -3.36},
+            {125, -43.6026, 36.9584, 10, 3.9, -2.83}, {125, -43.6026, 36.9584, 10, 4.1, -1.31}, {125, -43.6026, 36.9584, 10, 6, -2.17},
+            {250, -47.3169, 27.7417, 5, 3.9, -14.39}, {250, -47.3169, 27.7417, 5, 5.6, -4.52}, {250, -47.3169, 27.7417, 5, 6, -4.85},
+            {250, -47.3169, 27.7417, 10, 3.9, -5.65}, {250, -47.3169, 27.7417, 10, 5.6, -2.99}, {250, -46.8329, 29.2360, 5, 3.5, -8.46},
+            {250, -46.8329, 29.2360, 10, 5.6, -3.06}, {250, -45.7482, 32.1841, 5, 3.5, -7.58}, {250, -45.7482, 32.1841, 5, 5.4, -3.26},
+            {250, -45.7482, 32.1841, 10, 3, -9.60}, {250, -45.7482, 32.1841, 10, 3.5, -3.18}, {250, -45.7482, 32.1841, 10, 5.4, -2.91},
+            {250, -43.6026, 36.9584, 5, 3, -14.41}, {250, -43.6026, 36.9584, 5, 5, -4.53}, {250, -43.6026, 36.9584, 5, 5.4, -1.15},
+            {250, -43.6026, 36.9584, 10, 3, -6.06}, {250, -43.6026, 36.9584, 10, 5, 0.35}, {250, -43.6026, 36.9584, 10, 7.5, -0.11},
+            {500, -47.3169, 27.7417, 10, 5, -3.15}, {500, -47.3169, 27.7417, 10, 7.5, 1.45}, {500, -46.8329, 29.2360, 5, 4.5, -10.11},
+            {500, -46.8329, 29.2360, 5, 6.5, -1.02}, {500, -46.8329, 29.2360, 5, 7.5, 0.14}, {500, -46.8329, 29.2360, 10, 4.5, -4.66},
+            {500, -46.8329, 29.2360, 10, 6.5, 0.10}, {500, -45.7482, 32.1841, 5, 4.1, -11.06}, {500, -45.7482, 32.1841, 5, 4.5, -7.18},
+            {500, -45.7482, 32.1841, 5, 6.5, 0.96}, {500, -45.7482, 32.1841, 10, 4.1, -2.04}, {500, -45.7482, 32.1841, 10, 6, 1.17},
+            {500, -43.6026, 36.9584, 10, 4.1, 1.38}, {500, -43.6026, 36.9584, 10, 6, 0.35}, {1000, -47.3169, 27.7417, 5, 3.9, -15.89},
+            {1000, -47.3169, 27.7417, 5, 5.6, -7.29}, {1000, -47.3169, 27.7417, 5, 6, -3.10}, {1000, -47.3169, 27.7417, 10, 3.9, -7.77},
+            {1000, -47.3169, 27.7417, 10, 5.6, 0.45}, {1000, -46.8329, 29.2360, 5, 3.5, -15.09}, {1000, -46.8329, 29.2360, 5, 3.9, -14.61},
+            {1000, -46.8329, 29.2360, 5, 5.6, -5.68}, {1000, -46.8329, 29.2360, 10, 3.5, -9.35}, {1000, -46.8329, 29.2360, 10, 5.4, 0.55},
+            {1000, -45.7482, 32.1841, 10, 3.5, -5.11}, {1000, -45.7482, 32.1841, 10, 5.4, 0.41}, {1000, -43.6026, 36.9584, 5, 3, -9.91},
+            {1000, -43.6026, 36.9584, 5, 5, -2.96}, {1000, -43.6026, 36.9584, 5, 5.4, 0.36}, {1000, -43.6026, 36.9584, 10, 3, -0.61},
+            {1000, -43.6026, 36.9584, 10, 5, -1.12}, {1000, -43.6026, 36.9584, 10, 7.5, 0.31},
+    };
+    PointPathOptions unsplit;
+    unsplit.tilted_step_split = false;
+    double square = 0.0, unsplit_square = 0.0;
+    for (const BlockCase& c : cases)
+    {
+        const Vec3 s(0.0, c.source_y, c.source_z), m(0.0, 20.0 + c.behind, c.z);
+        const double error = line_source_level(city, s, m, c.f, PointPathOptions()) - c.exact;
+        INFO(c.f << " Hz, source " << c.source_y << " m, " << c.source_z << " m up, microphone " << c.behind
+                  << " m behind, " << c.z << " m up");
+        REQUIRE(std::abs(error) < 1.0);
+        square += error * error;
+        const double unsplit_error = line_source_level(city, s, m, c.f, unsplit) - c.exact;
+        unsplit_square += unsplit_error * unsplit_error;
+    }
+    const double n = static_cast<double>(cases.size());
+    INFO("rms " << std::sqrt(square / n) << ", unsplit " << std::sqrt(unsplit_square / n));
+    REQUIRE(std::sqrt(square / n) < 0.35);
+    REQUIRE(std::sqrt(unsplit_square / n) > std::sqrt(square / n) + 0.2);
 }
 
 // The aperture's Filon rule against the midpoint rule at a 192nd of a

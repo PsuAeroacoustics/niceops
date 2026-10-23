@@ -719,3 +719,61 @@ TEST_CASE("the GPU takes a row's profile rays as the CPU does", "[gpu][profile_p
     REQUIRE(whole == 16);
     REQUIRE(part == 16);
 }
+
+// A tilted step's jump split (TiltedStepSplit) rides on the GPU as the foot
+// fields' rays, each with its weight and fade per sub-band among the complex
+// per-ray factors and its carry in its length: the GPU's levels are
+// band_levels', with microphones 0.02 m either side of the line through the
+// step's far edges and 0.5 m off it, on a rigid floor, one reflecting less
+// and grass, with and without the air.
+TEST_CASE("the GPU takes a tilted step's split as the CPU does", "[gpu]")
+{
+    gpu::Device& device = device_or_skip();
+    auto long_block = [](double y0, double y1, double top) {
+        Footprint b;
+        b.x = {-4000.0, 4000.0, 4000.0, -4000.0};
+        b.y = {y0, y0, y1, y1};
+        b.top = top;
+        return b;
+    };
+    const Buildings step({long_block(0.0, 10.0, 10.0), long_block(10.0, 20.0, 7.0)});
+    const std::vector<double> bands {125, 250, 500, 1000};
+    const double c = 343.2;
+    const std::vector<double> reflection(step.facades().size() * bands.size(), 0.9);
+    FloorModel grass;
+    grass.admittance = ground_impedance(GroundModel {}, sub_band_middles(bands, c), c);
+    Atmosphere air;
+    air.relative_humidity = 50.0;
+    const std::vector<double> absorbing = sub_band_absorption(air, bands, c);
+    // 3.3 degrees above the line, 60 m from the taller block's edge.
+    const double t = std::atan(0.3), a = t + 3.3 * pi / 180.0;
+    const Vec3 source(5.0, 10.0 - 60.0 * std::cos(a), 10.0 + 60.0 * std::sin(a));
+    std::size_t split = 0;
+    for (const double off : {-0.5, -0.02, 0.02, 0.5})
+        for (const FloorModel& floor : {FloorModel(1.0), FloorModel(0.7), grass})
+            for (int absorbed = 0; absorbed < 2; absorbed++)
+            {
+                const Vec3 microphone(0.0, 30.0 + off * std::sin(t), 10.0 - 0.3 * 20.0 + off * std::cos(t));
+                const PointSourceField field(step, source, microphone);
+                const std::vector<double> absorption = absorbed ? absorbing : std::vector<double> {};
+                split += std::any_of(field.rays().begin(), field.rays().end(),
+                        [](const PointRay& r) { return r.jump_weight != 0.0; });
+                std::vector<double> cpu(bands.size());
+                field.band_levels(reflection, floor, bands, c, cpu.data(), absorption);
+                gpu::PointRaySet set;
+                gpu::pack_point_rays(field, reflection, floor, bands, c, set, absorption);
+                REQUIRE(set.complex_reflections);
+                gpu::BandEnergies energies(device);
+                const std::size_t first = energies.add(set);
+                energies.submit();
+                const std::vector<double>& energy = energies.wait();
+                for (std::size_t b = 0; b < bands.size(); b++)
+                {
+                    INFO("band " << bands[b] << ", " << off << " m off the line, floor " << floor.reflection
+                                 << (floor.impedance() ? ", grass" : "") << (absorbed ? ", air" : ""));
+                    REQUIRE(std::abs(band_level(bands[b], sub_bands(bands[b], c), &energy[first + 3 * b]) - cpu[b])
+                            < 0.02);
+                }
+            }
+    REQUIRE(split == 24);
+}
