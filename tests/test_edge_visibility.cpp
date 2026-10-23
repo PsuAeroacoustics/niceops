@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <random>
 #include <vector>
@@ -26,11 +27,13 @@ Footprint box(double x0, double y0, double x1, double y1, double top)
 // visible_stretch may only say a point of an edge is hidden when it is:
 // wherever folded_path_open sees a point of the edge (sampled every 2 cm and
 // at its ends), the point must lie within the stretch it returns.  Over every
-// image to one reflection and every edge each keeps, with and without the
-// floor, from points among DigiCity's containers and a block of a district
-// with an L-shaped building (not convex, so never used to prove anything).
-// It must also prove most of the edges no sample sees wholly hidden, and most
-// of the unseen samples of the rest, or it is no use.
+// image to two reflections and every edge each keeps, with and without the
+// floor, from points among DigiCity's containers, a block of a district with
+// an L-shaped building (not convex, so never used to prove anything) and a
+// street of gabled houses.  It must also prove most of the edges no sample
+// sees wholly hidden, and most of the unseen samples of the rest, or it is no
+// use: for the point and its images of one reflection, and for those of two,
+// each on its own.
 TEST_CASE("a point of an edge proved hidden is hidden", "[point_paths]")
 {
     Footprint ell;
@@ -42,6 +45,17 @@ TEST_CASE("a point of an edge proved hidden is hidden", "[point_paths]")
             box(20.21, 3.86, 22.65, 16.0, 7.77), box(13.5, -1.84, 19.56, 0.6, 7.77)});
     const Buildings blocks({box(0.0, 0.0, 60.0, 60.0, 20.0), box(80.0, 0.0, 140.0, 60.0, 35.0),
             box(0.0, 80.0, 60.0, 140.0, 10.0), box(80.0, 80.0, 140.0, 140.0, 40.0), ell});
+    // Two rows of houses across a street, gabled along it, eaves at 6 m and
+    // ridges at 9 m and 10.5 m.
+    auto gabled = [](double x0, double y0, double x1, double y1, double eaves, double ridge) {
+        Footprint f = box(x0, y0, x1, y1, ridge);
+        const double slope = (ridge - eaves) / (0.5 * (y1 - y0));
+        f.roof = {{0.0, slope, eaves - slope * y0}, {0.0, -slope, eaves + slope * y1}};
+        return f;
+    };
+    const Buildings street({gabled(0.0, 0.0, 10.0, 12.0, 6.0, 9.0), gabled(12.0, 0.0, 22.0, 12.0, 6.0, 10.5),
+            gabled(25.0, 0.0, 33.0, 12.0, 6.0, 9.0), gabled(0.0, 22.0, 12.0, 34.0, 6.0, 10.5),
+            gabled(14.0, 22.0, 22.0, 34.0, 6.0, 9.0), gabled(24.0, 22.0, 34.0, 34.0, 6.0, 10.5)});
     struct Case
     {
         const Buildings* city;
@@ -56,14 +70,22 @@ TEST_CASE("a point of an edge proved hidden is hidden", "[point_paths]")
         {&blocks, {70.0, 30.0, 1.5}},
         {&blocks, {145.0, 70.0, 5.0}},
         {&blocks, {160.0, 60.0, 2.0}},
+        {&street, {16.0, 17.0, 1.5}},
+        {&street, {5.0, 40.0, 15.0}},
+        {&street, {23.0, 6.0, 12.0}},
     };
-    std::size_t visible = 0, unseen = 0, proved = 0, wrong = 0, points_unseen = 0, points_proved = 0;
+    // Per order of the image: the point itself and its images of one
+    // reflection, then those of two.
+    std::size_t visible[2] = {}, unseen[2] = {}, proved[2] = {}, points_unseen[2] = {}, points_proved[2] = {};
+    std::size_t wrong = 0;
     std::vector<Vec3> hits;
     for (const Case& c : cases)
     {
         const std::vector<std::size_t> near = edges_near(*c.city, c.point, 150.0);
-        const ImageTree tree = image_tree(*c.city, c.point, 150.0, 1, 20000, true, near);
+        const ImageTree tree = image_tree(*c.city, c.point, 150.0, 2, 20000, true, near);
         for (std::size_t i = 0; i < tree.images.size(); i++)
+        {
+            const std::size_t order = std::max<std::size_t>(tree.images[i].facades.size(), 1);
             for (std::size_t e : tree.edges[i])
                 for (int floor = 0; floor < 2; floor++)
                 {
@@ -84,23 +106,28 @@ TEST_CASE("a point of an edge proved hidden is hidden", "[point_paths]")
                         }
                         else if (maybe)
                         {
-                            points_unseen++;
-                            points_proved += t < from || t > to;
+                            points_unseen[order - 1]++;
+                            points_proved[order - 1] += t < from || t > to;
                         }
                     }
                     if (seen)
-                        visible++;
+                        visible[order - 1]++;
                     else
                     {
-                        unseen++;
-                        proved += !maybe;
+                        unseen[order - 1]++;
+                        proved[order - 1] += !maybe;
                     }
                 }
+        }
     }
-    INFO(visible << " seen, " << unseen << " unseen, " << proved << " of those proved hidden; of the points unseen on "
-                  "edges not proved hidden, " << points_proved << " of " << points_unseen << " proved");
-    REQUIRE(visible > 100);
     REQUIRE(wrong == 0);
-    REQUIRE(proved > unseen / 2);
-    REQUIRE(points_proved > points_unseen / 2);
+    for (int o = 0; o < 2; o++)
+    {
+        INFO((o == 0 ? "the point and its images of one reflection: " : "images of two reflections: ")
+                << visible[o] << " seen, " << unseen[o] << " unseen, " << proved[o] << " of those proved hidden; of the points unseen on edges not proved hidden, "
+                << points_proved[o] << " of " << points_unseen[o] << " proved");
+        CHECK(visible[o] > 100);
+        CHECK(proved[o] > unseen[o] / 2);
+        CHECK(points_proved[o] > points_unseen[o] / 2);
+    }
 }

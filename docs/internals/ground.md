@@ -781,7 +781,22 @@ it bought:
     `a point of an edge proved hidden is hidden` samples every 2 cm and finds every point it sees
     inside the stretch, and `pruning the diffracted paths loses no ray` holds the rays the same
     with pruning off. Footprints that are not convex, or have courtyards, are left out, which
-    only widens a stretch; images of two facades or more are not tried.
+    only widens a stretch.
+  - **Images of two facades or more are proved leg by leg in the real world**, since their path
+    does not unfold into one segment. The leg to facade k lies on the line from q, mirrored in the
+    facades after k, to the end's image through the facades up to k: each hit lies on its facade,
+    which the mirror fixes. So facade k's window is the one-facade window on that line (q in front
+    and the image behind by contact/2 where the path test asks contact, the hit inside the facade's
+    length and between its gable's lowest and highest, 1e-6 m slack where it asks 1e-9), and the
+    leg's buildings are the real ones cut to the front of the facades either side of it, which on
+    that line is the leg itself. Every condition is one `folded_path_open` imposes on a narrower
+    set, so the proof stays one-sided; `a point of an edge proved hidden is hidden` samples images
+    of two reflections too, over a street of gabled houses as well, and proves 98% of their unseen
+    edges. Images to two reflections are what `max_twice_reflections` gives every twice-diffracted
+    end, and they were most of its work: on the pitched suburb a source's tracing went from
+    3.42-4.47 s to 1.00-1.47 s a microphone (3.0-3.5x), on DigiCity's 40 microphones from 0.32 to
+    0.24 s at 2 m and 0.25 to 0.13 s at 12 m, and on the terraces near the source 0.20 to 0.10 s
+    (thread CPU, best of 3). The rays are the same to the bit on all of them.
   - **The union and the stretch are what pay.** Proving whole edges hidden one building at a time
     prunes only 7-25% of them: a source 30 m up sees some of all but 8% of the edges within
     150 m, and a street microphone some of 45-72%. Covered by every building's interval at once,
@@ -1046,10 +1061,10 @@ Measured and left alone:
   EDGE scale models showed what a street behind a roof is short of: against the FDTD, UE13's
   receivers between the rows went from −3.6 dB mean, 4.5 rms to −2.0, 3.2, and UE12's floor source
   from 3.4 to 2.5 dB rms; three reflections add 0.3 dB more. It costs 21% of the demo
-  `--buildings` run on the CPU (3.5 to 4.2 s), and moves no SEL there by 0.001 dB. Images of two
-  reflections are not proved (`visible_stretch` tries one), so their views take the whole edge;
-  the exact path tests decide. `twice-diffracted rays reflect to max_twice_reflections at either
-  end` holds the rays at one to be those at two that reflect once, and swaps the ends.
+  `--buildings` run on the CPU (3.5 to 4.2 s), and moves no SEL there by 0.001 dB. Their views
+  are proved leg by leg (`visible_stretch`, above), which on the pitched suburb cut a microphone's
+  tracing 3.0-3.5x. `twice-diffracted rays reflect to max_twice_reflections at either end` holds
+  the rays at one to be those at two that reflect once, and swaps the ends.
 - **A reflection between two edges unfolds about the facade or the floor** (`max_between_reflections`,
   1). The second edge and the microphone's image are mirrored in it (`mirrored_edge`: every vector of the
   edge with it, so that `Edge::angle`, which reads `face0` and `air`, gives the mirror its own

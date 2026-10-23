@@ -1131,10 +1131,10 @@ PathEnd::PathEnd(const Buildings& buildings, const Vec3& point, bool source, con
             }
         }
     }
-    // Each image's places about its edges, and the stretch of each edge an
-    // image to one reflection can see, once for every partner: among
-    // buildings, most of what the diffracted searches would otherwise solve
-    // and then refuse is a point its end cannot see.
+    // Each image's places about its edges, and the stretch of each edge the
+    // image can see, once for every partner: among buildings, most of what
+    // the diffracted searches would otherwise solve and then refuse is a
+    // point its end cannot see.
     const bool prove = options.prune && options.diffraction;
     views_.resize(tree_.edges.size());
     for (std::size_t i = 0; i < tree_.edges.size(); i++)
