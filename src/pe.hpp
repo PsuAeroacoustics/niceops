@@ -59,7 +59,7 @@
 //
 //   crank_nicolson.  The Pade(1,1) wide-angle equation marched by
 //   Crank-Nicolson (Salomons, Computational Atmospheric Acoustics, 2001,
-//   appendix F), ten steps a wavelength:
+//   appendix G), ten steps a wavelength:
 //     [1 + (1/4 - i k_a dr/4) Q] psi(r + dr) = [1 + (1/4 + i k_a dr/4) Q] psi(r).
 //   What this was before the split-step, kept as an independent check on it.
 //   Good to about 30 degrees, and its phase error builds with range: five
@@ -160,7 +160,7 @@ struct PeSetup
     // Thickness of the absorbing layer, in wavelengths.
     double layer_wavelengths = 100.0;
     // Turbulence, by random phase screens (Gilbert, Raspet and Di 1990;
-    // Salomons 2001, appendix I): off at 0.  gamma_t is the HARMONOISE
+    // Salomons 2001, appendix J): off at 0.  gamma_t is the HARMONOISE
     // strength, C_T^2/T0^2 + 22 C_v^2 / (3 c0^2) (ground_effect.hpp), so the
     // effective index's structure parameter is gamma_t / 4 -- the value whose
     // spherical-wave coherence Ostashev's form (Attenborough & Taherzadeh 2026,

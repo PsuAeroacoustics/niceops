@@ -39,7 +39,7 @@ endif()
 # Database::level_at_observer, which lives in sphere_database.cpp, ~100 million
 # times a run; without LTO that is an out-of-line call across a translation-unit
 # boundary every time, with the spills and the lost hoisting that implies.
-# Turning it on is worth 19% of the loop and leaves the golden comparison
+# Turning it on is worth 18% of the loop and leaves the golden comparison
 # passing unchanged, so it is on by default where the toolchain supports it.
 option(NICEOPS_LTO "Build with link-time optimization" ON)
 if(NICEOPS_LTO)

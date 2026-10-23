@@ -2663,7 +2663,9 @@ elsewhere in this file are in [Wind profile and stability](#wind-profile-and-sta
 
 The R44 rows were scored on the RO-44 database before its frame-bearing rebuild
 ([HISTORY](HISTORY.md#the-2017-noise-abatement-databases)), so their `stratified_plate` column
-differs from the Eglin scores in [Wind profile and stability](#wind-profile-and-stability).
+differs from the Eglin scores in [Wind profile and stability](#wind-profile-and-stability). The R66
+rows' 874 mic-runs are the 876 of [Shipped databases](#shipped-databases-approach-scores-per-aircraft)
+less the two whose recording cut the flyover short, which this table's gates also drop.
 
 - On the R44 it matches the per-run PE propagation tables (1.47 dB overall and 3.51 at 0–5°)
   with no table.

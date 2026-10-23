@@ -233,8 +233,8 @@ EpnlResult effective_perceived_noise_level(const std::vector<PnlSpectrum>& histo
         // A36.4.4.2: a tone correction at PNLTM below the mean of the five
         // records centered there suggests the tone was split between bands.
         // The difference is the adjustment Delta_B, added to EPNL as a term of
-        // its own (ICAO Annex 16 Vol. I, Appendix 2; FAA AC 36-4; panam F014):
-        // read literally, 14 CFR 36 raises PNLTM and takes D from it, and the
+        // its own (panam F014), where ICAO Annex 16 Vol. I, Appendix 2 and AC
+        // 36-4D add it to PNLTM (THEORY 10.5): read literally, 14 CFR 36 raises PNLTM and takes D from it, and the
         // two cancel in EPNL = PNLTM + D.  Near either end of the history the
         // mean is over the records there are.
         const std::size_t lo = peak >= 2 ? peak - 2 : 0;

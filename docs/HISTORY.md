@@ -237,8 +237,8 @@ regenerating it from D would only restore the departures.
 **Results from before September 2026 are not comparable to results after.** `eval` used to
 multiply the database's `EAA` by a constant 4.0, computing `4.0 * EAA * (range - r)/1000` under a
 `//TODO Add ground effects` inherited verbatim from the D original (`c74bab3`). That is not a
-ground effect, and it overstated atmospheric absorption fourfold: 168 dB at 6 km, where the
-physical value is 14. panam *writes* that `EAA` as `SPLA - SPLAa` over a 1000 m reference and
+ground effect, and it overstated atmospheric absorption fourfold: on the demo database, whose `EAA` averages
+3.8 dB per km, about 92 dB at 6 km where the physical value is about 23. panam *writes* that `EAA` as `SPLA - SPLAa` over a 1000 m reference and
 consumes it as `EAA / distance * (slant_range - radius)`, with no such factor. NICEOPS does the
 same.
 
