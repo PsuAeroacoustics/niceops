@@ -247,6 +247,53 @@ TEST_CASE("the plan grid finds what trying everything finds", "[buildings]")
     REQUIRE(hits > 400);
 }
 
+TEST_CASE("the facades in a box are those whose cells meet the box's", "[buildings]")
+{
+    std::mt19937 rng(5);
+    std::uniform_real_distribution<double> unit(0.0, 1.0);
+    std::vector<Footprint> footprints;
+    for (int i = 0; i < 40; i++)
+    {
+        const double cx = 300.0 * unit(rng), cy = 300.0 * unit(rng), a = 4.0 + 20.0 * unit(rng);
+        const double b = 4.0 + 20.0 * unit(rng);
+        Footprint f;
+        f.x = {cx - a, cx + a, cx + a, cx - a};
+        f.y = {cy - b, cy - b, cy + b, cy + b};
+        f.top = 10.0;
+        footprints.push_back(f);
+    }
+    const Buildings city(footprints);
+    std::vector<std::uint32_t> listed;
+    std::size_t kinds[3] = {0, 0, 0};
+    for (int trial = 0; trial < 3000; trial++)
+    {
+        // Boxes from a few metres to past the whole district, some off it.
+        double x0 = -400.0 + 800.0 * unit(rng), y0 = -400.0 + 800.0 * unit(rng);
+        const double size = std::pow(10.0, 3.2 * unit(rng));
+        double x1 = x0 + size * unit(rng), y1 = y0 + size * unit(rng);
+        if (trial % 10 == 0)
+        {
+            x0 = -50.0 - 100.0 * unit(rng);
+            y0 = -50.0 - 100.0 * unit(rng);
+            x1 = 400.0 + 100.0 * unit(rng);
+            y1 = 400.0;
+        }
+        city.facades_in_box(x0, x1, y0, y1, listed);
+        PlanGrid::Cells cells;
+        const Buildings::FacadesInBox which = city.facades_in_box(x0, x1, y0, y1, cells);
+        kinds[static_cast<int>(which)]++;
+        std::vector<std::uint32_t> met;
+        for (std::uint32_t f = 0; f < city.facades().size(); f++)
+            if (which == Buildings::FacadesInBox::all
+                    || (which == Buildings::FacadesInBox::cells && city.facade_cells(f).meets(cells)))
+                met.push_back(f);
+        REQUIRE(met == listed);
+    }
+    REQUIRE(kinds[0] > 100);
+    REQUIRE(kinds[1] > 100);
+    REQUIRE(kinds[2] > 100);
+}
+
 TEST_CASE("a courtyard is open to the sky and walled from inside", "[buildings]")
 {
     Footprint block = box(0.0, 0.0, 60.0, 60.0, 15.0);

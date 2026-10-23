@@ -299,6 +299,19 @@ public:
     void section(const Vec3& a, const Vec3& b, std::vector<SectionSpan>& out) const;
     // The same for the facades, ascending.
     void facades_in_box(double x_min, double x_max, double y_min, double y_max, std::vector<std::uint32_t>& out) const;
+    // Which facades facades_in_box returns for this box, without listing
+    // them: none, every one, or those whose facade_cells meet `cells`.
+    enum class FacadesInBox { none, all, cells };
+    FacadesInBox facades_in_box(double x_min, double x_max, double y_min, double y_max, PlanGrid::Cells& cells) const;
+    // The facade grid's cells a facade is registered in, and their number.
+    const PlanGrid::Cells& facade_cells(std::size_t facade) const
+    {
+        return facade_cells_[facade];
+    }
+    std::size_t facade_grid_size() const
+    {
+        return facade_grid_.cell_count();
+    }
 
     // Whether a ray from `a` along `direction` reaches infinity without
     // passing through a building.  A ray that does not rise escapes once past
@@ -419,6 +432,7 @@ private:
     // The buildings' and the facades' boxes, for the queries to walk.
     PlanGrid building_grid_;
     PlanGrid facade_grid_;
+    std::vector<PlanGrid::Cells> facade_cells_;
     std::vector<std::size_t> facade_building_;
     std::vector<std::size_t> roof_facade_;
     // Per edge, the other buildings whose boxes reach its box (buried_on).

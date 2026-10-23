@@ -908,7 +908,7 @@ it bought:
   source's and microphone's places from their ends (`PathEnd::View`), so `keller_point` takes
   one square root an edge, not two, and a once-diffracted ray's Keller point takes none: both
   ends' places are the views', worked out once an end rather than once a pair of images.
-- **The source's reach pre-checks are kept on the pair** (`PairTable::Met`, `Between::reach`).
+- **The source's reach pre-checks are kept on the pair** (`PairTable::Met`, `Via::reach`).
   Which of the source's ends reach the first edge, by each way, depends only on those ends and
   the way's `Side`, and the loops meet a pair from the same ends once per microphone image.
   `twice_pair` takes a name for the ends (`SourceEnds`: an image at its k-th edge, or a bounce at
@@ -922,6 +922,25 @@ it bought:
   1.153 -> 1.123 s (mic 300), 0.894 -> 0.868 s (mic 5), about 3%. DigiCity at 12 m: 0.115 ->
   0.113 s. The prototype's 12% was measured before the chain, convex-piece and slope-edge cuts,
   which removed most of the work this skips.
+- **A pair's between list is slim, pooled and found without a box query** (`between_of`). Each
+  way holds only `Via`: the facade, `reach`, and `on1`, the first edge's view of the mirrored
+  second, which is all the source's reach test reads (`side_of` reads a segment's start, direction
+  and length, and `mirrored_line` forms them by `mirrored_edge`'s own calls). The mirrored edge,
+  `on2` and `parallel` (`Between`) are formed the first time a source end reaches by that way --
+  one way in six on the suburb -- with `edge_pair`'s own arithmetic. Lists sit in one thread's
+  pool, indexed from the pair's entry. Where the pair's box spans an eighth of the facade grid or
+  more, the candidates are walked as the AND of two per-edge bitsets of the facades each edge
+  has an end in front of (`FrontFacades`: `facade_side`'s expression on a normal formed as
+  `frame_of` forms it, kept per district under a 64 MB budget), kept where the facade's grid
+  cells (`Buildings::facade_cells`, `PlanGrid::item_cells`, the grid's own registration) meet the
+  box's: the same set `facades_in_box` returns, ascending, with no dedup or sort (`the facades in a
+  box are those whose cells meet the box's` checks that). Smaller boxes
+  keep `facades_in_box`, so the work stays local in a big district. The filters are conjunctive
+  and side-effect free, so the lists are unchanged; the ray dumps did not change by a byte, nor
+  with either path forced everywhere. Tracing, thread CPU, best of 3, alternated against the
+  previous commit: suburb 0.931 -> 0.641 s (mic 1), 1.117 -> 0.802 s (mic 300), 0.863 -> 0.590 s
+  (mic 5); DigiCity at 12 m 0.111 -> 0.101 s; a synthetic 900-building grid (3600 facades, 3
+  mics) 4.90 -> 2.77 s. Peak RSS of one suburb mic 569 -> 299 MB.
 - **A moving source traces each end once** (`PathEnd`, `--sources`). A field's image trees depend
   on the pair only through which near edges each image keeps, so an end traced with the edges
   near every end it will meet (its `partners`, `edges_near` over their points, ascending), each

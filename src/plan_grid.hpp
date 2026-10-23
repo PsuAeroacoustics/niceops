@@ -44,13 +44,11 @@ public:
         nx_ = static_cast<std::size_t>((x1 - x0_) / cell_) + 2;
         ny_ = static_cast<std::size_t>((y1 - y0_) / cell_) + 2;
         std::vector<std::vector<std::uint32_t>> cells(nx_ * ny_);
-        const double slack = 1e-6;
         for (std::size_t i = 0; i < n; i++)
         {
-            const std::size_t ia = column(boxes[4 * i] - slack), ib = column(boxes[4 * i + 1] + slack);
-            const std::size_t ja = row(boxes[4 * i + 2] - slack), jb = row(boxes[4 * i + 3] + slack);
-            for (std::size_t a = ia; a <= ib; a++)
-                for (std::size_t b = ja; b <= jb; b++)
+            const Cells c = item_cells(boxes[4 * i], boxes[4 * i + 1], boxes[4 * i + 2], boxes[4 * i + 3]);
+            for (std::size_t a = c.ia; a <= c.ib; a++)
+                for (std::size_t b = c.ja; b <= c.jb; b++)
                     cells[b * nx_ + a].push_back(static_cast<std::uint32_t>(i));
         }
         start_.push_back(0);
@@ -120,18 +118,57 @@ public:
     template <typename Visit>
     void box(double x_min, double x_max, double y_min, double y_max, Visit visit) const
     {
-        if (start_.empty() || x_max < x0_ || y_max < y0_ || x_min > x0_ + nx_ * cell_ || y_min > y0_ + ny_ * cell_)
+        Cells q;
+        if (!box_cells(x_min, x_max, y_min, y_max, q))
             return;
-        const std::size_t ia = column(x_min), ib = column(x_max), ja = row(y_min), jb = row(y_max);
-        for (std::size_t b = ja; b <= jb; b++)
-            for (std::size_t a = ia; a <= ib; a++)
+        for (std::size_t b = q.ja; b <= q.jb; b++)
+            for (std::size_t a = q.ia; a <= q.ib; a++)
             {
                 const std::size_t c = b * nx_ + a;
                 visit(items_.data() + start_[c], items_.data() + start_[c + 1]);
             }
     }
 
+    // A rectangle of cells: columns ia to ib and rows ja to jb, inclusive.
+    struct Cells
+    {
+        std::uint32_t ia = 0, ib = 0, ja = 0, jb = 0;
+
+        bool meets(const Cells& o) const
+        {
+            return ia <= o.ib && o.ia <= ib && ja <= o.jb && o.ja <= jb;
+        }
+    };
+
+    // The cells an item with this box is registered in.
+    Cells item_cells(double x_min, double x_max, double y_min, double y_max) const
+    {
+        const double slack = 1e-6;
+        return {narrow(column(x_min - slack)), narrow(column(x_max + slack)), narrow(row(y_min - slack)),
+                narrow(row(y_max + slack))};
+    }
+
+    // The cells box() visits for this box, or false where it visits none:
+    // an item is among box()'s exactly when its item_cells meet these.
+    bool box_cells(double x_min, double x_max, double y_min, double y_max, Cells& out) const
+    {
+        if (start_.empty() || x_max < x0_ || y_max < y0_ || x_min > x0_ + nx_ * cell_ || y_min > y0_ + ny_ * cell_)
+            return false;
+        out = {narrow(column(x_min)), narrow(column(x_max)), narrow(row(y_min)), narrow(row(y_max))};
+        return true;
+    }
+
+    std::size_t cell_count() const
+    {
+        return nx_ * ny_;
+    }
+
 private:
+    static std::uint32_t narrow(std::size_t i)
+    {
+        return static_cast<std::uint32_t>(i);
+    }
+
     std::size_t column(double x) const
     {
         const double c = std::floor((x - x0_) / cell_);

@@ -116,6 +116,27 @@ Edge mirrored_edge(const Facade& facade, const Edge& g)
     return m;
 }
 
+// Only the line of an edge mirrored in a facade's plane or the floor's: its
+// start, direction and length, by mirrored_edge's and floor_mirrored_edge's
+// own calls.  That is all side_of reads of a segment.
+Edge mirrored_line(const Facade& facade, const Edge& g)
+{
+    Edge m;
+    m.start = mirror_in(facade, g.start);
+    m.direction = mirror_direction(facade, g.direction);
+    m.length = g.length;
+    return m;
+}
+
+Edge floor_mirrored_line(const Edge& g)
+{
+    Edge m;
+    m.start = below(g.start);
+    m.direction = below(g.direction);
+    m.length = g.length;
+    return m;
+}
+
 // The same in the floor's plane.
 Edge floor_mirrored_edge(const Edge& g)
 {
@@ -598,13 +619,19 @@ struct EdgePair
     bool parallel = false;
 };
 
-EdgePair edge_pair(const Edge& g1, const Edge& g2)
+// The same with the second's points about the first's line already known.
+EdgePair edge_pair(const Edge& g1, const Edge& g2, const Side& on1)
 {
     EdgePair p;
-    p.on1 = side_of(g1, g2);
+    p.on1 = on1;
     p.on2 = side_of(g2, g1);
     p.parallel = std::abs(p.on2.c1) > 1.0 - 1e-12;
     return p;
+}
+
+EdgePair edge_pair(const Edge& g1, const Edge& g2)
+{
+    return edge_pair(g1, g2, side_of(g1, g2));
 }
 
 // A set of source ends a twice-diffracted pair is tried from (twice_pair):
@@ -638,7 +665,7 @@ public:
         SourceEnds from;
         std::uint8_t reach = 0;
         bool any = false;
-        std::uint32_t between = no_list;
+        std::uint32_t between = no_list, between_count = 0;
     };
 
     void start()
@@ -671,7 +698,7 @@ public:
         stamp_[i] = generation_;
         key_[i] = key;
         value_[i] = static_cast<std::uint32_t>(pairs_.size());
-        pairs_.push_back({edge_pair(edges[e1], edges[e2]), {}, 0, false, Met::no_list});
+        pairs_.push_back({edge_pair(edges[e1], edges[e2]), {}, 0, false, Met::no_list, 0});
         return pairs_.back();
     }
 
@@ -712,6 +739,80 @@ private:
     std::vector<Met> pairs_;
     std::uint32_t generation_ = 0;
     unsigned shift_ = 54;
+};
+
+// Which facades each edge has an end in front of, more than `contact`, a bit
+// per facade: what a facade between a twice-diffracted pair's edges needs of
+// both (twice_pair).  Formed for an edge the first time it is asked for, with
+// facade_side's arithmetic on a normal formed once per facade, and kept for
+// the district; past a budget it starts again.
+class FrontFacades
+{
+public:
+    // The bits of e1 and e2, which last until the next call.
+    void pair(const Buildings& buildings, std::size_t e1, std::size_t e2, const std::uint64_t*& b1,
+            const std::uint64_t*& b2)
+    {
+        if (district_ != buildings.id())
+        {
+            district_ = buildings.id();
+            const std::vector<Facade>& facades = buildings.facades();
+            normals_.resize(facades.size());
+            for (std::size_t f = 0; f < facades.size(); f++)
+            {
+                const double dx = facades[f].x1 - facades[f].x0, dy = facades[f].y1 - facades[f].y0;
+                const double length = std::hypot(dx, dy);
+                normals_[f] = {-dy / length, dx / length};
+            }
+            words_ = (facades.size() + 63) / 64;
+            slot_.clear();
+        }
+        if (slot_.empty() || bits_.size() + 2 * words_ > budget)
+        {
+            slot_.assign(buildings.edges().size(), none);
+            bits_.clear();
+        }
+        const std::size_t s1 = slot(buildings, e1), s2 = slot(buildings, e2);
+        b1 = bits_.data() + s1 * words_;
+        b2 = bits_.data() + s2 * words_;
+    }
+
+    std::size_t words() const
+    {
+        return words_;
+    }
+
+private:
+    static constexpr std::uint32_t none = std::numeric_limits<std::uint32_t>::max();
+    // 64 MB.
+    static constexpr std::size_t budget = std::size_t(1) << 23;
+
+    std::size_t slot(const Buildings& buildings, std::size_t e)
+    {
+        if (slot_[e] != none)
+            return slot_[e];
+        const std::size_t s = bits_.size() / std::max<std::size_t>(words_, 1);
+        slot_[e] = static_cast<std::uint32_t>(s);
+        bits_.resize(bits_.size() + words_, 0);
+        const Edge& g = buildings.edges()[e];
+        const Vec3 a = g.start, b = g.start + g.length * g.direction;
+        const std::vector<Facade>& facades = buildings.facades();
+        for (std::size_t f = 0; f < facades.size(); f++)
+        {
+            const Facade& facade = facades[f];
+            const auto [nx, ny] = normals_[f];
+            if ((a.x - facade.x0) * nx + (a.y - facade.y0) * ny > Buildings::contact
+                    || (b.x - facade.x0) * nx + (b.y - facade.y0) * ny > Buildings::contact)
+                bits_[s * words_ + f / 64] |= std::uint64_t(1) << (f % 64);
+        }
+        return s;
+    }
+
+    std::uint64_t district_ = 0;
+    std::vector<std::pair<double, double>> normals_;
+    std::size_t words_ = 0;
+    std::vector<std::uint32_t> slot_;
+    std::vector<std::uint64_t> bits_;
 };
 
 // Whether keller's point between p and q can fall within the stretch of the
@@ -2369,24 +2470,44 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
     // it: the crossings fill the hull of the four from end to end.  Facades
     // farther off than the pair's own extent, at least 1 m, are not tried.
     // The floor is always a candidate, last.  Worked out once a field for each
-    // pair met.  `reach` is twice_pair's: which of the pair's last source ends
-    // reached its first edge this way.
+    // pair met, into one pool: a pair's ways are `between_count` from
+    // `between`.  A way (Via) holds what the source's reach test reads, the
+    // first edge's view of the mirrored second, and `reach`, twice_pair's
+    // record of which of the pair's last source ends reached its first edge
+    // that way; the mirrored edge and the rest of the pair's geometry
+    // (Between) are formed the first time a source end reaches by it, which
+    // on a pitched suburb is one way in six.
     struct Between
     {
         std::size_t facade;
         Edge mirror;
         EdgePair pair;
         bool floor = false;
-        std::uint8_t reach = 0;
     };
-    std::vector<std::vector<Between>> between_lists;
-    std::vector<std::uint32_t> nearby;
-    auto between_of = [&](PairTable::Met& met, std::size_t e1, std::size_t e2) -> std::vector<Between>& {
+    struct Via
+    {
+        std::uint32_t facade = 0;
+        bool floor = false;
+        std::uint8_t reach = 0;
+        std::uint32_t full = PairTable::Met::no_list;
+        Side on1;
+    };
+    thread_local std::vector<Via> vias;
+    thread_local std::vector<Between> betweens;
+    thread_local FrontFacades front;
+    thread_local std::vector<std::uint32_t> nearby;
+    vias.clear();
+    betweens.clear();
+    // The candidates are those facades_in_box finds, ascending.  Where its
+    // box covers much of the district, they are walked instead as the
+    // facades both edges have an end in front of (FrontFacades), those in the
+    // box's cells: the same facades, met in the same order, without listing
+    // the cells' entries, deduplicating and sorting them.
+    const auto between_of = [&](PairTable::Met& met, std::size_t e1, std::size_t e2) -> Via* {
         if (met.between != PairTable::Met::no_list)
-            return between_lists[met.between];
-        assert(between_lists.size() < PairTable::Met::no_list);
-        met.between = static_cast<std::uint32_t>(between_lists.size());
-        std::vector<Between>& list = between_lists.emplace_back();
+            return vias.data() + met.between;
+        assert(vias.size() < PairTable::Met::no_list);
+        met.between = static_cast<std::uint32_t>(vias.size());
         const Edge& g1 = edges[e1];
         const Edge& g2 = edges[e2];
         const Vec3 ends[4] = {g1.start, g1.start + g1.length * g1.direction, g2.start,
@@ -2402,12 +2523,11 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
             z1 = std::max(z1, e.z);
         }
         const double grow = std::max({x1 - x0, y1 - y0, 1.0});
-        buildings.facades_in_box(x0 - grow, x1 + grow, y0 - grow, y1 + grow, nearby);
-        for (const std::uint32_t f : nearby)
-        {
+        // The facade's other tests, its ends' fronts once known.
+        const auto consider = [&](std::uint32_t f, bool fronts) {
             const Facade& facade = buildings.facades()[f];
             if (facade.top < z0 - Buildings::contact || facade.bottom > z1 + Buildings::contact)
-                continue;
+                return;
             double side[4];
             bool front1 = false, front2 = false, all = true;
             for (int k = 0; k < 4; k++)
@@ -2416,8 +2536,8 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                 (k < 2 ? front1 : front2) |= side[k] > Buildings::contact;
                 all = all && side[k] > Buildings::contact;
             }
-            if (!front1 || !front2)
-                continue;
+            if (!fronts && (!front1 || !front2))
+                return;
             if (all)
             {
                 const double fx = facade.x1 - facade.x0, fy = facade.y1 - facade.y0, f2 = fx * fx + fy * fy;
@@ -2434,16 +2554,55 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                         hi = std::max(hi, u);
                     }
                 if (hi < -1e-9 || lo > 1.0 + 1e-9)
-                    continue;
+                    return;
             }
-            Between b {f, mirrored_edge(facade, g2), {}};
-            b.pair = edge_pair(g1, b.mirror);
-            list.push_back(std::move(b));
+            Via via;
+            via.facade = f;
+            via.on1 = side_of(g1, mirrored_line(facade, g2));
+            vias.push_back(via);
+        };
+        PlanGrid::Cells cells;
+        const Buildings::FacadesInBox in_box
+                = buildings.facades_in_box(x0 - grow, x1 + grow, y0 - grow, y1 + grow, cells);
+        const std::size_t box_cells = std::size_t(cells.ib - cells.ia + 1) * (cells.jb - cells.ja + 1);
+        if (in_box == Buildings::FacadesInBox::cells && 8 * box_cells < buildings.facade_grid_size())
+        {
+            buildings.facades_in_box(x0 - grow, x1 + grow, y0 - grow, y1 + grow, nearby);
+            for (const std::uint32_t f : nearby)
+                consider(f, false);
         }
-        Between floor {Buildings::no_facade, floor_mirrored_edge(g2), {}, true};
-        floor.pair = edge_pair(g1, floor.mirror);
-        list.push_back(std::move(floor));
-        return list;
+        else if (in_box != Buildings::FacadesInBox::none)
+        {
+            const std::uint64_t *front1, *front2;
+            front.pair(buildings, e1, e2, front1, front2);
+            for (std::size_t w = 0; w < front.words(); w++)
+                for (std::uint64_t m = front1[w] & front2[w]; m != 0; m &= m - 1)
+                {
+                    const std::uint32_t f = static_cast<std::uint32_t>(64 * w + __builtin_ctzll(m));
+                    if (in_box == Buildings::FacadesInBox::all || buildings.facade_cells(f).meets(cells))
+                        consider(f, true);
+                }
+        }
+        Via floor;
+        floor.floor = true;
+        floor.on1 = side_of(g1, floor_mirrored_line(g2));
+        vias.push_back(floor);
+        met.between_count = static_cast<std::uint32_t>(vias.size() - met.between);
+        return vias.data() + met.between;
+    };
+    // A way's Between, formed the first time.  A reference lasts until the
+    // next call.
+    const auto formed = [&](Via& via, std::size_t e1, std::size_t e2) -> const Between& {
+        if (via.full == PairTable::Met::no_list)
+        {
+            assert(betweens.size() < PairTable::Met::no_list);
+            via.full = static_cast<std::uint32_t>(betweens.size());
+            Edge mirror = via.floor ? floor_mirrored_edge(edges[e2])
+                                    : mirrored_edge(buildings.facades()[via.facade], edges[e2]);
+            EdgePair pair = edge_pair(edges[e1], mirror, via.on1);
+            betweens.push_back({via.floor ? Buildings::no_facade : via.facade, std::move(mirror), pair, via.floor});
+        }
+        return betweens[via.full];
     };
     std::vector<Vec3> to_source, to_microphone, across;
     // One end's side of a twice-diffracted ray as its edge sees it: an image
@@ -2746,13 +2905,13 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
         // between them, the second edge mirrored in it (h2) and
         // the microphone's image with it: the path unfolds about
         // the facade into a double diffraction of its own.
-        std::vector<Between>* middle = options.max_between_reflections > 0 ? &between_of(met, e1, e2) : nullptr;
-        const std::size_t ways = 1 + (middle != nullptr ? middle->size() : 0);
+        Via* middle = options.max_between_reflections > 0 ? between_of(met, e1, e2) : nullptr;
+        const std::size_t ways = 1 + (middle != nullptr ? met.between_count : 0);
         bool any_way = false;
         for (std::size_t way = 0; way < ways; way++)
         {
-            Between* via = way > 0 ? &(*middle)[way - 1] : nullptr;
-            const EdgePair& pair = via != nullptr ? via->pair : direct;
+            Via* way_via = way > 0 ? middle + (way - 1) : nullptr;
+            const Side& on1 = way_via != nullptr ? way_via->on1 : direct.on1;
             // Which of the source's ends can reach the first edge's
             // segment, and the microphone's the second's: the pre-checks
             // for one end do not depend on the other's.  A mirror keeps
@@ -2763,15 +2922,14 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                 // The microphone's ends only where a source's end reaches:
                 // a pitched suburb's pairs mostly reach from neither.  Every
                 // way is tried the first time, so each holds its bits.
-                std::uint8_t& bits = via != nullptr ? via->reach : met.reach;
+                std::uint8_t& bits = way_via != nullptr ? way_via->reach : met.reach;
                 if (!known)
                 {
                     bits = 0;
                     for (int k = 0; k < na; k++)
                     {
                         const PathEnd::View& p = *as[k].view;
-                        if (p.lit && keller_between(p, pair.on1, reach_slack)
-                                && keller_can_reach(p, pair.on1, reach_slack))
+                        if (p.lit && keller_between(p, on1, reach_slack) && keller_can_reach(p, on1, reach_slack))
                             bits |= static_cast<std::uint8_t>(1u << k);
                     }
                 }
@@ -2780,6 +2938,12 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                 if (bits == 0)
                     continue;
                 any_way = true;
+            }
+            // twice() does not form a Between, so `via` lasts it.
+            const Between* via = way_via != nullptr ? &formed(*way_via, e1, e2) : nullptr;
+            const EdgePair& pair = via != nullptr ? via->pair : direct;
+            if (options.prune)
+            {
                 for (int k = 0; k < nb; k++)
                 {
                     const PathEnd::View& p = *bs[k].view;

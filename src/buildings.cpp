@@ -957,7 +957,12 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
         facade_size += length;
     }
     if (!facades_.empty())
+    {
         facade_grid_ = PlanGrid(facade_boxes, std::max(1.0, 1.5 * facade_size / facades_.size()));
+        for (std::size_t i = 0; i < facades_.size(); i++)
+            facade_cells_.push_back(facade_grid_.item_cells(facade_boxes[4 * i], facade_boxes[4 * i + 1],
+                    facade_boxes[4 * i + 2], facade_boxes[4 * i + 3]));
+    }
 
     // Each edge's buriers: the other buildings whose boxes reach its own.
     edge_buriers_.assign(edges_.size(), {});
@@ -1451,12 +1456,11 @@ void Buildings::facades_in_box(double x_min, double x_max, double y_min, double 
         std::vector<std::uint32_t>& out) const
 {
     out.clear();
-    if (facades_.empty())
+    PlanGrid::Cells cells;
+    const FacadesInBox which = facades_in_box(x_min, x_max, y_min, y_max, cells);
+    if (which == FacadesInBox::none)
         return;
-    // Between-edge reflection searches often cover the whole district.
-    // Every facade is then a candidate, already in ascending order: avoid
-    // walking its grid cells, deduplicating their entries and sorting them.
-    if (x_min <= x_min_ && x_max >= x_max_ && y_min <= y_min_ && y_max >= y_max_)
+    if (which == FacadesInBox::all)
     {
         out.resize(facades_.size());
         for (std::size_t i = 0; i < out.size(); i++)
@@ -1471,6 +1475,19 @@ void Buildings::facades_in_box(double x_min, double x_max, double y_min, double 
                 out.push_back(*i);
     });
     std::sort(out.begin(), out.end());
+}
+
+Buildings::FacadesInBox Buildings::facades_in_box(double x_min, double x_max, double y_min, double y_max,
+        PlanGrid::Cells& cells) const
+{
+    if (facades_.empty())
+        return FacadesInBox::none;
+    // Between-edge reflection searches often cover the whole district.
+    // Every facade is then a candidate, already in ascending order: avoid
+    // walking its grid cells, deduplicating their entries and sorting them.
+    if (x_min <= x_min_ && x_max >= x_max_ && y_min <= y_min_ && y_max >= y_max_)
+        return FacadesInBox::all;
+    return facade_grid_.box_cells(x_min, x_max, y_min, y_max, cells) ? FacadesInBox::cells : FacadesInBox::none;
 }
 
 std::size_t Buildings::first_hit(const Vec3& pos, const Vec3& dir, bool below_floor, Vec3& hit) const
