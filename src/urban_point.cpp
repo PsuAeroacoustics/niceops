@@ -92,6 +92,8 @@ struct PairScratch
     std::vector<Vec3> launch;
     std::vector<double> azimuth;
     std::vector<std::uint32_t> first, second;
+    std::vector<std::uint32_t> by_z;
+    std::vector<std::uint64_t> candidates;
     std::vector<double> degrees, power, spread_power;
     std::vector<std::int8_t> wrap;
     std::vector<double> mean, root_spread;
@@ -160,6 +162,9 @@ void partially_coherent_energies(const PointSourceField& field, const std::vecto
         if (rotor)
             azimuth[i] = std::atan2(left.dot(launch[i]), frame.nose.dot(launch[i]));
     }
+    // A pair whose mean coherency is below this adds nothing worth its cost;
+    // the decay only grows with the band, so it never comes back.
+    constexpr double negligible = 14.0; // exp(-14) = 8e-7
     // Every pair: its rays, the distance between their launches as an angle
     // (the chord in degrees: within a few hundredths of a degree of the angle
     // while the decay has not run its course, and with it the decay is a
@@ -178,33 +183,77 @@ void partially_coherent_energies(const PointSourceField& field, const std::vecto
     wrap.clear();
     if (coherence.sum != RaySum::energy)
     {
-        const std::size_t count = n * (n - 1) / 2;
-        first.reserve(count);
-        second.reserve(count);
-        degrees.reserve(count);
-        power.reserve(count);
-        if (variance != nullptr)
-            spread_power.reserve(count);
-        wrap.reserve(count);
-        for (std::size_t i = 0; i < n; i++)
-            for (std::size_t j = i + 1; j < n; j++)
-            {
-                first.push_back(static_cast<std::uint32_t>(i));
-                second.push_back(static_cast<std::uint32_t>(j));
-                const double d = (launch[i] - launch[j]).norm() * 180.0 / pi;
-                degrees.push_back(d);
-                power.push_back(measured ? std::pow(d, coherence.exponent) : 0.0);
-                if (variance != nullptr)
-                    spread_power.push_back(coherence.spread_exponent == 1.0 ? d : std::pow(d, coherence.spread_exponent));
-                const double raw = azimuth[i] - azimuth[j];
-                wrap.push_back(static_cast<std::int8_t>(raw > pi ? -1 : raw < -pi ? 1 : 0));
-            }
+        auto add = [&](std::size_t i, std::size_t j) {
+            first.push_back(static_cast<std::uint32_t>(i));
+            second.push_back(static_cast<std::uint32_t>(j));
+            const double d = (launch[i] - launch[j]).norm() * 180.0 / pi;
+            degrees.push_back(d);
+            power.push_back(measured ? std::pow(d, coherence.exponent) : 0.0);
+            if (variance != nullptr)
+                spread_power.push_back(coherence.spread_exponent == 1.0 ? d : std::pow(d, coherence.spread_exponent));
+            const double raw = azimuth[i] - azimuth[j];
+            wrap.push_back(static_cast<std::int8_t>(raw > pi ? -1 : raw < -pi ? 1 : 0));
+        };
+        // Without the variance, a pair beyond a fixed angle is dropped at the
+        // first band and never comes back: the cone's outer edge, or where
+        // the measured decay reaches `negligible` at the first band (it grows
+        // with the band).  Then only the pairs within it are formed, found by
+        // a sweep over the launches sorted by z and taken in the all-pairs
+        // loop's (i, j) order, so every band sums the same live pairs in the
+        // same order.  The chord's margin covers its rounding; a pair inside
+        // it but beyond the angle is dropped at the first band as before.
+        // The variance takes every pair.
+        double reach = std::numeric_limits<double>::infinity();
+        if (variance == nullptr && cone)
+            reach = coherence.cone * (1.0 + SourceCoherence::cone_taper);
+        else if (variance == nullptr && measured && coherence.exponent > 0.0 && !bands.empty())
+        {
+            const double decay = std::pow(bands.front() / coherence.scale, coherence.exponent);
+            if (decay > 0.0)
+                reach = std::pow(negligible / decay, 1.0 / coherence.exponent);
+        }
+        // Past 60 degrees most pairs are candidates anyway; a non-finite
+        // launch has no place in the sort, and the old loop drops its pairs.
+        const bool sweep = reach < 60.0 && n > 32
+                && std::all_of(launch.begin(), launch.end(), [](const Vec3& v) { return std::isfinite(v.norm()); });
+        if (sweep)
+        {
+            const double chord = reach * pi / 180.0 * (1.0 + 1e-6) + 1e-12;
+            auto& by_z = scratch.by_z;
+            auto& candidates = scratch.candidates;
+            by_z.resize(n);
+            std::iota(by_z.begin(), by_z.end(), 0);
+            std::sort(by_z.begin(), by_z.end(),
+                    [&](std::uint32_t a, std::uint32_t b) { return launch[a].z < launch[b].z; });
+            candidates.clear();
+            for (std::size_t a = 0; a < n; a++)
+                for (std::size_t b = a + 1; b < n && launch[by_z[b]].z - launch[by_z[a]].z <= chord; b++)
+                {
+                    const std::uint64_t i = std::min(by_z[a], by_z[b]), j = std::max(by_z[a], by_z[b]);
+                    if ((launch[i] - launch[j]).norm() <= chord)
+                        candidates.push_back(i << 32 | j);
+                }
+            std::sort(candidates.begin(), candidates.end());
+            for (std::uint64_t c : candidates)
+                add(static_cast<std::size_t>(c >> 32), static_cast<std::size_t>(c & 0xffffffffu));
+        }
+        else
+        {
+            const std::size_t count = n * (n - 1) / 2;
+            first.reserve(count);
+            second.reserve(count);
+            degrees.reserve(count);
+            power.reserve(count);
+            if (variance != nullptr)
+                spread_power.reserve(count);
+            wrap.reserve(count);
+            for (std::size_t i = 0; i < n; i++)
+                for (std::size_t j = i + 1; j < n; j++)
+                    add(i, j);
+        }
     }
     const std::size_t pairs = first.size();
     const double half_band = std::pow(2.0, 1.0 / 6.0);
-    // A pair whose mean coherency is below this adds nothing worth its cost;
-    // the decay only grows with the band, so it never comes back.
-    constexpr double negligible = 14.0; // exp(-14) = 8e-7
     // Per band: each pair's mean coherency (at the band's centre, as it was
     // measured; the cone's is every band's) and the pairs it leaves anything
     // of; with the variance, each

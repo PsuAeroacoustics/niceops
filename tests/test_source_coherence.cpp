@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include "buildings.hpp"
@@ -546,4 +547,50 @@ TEST_CASE("the cone's phase interval takes the database's spread", "[source_cohe
     CoherenceRecord half;
     half.spread_scale = 300.0;
     REQUIRE_THROWS_AS(cone_coherence(1.0, half), std::invalid_argument);
+}
+
+// Without the variance, partially_coherent_energies forms only the pairs
+// within the cone's reach, or the measured decay's at the first band, found by
+// a sweep over the launches; the variance takes every pair, and the energies
+// it gives are the same sum.  So the two have to agree to the bit: in a
+// street canyon whose reflections give a few dozen rays, for the cone narrow
+// and wide, and for the measured model with its rotor's wrap.  Too few rays
+// for the sweep, they agree the same way.
+TEST_CASE("the cone's sum over the pairs within reach is the all-pairs sum", "[source_coherence]")
+{
+    auto wall = [](double x0, double x1, double y0, double y1, double top) {
+        Footprint f;
+        f.x = {x0, x1, x1, x0};
+        f.y = {y0, y0, y1, y1};
+        f.top = top;
+        return f;
+    };
+    const Buildings city({wall(-200.0, 200.0, -20.0, -12.0, 15.0), wall(-200.0, 200.0, 12.0, 20.0, 18.0),
+                                 wall(60.0, 70.0, -8.0, 4.0, 6.0)},
+            1.0 * pi / 180.0);
+    const std::vector<double> reflection(city.facades().size() * bands.size(), 0.9);
+    SourceCoherence measured = with(RaySum::measured);
+    measured.rotation_limit = 10000.0;
+    std::vector<SourceCoherence> models {with(RaySum::cone), cone_coherence(6.0), measured};
+    // The cut in the rotor's azimuth through the rays' spread.
+    const SphereFrame f = sphere_frame(Vec3(-1.0, 0.05, 0.0), Vec3(0.0, 0.0, 1.0));
+    const Buildings none;
+    const std::vector<std::pair<const Buildings*, Vec3>> cases {
+            {&city, Vec3(-80.0, 2.0, 5.0)}, {&city, Vec3(-30.0, -4.0, 30.0)}, {&none, Vec3(-30.0, -4.0, 30.0)}};
+    for (const auto& [buildings, source] : cases)
+    {
+        const PointSourceField field(*buildings, source, Vec3(120.0, -3.0, 1.2));
+        const std::size_t n = field.rays().size();
+        INFO(n << " rays");
+        REQUIRE((buildings == &none ? n < 32 : n > 32));
+        for (const SourceCoherence& model : models)
+        {
+            std::vector<double> alone(3 * bands.size()), with_variance(3 * bands.size()), variance(bands.size());
+            partially_coherent_energies(field, reflection, 1.0, bands, 0, c0, {}, nullptr, model, f, alone.data());
+            partially_coherent_energies(field, reflection, 1.0, bands, 0, c0, {}, nullptr, model, f,
+                    with_variance.data(), variance.data());
+            for (std::size_t q = 0; q < alone.size(); q++)
+                REQUIRE(alone[q] == with_variance[q]);
+        }
+    }
 }

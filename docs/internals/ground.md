@@ -1428,6 +1428,20 @@ each part was measured; what to keep in the code:
   its decay only grows with frequency.
 - **No sort.** An early version sorted the pairs by separation to break early; at 724 rays that is
   a sort of 262,000 pairs per field, and the shrinking live list does the job.
+- **Only the pairs within reach are formed**, without the variance. A pair past the cone's outer
+  edge, or past where the measured decay reaches e^-14 at the first band, is dropped there for
+  good. So for more than 32 rays and a reach under 60° the pairs come from a sweep over the
+  launches sorted by z (window and chord test at the reach plus 1e-6), sorted back into the
+  all-pairs loop's (i, j) order: the live list is the same pairs in the same order with the same
+  values, and the sums are the same to the bit. It sorts the rays and the ~1% of pairs in reach,
+  not the pairs the "No sort" note rejects. The variance (`--phase_interval`) and any non-finite
+  launch keep the all-pairs loop, since the variance's slots take pairs whose mean is 0. Cone sum,
+  thread CPU best of 3, alternated with the old build on a no-variance copy of the exactness dump:
+  DigiCity 40 mics 0.461 -> 0.354 s, suburb 0.073 -> 0.049 and 0.082 -> 0.048 s, terraces
+  0.807 -> 0.688 and 2.395 -> 2.221 s, the 135-ray district unchanged. The measured model gains
+  only with a first band of a few hundred Hz (at 20 Hz its reach passes 60°). CPU only: the GPU
+  takes the default cone sum. `[source_coherence]` holds the sweep to the all-pairs sum the
+  variance runs, bit for bit.
 - **The chord, not the angle.** |d_i - d_j| in degrees needs no acos, and a decay in the chord is a
   positive-definite kernel on the sphere, which a decay in the great-circle angle with an exponent
   above 1 is not; they differ by hundredths of a degree where the decay is not yet complete.
