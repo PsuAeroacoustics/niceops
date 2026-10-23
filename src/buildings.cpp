@@ -858,6 +858,25 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
     }
     if (!facades_.empty())
         facade_grid_ = PlanGrid(facade_boxes, std::max(1.0, 1.5 * facade_size / facades_.size()));
+
+    // Each edge's buriers: the other buildings whose boxes reach its own.
+    edge_buriers_.assign(edges_.size(), {});
+    std::vector<std::uint32_t> candidates;
+    for (std::size_t i = 0; i < edges_.size(); i++)
+    {
+        const Edge& e = edges_[i];
+        const Vec3 end = e.start + e.length * e.direction;
+        const double x0 = std::min(e.start.x, end.x) - contact, x1 = std::max(e.start.x, end.x) + contact;
+        const double y0 = std::min(e.start.y, end.y) - contact, y1 = std::max(e.start.y, end.y) + contact;
+        near_box(x0, x1, y0, y1, candidates);
+        for (const std::uint32_t b : candidates)
+        {
+            const double* box = &bounds_[4 * b];
+            if (b != e.building && box[0] <= x1 && box[1] >= x0 && box[2] <= y1 && box[3] >= y0)
+                edge_buriers_[i].push_back(b);
+        }
+        std::sort(edge_buriers_[i].begin(), edge_buriers_[i].end());
+    }
     // The edges were made building by building, and dropping the shared ones
     // kept their order.
     edge_begin_.assign(footprints_.size() + 1, edges_.size());
@@ -1066,6 +1085,14 @@ bool Buildings::buried(const Vec3& p) const
         return false;
     });
     return found;
+}
+
+bool Buildings::buried_on(std::size_t edge, const Vec3& p) const
+{
+    for (const std::uint32_t b : edge_buriers_[edge])
+        if (p.z > contact && p.z < roof_height(footprints_[b], p.x, p.y) - contact && strictly_inside(b, p.x, p.y))
+            return true;
+    return false;
 }
 
 Buildings::Support Buildings::support(const Vec3& p) const

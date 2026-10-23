@@ -810,8 +810,21 @@ it bought:
   [HISTORY](../HISTORY.md#urban-receivers)). A corner's own diffraction is left out of the
   model, and these were not it. Steffensen's step falls back to the map itself where it does not
   bring the residual down, and reuses the map it has already taken there.
-- **The checks after a solve run cheap to dear**: the angles, then `buried`, then the legs. The
-  first leg is blocked for half of what converges.
+- **Skew pairs are tested before they are solved, by convexity.** The path's length is convex in
+  the two edges' parameters, so minimised over one edge by its Keller point it is convex in the
+  other, and its slope just outside either end of that edge's stretch says whether the minimum
+  lies beyond. Four slopes, a dozen map evaluations, refuse what the stretches would have refused
+  after a 16-step solve: half of DigiCity's solved candidates. A margin of 1e-6 of the edge leaves
+  the boundary's cases to the solve.
+- **The checks after a solve run cheap to dear**: the angles, then `buried_on`, then the legs,
+  the microphone's first (42% open on DigiCity's field, the source's 57%, between the edges 72%).
+  `buried_on` tests only the other buildings whose boxes reach the edge's (`edge_buriers_`, built
+  once): an edge's own building holds none of its points strictly inside, and most edges have no
+  neighbour to test. Pairs whose source ends reach from neither image skip the microphone's reach
+  test, which on a pitched suburb is most of them.
+- **These were measured on the thread's CPU time**, best of four, the ray sets identical (count,
+  summed lengths and amplitudes) on DigiCity, the pitched suburb, the test district and a terrace:
+  DigiCity's 200 microphones 1.56 to 1.40 s, the suburb's four 14.7 to 13.1 s.
 - **The shared-face aperture is integrated by Filon's rule** (`double_wedge.cpp`), 6 to 24 times
   fewer integrand evaluations than the midpoint rule at a 24th of a wavelength and ten times its
   accuracy ([FIDELITY](../FIDELITY.md#a-point-source-among-buildings) has both against a 192nd of

@@ -323,6 +323,10 @@ public:
     // Whether `p` lies strictly inside a building's solid: inside a footprint
     // and between the floor and its roof, by `contact` or more.
     bool buried(const Vec3& p) const;
+    // buried(p) for p on edge `edge`, testing only the other buildings whose
+    // boxes reach the edge's: an edge's own building holds none of its points
+    // strictly inside.  Most edges have none to test.
+    bool buried_on(std::size_t edge, const Vec3& p) const;
 
     // What a point lies on, within `contact`, besides the floor (whose
     // reflection every ray's floor partner carries): a wall (its facade), a
@@ -408,6 +412,8 @@ private:
     PlanGrid facade_grid_;
     std::vector<std::size_t> facade_building_;
     std::vector<std::size_t> roof_facade_;
+    // Per edge, the other buildings whose boxes reach its box (buried_on).
+    std::vector<std::vector<std::uint32_t>> edge_buriers_;
     std::vector<Edge> edges_;
     std::vector<std::size_t> edge_begin_;
     // Per building: x min, x max, y min, y max.

@@ -1206,6 +1206,15 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
             || !same_tracing(microphone_end.options(), options))
         throw std::invalid_argument("PointSourceField: the ends must be a source and a microphone traced with the "
                                     "field's options");
+    // A thread's fields are alike in size: room for as many rays as its last
+    // had, so the rays are not moved as the list grows (a ray is a kilobyte).
+    thread_local std::size_t last_count = 0;
+    rays_.reserve(last_count + last_count / 8);
+    struct Remember
+    {
+        const std::vector<PointRay>& rays;
+        ~Remember() { last_count = rays.size(); }
+    } remember {rays_};
     const std::vector<std::size_t> near_edges = joined(source_end.near(), microphone_end.near());
     for (const PathEnd* end : {&source_end, &microphone_end})
         if (!std::includes(end->candidates().begin(), end->candidates().end(), near_edges.begin(), near_edges.end()))
@@ -2438,6 +2447,54 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
             pair.on2.at(first, along, off);
             return keller_point(along, off, from_microphone.along, from_microphone.off, second);
         };
+        // Whether the stationary point can lie in the edges' stretches at all,
+        // before solving for it (skew edges; parallel ones solve outright).
+        // The path's length is convex in the two edges' parameters, so
+        // minimised over one, by its Keller point, it is convex in the other,
+        // and its slope just past either end of that one's stretch says
+        // whether the minimum lies beyond: such a candidate the stretches
+        // would refuse after the solve.  A margin of 1e-6 of the edge leaves
+        // the boundary's cases to the solve.  Half the solved candidates fall
+        // outside on DigiCity's field, at a dozen evaluations of the map each.
+        if (!pair.parallel)
+        {
+            // Along the second edge, at x: the first edge's Keller point,
+            // that point about the second edge's line, and the slope.
+            auto slope2 = [&](double x, double& out) {
+                double along, off, first_at;
+                pair.on1.at(x, along, off);
+                if (!keller_point(from_source.along, from_source.off, along, off, first_at))
+                    return false;
+                pair.on2.at(first_at, along, off);
+                const double d1 = x - along, d2 = from_microphone.along - x;
+                const double l1 = std::hypot(d1, off), l2 = std::hypot(d2, from_microphone.off);
+                if (!(l1 > 0.0 && l2 > 0.0))
+                    return false;
+                out = d1 / l1 - d2 / l2;
+                return true;
+            };
+            // Along the first edge, the same with the ends swapped.
+            auto slope1 = [&](double x, double& out) {
+                double along, off, second_at;
+                pair.on2.at(x, along, off);
+                if (!keller_point(along, off, from_microphone.along, from_microphone.off, second_at))
+                    return false;
+                pair.on1.at(second_at, along, off);
+                const double d1 = x - from_source.along, d2 = along - x;
+                const double l1 = std::hypot(d1, from_source.off), l2 = std::hypot(d2, off);
+                if (!(l1 > 0.0 && l2 > 0.0))
+                    return false;
+                out = d1 / l1 - d2 / l2;
+                return true;
+            };
+            const double margin2 = 1e-6 * std::max(1.0, h2.length), margin1 = 1e-6 * std::max(1.0, g1.length);
+            double slope;
+            if ((slope2(from_microphone.from - margin2, slope) && slope > 0.0)
+                    || (slope2(from_microphone.to + margin2, slope) && slope < 0.0)
+                    || (slope1(from_source.from - margin1, slope) && slope > 0.0)
+                    || (slope1(from_source.to + margin1, slope) && slope < 0.0))
+                return;
+        }
         double t1 = 0.0, t2 = 0.5 * h2.length, first = 0.0, x1 = 0.0;
         bool converged = pair.parallel && parallel_stationary(g1, h2, pa, pb, t2);
         bool ok = converged || map(t2, first, x1);
@@ -2510,9 +2567,12 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                 || !air_or_face(h2, normal_part(h2, -1.0 * mid))
                 || !end_air(h2, normal_part(h2, out2), ends.microphone)
                 || doubles_back(g1, ends.source, q2) || doubles_back(h2, ends.microphone, q1)
-                || buildings.buried(q1) || buildings.buried(q2_real))
+                || buildings.buried_on(e1, q1) || buildings.buried_on(e2, q2_real))
             return;
-        if (!end_leg(A, q1, source, to_source))
+        // The three legs open, the microphone's first: it is the most often
+        // shut (42% open on DigiCity's field, the source's 57%, between the
+        // edges 72%).
+        if (!end_leg(B, q2_real, microphone, to_microphone) || !end_leg(A, q1, source, to_source))
             return;
         across.clear();
         if (via == nullptr ? buildings.blocked(q1, q2)
@@ -2523,8 +2583,6 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
         // The floor's bounce, where the unfolded leg crosses it.
         if (via != nullptr && via->floor)
             across.push_back(q1 + (q1.z / (q1.z + q2_real.z)) * (q2 - q1));
-        if (!end_leg(B, q2_real, microphone, to_microphone))
-            return;
         PointRay ray = twice_diffracted_ray(g1, h2, pa, pb, q1, q2, ends);
         if (options.edge_ends)
             twice_ends(g1, h2, pa, pb, ray.length, ray.wedge[0].ends, ray.wedge[1].ends);
@@ -2631,12 +2689,18 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
             bool reach_a[2] = {true, true}, reach_b[2] = {true, true};
             if (options.prune)
             {
+                // The microphone's ends only where a source's end reaches:
+                // a pitched suburb's pairs mostly reach from neither.
+                bool any = false;
                 for (int k = 0; k < na; k++)
                 {
                     const PathEnd::View& p = *as[k].view;
                     reach_a[k] = p.lit && keller_between(p, pair.on1, reach_slack)
                             && keller_can_reach(p, pair.on1, reach_slack);
+                    any = any || reach_a[k];
                 }
+                if (!any)
+                    continue;
                 for (int k = 0; k < nb; k++)
                 {
                     const PathEnd::View& p = *bs[k].view;
