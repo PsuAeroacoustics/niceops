@@ -16,7 +16,7 @@ when it is done. The [next-steps report](NICEOPS%20Urban%20Propagation%20Next%20
 | 2 | Missing slope and roof paths | Needs step 1's end treatment for its own edges' ends. **Done**, the rest measured and closed (below) |
 | 3 | Roofs and slopes do not light the diffuse field | Reuses step 2's roof and slope images. **Done** |
 | 4 | The plane-wave tables have no roofs | Independent of 1-3; can run alongside. **Done**, two leftovers deferred |
-| 5 | Re-score and document | After each step, and once at the end. **Done** through step 2's close |
+| 5 | Re-score and document | After each step, and once at the end. **Done** (final re-score: next step 6) |
 
 Each step lands as its own commit (or a few), with both suites passing, FIDELITY re-measured where it moves, and
 HISTORY and the internals updated, as this branch's work has.
@@ -81,7 +81,8 @@ summed in energy; on a second step cross-section (14 m / 6 m) it gains less (0.5
 and loses above the line at 125-250 Hz. Harness
 defect, fixed in niceops-validation `c729c2d`: `urban/edge/rays.cpp` called the three-argument
 `point_ray_amplitude`, which omits `row_profile_factor`, double counting a row's rays wherever a profile
-is taken (UE13 LoD1 moves up to 6.63 dB once corrected); its RESULTS.md predates the fix until the re-score.
+is taken. It reached only runs between `d17978c` (which gave those rays their share) and the fix; the
+committed EDGE results predate it (`f99b991`), and the re-score reproduces them.
 
 **Item 3 closed (2026-10-22, not pursued).** Built (round trips across each street, faded out above
 k w = 120, the walls' reflection per band) and measured against new BEM: it held at single frequencies
@@ -198,7 +199,13 @@ flag to switch it off (`--no_profile_pe` is point_field's only).
   capsules where R1 and R2 are pressure ones, which may explain their high-frequency trends.
 
 **6. Re-score** after items 1-3, as step 5 did: EDGE, DigiCity's microphone 7 and accuracy figure,
-the demo approach's goldens, the suburb with its sweep, and the 3-D render.
+the demo approach's goldens, the suburb with its sweep, and the 3-D render. **Done (2026-10-23, at
+`5ea783f`; harness `a5a7d47`, `5172da9`)**, the suburb's sweep and the render left out (long runs on a
+laptop). EDGE: only UE05's LoD1 stand-ins against the measurements move, from the dip's profile (floor
+4.64 -> 6.10 dB rms at the mean height, 6.41 -> 8.41 at the ridge; drone 2.21 -> 2.35, 2.00 -> 2.23; all
+pitched LoD1 4.57 -> 4.67 and 5.83 -> 5.98); the roof planes, every LoD1 scene against the measurements
+and the FDTD, and the rays against the FDTD do not move. DigiCity's microphone 7 stays -4.1 dB mean,
+5.3 rms, its bands within 0.1 dB. The goldens and buildings CTests pass (215).
 
 ## Step 0: why EDGE's pitched drone rows read low
 
