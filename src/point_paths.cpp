@@ -673,7 +673,7 @@ struct SourceEnds
 // field however many images meet them.  Open addressing, and a generation per
 // slot so that the next field starts empty without clearing; its memory
 // follows the pairs met, not the square of the edges near.  A reference it
-// returns lasts until the next get() or met().
+// returns lasts until the next met() or index().
 class PairTable
 {
 public:
@@ -703,17 +703,12 @@ public:
         }
     }
 
-    const EdgePair& get(const std::vector<Edge>& edges, std::size_t e1, std::size_t e2)
-    {
-        return met(edges, e1, e2).pair;
-    }
-
     Met& met(const std::vector<Edge>& edges, std::size_t e1, std::size_t e2)
     {
         return pairs_[index(edges, e1, e2)];
     }
 
-    // Where met() keeps a pair, for at(): an index outlasts the next get().
+    // Where met() keeps a pair, for at(): an index outlasts the next met() or index().
     std::uint32_t index(const std::vector<Edge>& edges, std::size_t e1, std::size_t e2)
     {
         if (2 * (pairs_.size() + 1) > key_.size())
@@ -729,7 +724,7 @@ public:
         stamp_[i] = generation_;
         key_[i] = key;
         value_[i] = static_cast<std::uint32_t>(pairs_.size());
-        pairs_.push_back({edge_pair(edges[e1], edges[e2]), {}, 0, false, Met::no_list, 0});
+        pairs_.push_back({edge_pair(edges[e1], edges[e2])});
         return value_[i];
     }
 
@@ -2528,7 +2523,7 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
         const std::size_t box_cells = std::size_t(cells.ib - cells.ia + 1) * (cells.jb - cells.ja + 1);
         if (in_box == Buildings::FacadesInBox::cells && 8 * box_cells < buildings.facade_grid_size())
         {
-            buildings.facades_in_box(x0 - grow, x1 + grow, y0 - grow, y1 + grow, nearby);
+            buildings.facades_in_cells(cells, nearby);
             for (const std::uint32_t f : nearby)
                 consider(f, false);
         }
@@ -3193,7 +3188,7 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                         const Edge& g2 = edges[e2];
                         // g2's points about g1's and g3's lines, and theirs
                         // about g2's (by index: the table's references last
-                        // until its next get).
+                        // until its next index()).
                         const std::uint32_t i12 = pairs.index(edges, e1, e2), i32 = pairs.index(edges, e3, e2);
                         const EdgePair& p12 = pairs.at(i12).pair;
                         const EdgePair& p32 = pairs.at(i32).pair;
@@ -4483,19 +4478,19 @@ void PointSourceField::apply_profile(const Buildings& buildings, const Vec3& sou
             return;
         blocks.push_back(b);
     }
-    // At least one street between the blocks, or a dip: a touching roof
-    // lower than both its neighbours.  Either way the cascade's collinear
-    // edges sit on each other's shadow boundaries at the roofs' plane, and
-    // only the 2-D field carries the grazing wave there.  Touching steps up
-    // or down keep the cascades (internals/ground.md, "Over a row of roofs").
-    // A run of touching blocks with one top is one roof, so a dip whose
-    // floor is split between footprints (10/8/8/10) is still a dip.
+    // At least one dip: a roof lower than both its neighbours, a street
+    // being a dip to height 0.  There the cascade's collinear edges sit on
+    // each other's shadow boundaries at the roofs' plane, and only the 2-D
+    // field carries the grazing wave.  Touching steps up or down keep the
+    // cascades (internals/ground.md, "Over a row of roofs").  A run of
+    // touching blocks with one top is one roof, so a dip whose floor is split
+    // between footprints (10/8/8/10) is still a dip.
     bool takes_profile = false;
     std::vector<double> tops;
     for (std::size_t i = 0; i < blocks.size(); i++)
     {
         if (i > 0 && blocks[i].u0 > blocks[i - 1].u1 + 1e-6 * D)
-            takes_profile = true;
+            tops.push_back(0.0);
         if (tops.empty() || std::abs(blocks[i].h - tops.back()) > 1e-6)
             tops.push_back(blocks[i].h);
     }

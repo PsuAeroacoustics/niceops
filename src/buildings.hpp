@@ -342,6 +342,9 @@ public:
     // them: none, every one, or those whose facade_cells meet `cells`.
     enum class FacadesInBox { none, all, cells };
     FacadesInBox facades_in_box(double x_min, double x_max, double y_min, double y_max, PlanGrid::Cells& cells) const;
+    // The facades in cells that overload returned with FacadesInBox::cells,
+    // ascending: what the first overload lists for its box.
+    void facades_in_cells(const PlanGrid::Cells& cells, std::vector<std::uint32_t>& out) const;
     // The facade grid's cells a facade is registered in, and their number.
     const PlanGrid::Cells& facade_cells(std::size_t facade) const
     {

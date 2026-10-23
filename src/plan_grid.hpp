@@ -112,23 +112,6 @@ public:
         }
     }
 
-    // The cells the box [x_min, x_max] by [y_min, y_max] overlaps:
-    // visit(begin, end) for each with its items.  An item spans several
-    // cells, so it can be visited more than once.
-    template <typename Visit>
-    void box(double x_min, double x_max, double y_min, double y_max, Visit visit) const
-    {
-        Cells q;
-        if (!box_cells(x_min, x_max, y_min, y_max, q))
-            return;
-        for (std::size_t b = q.ja; b <= q.jb; b++)
-            for (std::size_t a = q.ia; a <= q.ib; a++)
-            {
-                const std::size_t c = b * nx_ + a;
-                visit(items_.data() + start_[c], items_.data() + start_[c + 1]);
-            }
-    }
-
     // A rectangle of cells: columns ia to ib and rows ja to jb, inclusive.
     struct Cells
     {
@@ -139,6 +122,29 @@ public:
             return ia <= o.ib && o.ia <= ib && ja <= o.jb && o.ja <= jb;
         }
     };
+
+    // The cells the box [x_min, x_max] by [y_min, y_max] overlaps:
+    // visit(begin, end) for each with its items.  An item spans several
+    // cells, so it can be visited more than once.
+    template <typename Visit>
+    void box(double x_min, double x_max, double y_min, double y_max, Visit visit) const
+    {
+        Cells q;
+        if (box_cells(x_min, x_max, y_min, y_max, q))
+            cells(q, visit);
+    }
+
+    // The same for cells box_cells has already found.
+    template <typename Visit>
+    void cells(const Cells& q, Visit visit) const
+    {
+        for (std::size_t b = q.ja; b <= q.jb; b++)
+            for (std::size_t a = q.ia; a <= q.ib; a++)
+            {
+                const std::size_t c = b * nx_ + a;
+                visit(items_.data() + start_[c], items_.data() + start_[c + 1]);
+            }
+    }
 
     // The cells an item with this box is registered in.
     Cells item_cells(double x_min, double x_max, double y_min, double y_max) const

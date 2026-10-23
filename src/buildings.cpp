@@ -1519,9 +1519,15 @@ void Buildings::facades_in_box(double x_min, double x_max, double y_min, double 
             out[i] = static_cast<std::uint32_t>(i);
         return;
     }
+    facades_in_cells(cells, out);
+}
+
+void Buildings::facades_in_cells(const PlanGrid::Cells& cells, std::vector<std::uint32_t>& out) const
+{
+    out.clear();
     thread_local Stamps seen;
     seen.next(facades_.size());
-    facade_grid_.box(x_min, x_max, y_min, y_max, [&](const std::uint32_t* first, const std::uint32_t* last) {
+    facade_grid_.cells(cells, [&](const std::uint32_t* first, const std::uint32_t* last) {
         for (const std::uint32_t* i = first; i != last; i++)
             if (seen.first(*i))
                 out.push_back(*i);

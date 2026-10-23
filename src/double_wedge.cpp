@@ -713,14 +713,11 @@ ApertureGeometry aperture_geometry(const SharedFace& face, double sx, double sz,
     const double smallest = std::max(0.01 * std::min(w, s1), 1e-6 * extent);
     // Every segment's panel ends first, so that its nodes, two per panel and
     // one more per segment, go into a vector already their size.  Grown a
-    // node at a time, the copies were 6% of packing a GPU field.
-    struct Segment
-    {
-        double a, b;
-        std::size_t ends;
-    };
+    // node at a time, the copies were 6% of packing a GPU field.  A
+    // segment's panel ends run from its first cut to its last, and
+    // `segments` holds where in `ends` each stops.
     thread_local std::vector<double> ends;
-    thread_local std::vector<Segment> segments;
+    thread_local std::vector<std::size_t> segments;
     ends.clear();
     segments.clear();
     for (std::size_t c = 0; c + 1 < cuts.size(); c++)
@@ -743,15 +740,15 @@ ApertureGeometry aperture_geometry(const SharedFace& face, double sx, double sz,
             ends.push_back(next);
             t = next;
         }
-        segments.push_back({a, b, ends.size()});
+        segments.push_back(ends.size());
     }
     g.nodes.reserve(2 * ends.size() - segments.size());
     g.segments.reserve(segments.size() + 1);
-    for (std::size_t s = 0, first = 0; s < segments.size(); first = segments[s++].ends)
+    for (std::size_t s = 0, first = 0; s < segments.size(); first = segments[s++])
     {
-        const double a = segments[s].a, b = segments[s].b;
         const double* end = ends.data() + first;
-        const std::size_t n = segments[s].ends - first;
+        const std::size_t n = segments[s] - first;
+        const double a = end[0], b = end[n - 1];
         int count[4];
         wave_counts(face, f, a, b, count);
         // A hair inside, as aperture() takes it, but never more than a hair of
