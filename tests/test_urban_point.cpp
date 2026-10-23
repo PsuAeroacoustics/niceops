@@ -16,6 +16,7 @@
 #include "sphere_database.hpp"
 #include "urban_point.hpp"
 #include "weighting.hpp"
+#include "demo_database.hpp"
 
 using namespace niceops; // NOLINT
 
@@ -34,7 +35,7 @@ Footprint box(double x0, double y0, double x1, double y1, double top)
 // spectrum: a source the same in every direction.
 std::string write_omnidirectional_database(const std::vector<double>& bands, double level, const std::string& name)
 {
-    Database plain("databases/S-76D_M3.nod");
+    const Database& plain = test::demo_database();
     auto sphere = plain.interpolate_sphere(0.15, -4.0, 0.006);
     sphere.frequencies = bands;
     sphere.amplitudes.assign(sphere.cells.size() * bands.size(), level);

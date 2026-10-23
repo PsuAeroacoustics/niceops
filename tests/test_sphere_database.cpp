@@ -23,6 +23,7 @@
 #include "sphere_database.hpp"
 #include "weighting.hpp"
 #include "util/logger.hpp"
+#include "demo_database.hpp"
 
 using namespace niceops;
 
@@ -174,7 +175,7 @@ TEST_CASE("DirectionBounds really bounds the level", "[sphere_database]")
     // check it directly, in the energy form the hot path compares in.
     if (!std::filesystem::exists("databases/S-76D_M3.nod"))
         return;
-    Database db("databases/S-76D_M3.nod");
+    const Database& db = test::demo_database();
 
     std::vector<Database::SourceState> states;
     for (double mu : {0.0, 0.08, 0.15, 0.22})
@@ -232,7 +233,7 @@ TEST_CASE("DirectionBounds still bounds the level at the nose and tail axes", "[
     // bin, which not every blend has).
     if (!std::filesystem::exists("databases/S-76D_M3.nod"))
         return;
-    Database db("databases/S-76D_M3.nod");
+    const Database& db = test::demo_database();
 
     std::vector<Database::SourceState> states;
     for (double mu = 0.0; mu <= 0.30001; mu += 0.02)
@@ -371,7 +372,7 @@ TEST_CASE("Shaft power round-trips through a written sphere", "[sphere_database]
     // sphere out of the demo database, attach a power, write it, and read it
     // back.  This exercises the whole optional path -- write, detect, load,
     // blend -- which is otherwise unreachable with the data in this repository.
-    Database source("databases/S-76D_M3.nod");
+    const Database& source = test::demo_database();
     REQUIRE(!source.has_shaft_power());
 
     auto sphere = source.interpolate_sphere(0.15, -4.0, 0.006);
@@ -398,7 +399,7 @@ TEST_CASE("speed_reference is read from the database root", "[sphere_database]")
     // Every database so far predates the attribute and was built against the
     // ground, so absent has to mean ground.  panam writes it with
     // netCDF4-python, as NC_CHAR text.
-    Database source("databases/S-76D_M3.nod");
+    const Database& source = test::demo_database();
     REQUIRE(source.speed_reference() == SpeedReference::ground);
     const auto sphere = source.interpolate_sphere(0.15, -4.0, 0.006);
     const auto path = (std::filesystem::temp_directory_path() / "niceops_speed_reference.nod").string();
@@ -434,7 +435,7 @@ TEST_CASE("azimuth_reference is read from the database root and survives export"
     // Absent is the track, as every database built before the attribute was;
     // the Database still says that it was absent, so a run can tell an
     // explicit --nose against the file from one against a default.
-    Database source("databases/S-76D_M3.nod");
+    const Database& source = test::demo_database();
     REQUIRE(source.azimuth_reference() == AzimuthReference::track);
     REQUIRE_FALSE(source.recorded_azimuth_reference().has_value());
     auto sphere = source.interpolate_sphere(0.15, -4.0, 0.006);
@@ -486,7 +487,7 @@ TEST_CASE("azimuth_reference is read from the database root and survives export"
 TEST_CASE("Spectra survive interpolation and re-export", "[sphere_database]")
 {
     // Spectra are optional, and none of the shipped databases has any.
-    Database plain("databases/S-76D_M3.nod");
+    const Database& plain = test::demo_database();
     REQUIRE(!plain.has_spectra());
     auto plain_sphere = plain.interpolate_sphere(0.15, -4.0, 0.006);
     REQUIRE(plain_sphere.frequencies.empty());
@@ -1332,7 +1333,7 @@ TEST_CASE("inside the sphere the level is the surface's", "[sphere_database]")
     // is the surface's.
     if (!std::filesystem::exists("databases/S-76D_M3.nod"))
         return;
-    Database db("databases/S-76D_M3.nod");
+    const Database& db = test::demo_database();
     const double radius = db.sphere_radius();
     const auto blend = db.blend_at(0.1, 0.0, 0.006);
     const double at_surface = db.eval(radius, 20.0, 60.0, blend);
@@ -1602,7 +1603,7 @@ TEST_CASE("an exported sphere reloads as the sphere it was, cell for cell", "[sp
     // vehicle and its speed reference, comes back exactly.  Swapped dBA and EAA, a
     // dropped load-factor correction or a transposed grid all passed the whole
     // suite before this.
-    Database source("databases/S-76D_M3.nod");
+    const Database& source = test::demo_database();
     const auto sphere = source.interpolate_sphere(0.15, -4.0, 0.006);
     const auto path = (std::filesystem::temp_directory_path() / "niceops_round_trip.nod").string();
     write_sphere(sphere, path);
@@ -1680,7 +1681,7 @@ TEST_CASE("an AAM export lays out its axes and amplitudes as the format says", "
     // AMPLITUDE(PHI, THETA, FREQUENCY), the axes in degrees and hertz, RADIUS in feet
     // and SPEED in knots from the advance ratio and the tip speed.  Nothing read an
     // AAM file back before this.
-    Database source("databases/S-76D_M3.nod");
+    const Database& source = test::demo_database();
     auto sphere = source.interpolate_sphere(0.15, -4.0, 0.006);
     const std::size_t bands = 3;
     sphere.frequencies = {125.0, 250.0, 500.0};
@@ -1836,7 +1837,7 @@ TEST_CASE("The build atmosphere and rotor speed are read when the file records t
         "[sphere_database][build]")
 {
     // Older databases carry neither, and must say nothing rather than guess.
-    const Database plain("databases/S-76D_M3.nod");
+    const Database& plain = test::demo_database();
     REQUIRE(!plain.build_atmosphere().has_value());
     REQUIRE(!plain.rotor_rpm().has_value());
 
@@ -1873,7 +1874,7 @@ TEST_CASE("The unmeasured share follows the channels the builder did not measure
         "[sphere_database][coverage]")
 {
     // The shipped databases record no coverage, so the share is undefined.
-    const Database plain("databases/S-76D_M3.nod");
+    const Database& plain = test::demo_database();
     REQUIRE(!plain.has_coverage());
 
     // One sphere written out, with a coverage variable along its channels:
@@ -1923,7 +1924,7 @@ TEST_CASE("Grid-shaped coverage counts an unmeasured band by its A-weighted ener
     // (PHI, THETA, frequency), every band at the same level.  Above the plane
     // one band is unmeasured, so those cells are unmeasured by that band's
     // share of the A-weighted energy: little for 100 Hz, most for 800 Hz.
-    const Database plain("databases/S-76D_M3.nod");
+    const Database& plain = test::demo_database();
     auto sphere = plain.interpolate_sphere(0.15, -4.0, 0.006);
     const std::size_t bands = 4;
     sphere.frequencies = {100.0, 200.0, 400.0, 800.0};

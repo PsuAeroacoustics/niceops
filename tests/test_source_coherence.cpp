@@ -17,6 +17,7 @@
 #include "urban_point.hpp"
 #include "util/constants.hpp"
 #include "util/logger.hpp"
+#include "demo_database.hpp"
 
 using namespace niceops; // NOLINT
 
@@ -340,7 +341,7 @@ TEST_CASE("within the cone rays add with their phases and beyond it in energy", 
 // the bands is refused.
 TEST_CASE("a database carries its coherence through an exported sphere", "[source_coherence]")
 {
-    Database plain("databases/S-76D_M3.nod");
+    const Database& plain = test::demo_database();
     REQUIRE(plain.coherence_record().empty());
     REQUIRE(!plain.interpolate_sphere(0.15, -4.0, 0.006).rotor_rpm);
     auto sphere = plain.interpolate_sphere(0.15, -4.0, 0.006);

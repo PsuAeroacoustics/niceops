@@ -1,3 +1,4 @@
-# The demo case of regression_default, as a --config file.
+# The demo case of regression_default, as a --config file, on the coarse grid of demo_coarse.
 no-spectral = true
 no-ground_effect = true
+gridstep = 1640

@@ -1,6 +1,6 @@
 // Build an urban table for niceops --urban_table (src/urban.hpp).
 //
-//   niceops_urban_table --canyons receivers.csv --database databases/B407_ambient_gated.nod
+//   niceops_urban_table --canyons receivers.csv --database databases/B407_fixed_load_factor.nod
 //       --frame_bearing 210 -o tables/street.nc
 //
 // Each row of --canyons is one microphone standing in an ideal street canyon,

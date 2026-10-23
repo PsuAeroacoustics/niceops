@@ -366,7 +366,8 @@ model; the format is the specification, so other methods can write it. The compo
   table are refused up front, not dropped to the fallback.
 - **The peak search's bound takes max(ground model's gain, table's largest value) per band**
   (`path_gains` in the bound setup), since a pair may take either.
-  `propagation_table_windowed_is_exact` holds it; the PE table was checked the same way by hand.
+  `propagation_table_bump_windowed_is_exact` holds it (the bump table's +25 dB is the stronger
+  case), with `propagation_table_plate_windowed_is_exact`; the PE table was checked the same way by hand.
 - **`lookup` finds an even axis's cell by arithmetic and corrects it against the knots**
   (`AxisLocator`), so it is the cell a binary search gives, bit for bit; the fmod on the bearing is
   skipped inside [0, 360). -20% CPU on a table run, output byte-identical. `lookup finds the same

@@ -308,7 +308,8 @@ and ground finish. What to keep:
   histories), so larger strides gain little; in a duct with wave arrivals the arrivals' kinds
   change often enough that most states are solved anyway.
 - **4 is the default**; `--ray_stride 1` solves every state and reproduces the results from
-  before it to the bit (the `*_exact` goldens).
+  before it to the bit (the `*_exact` goldens: the windy and duct point runs; the plate and the
+  calm floor are pinned at the default stride only).
 - Tests: `two states' layered solves interpolate only where they agree`
   (`tests/test_stratified.cpp`), `stratified_stride_{windy,duct}_is_close` (against every state
   solved, at 0.005 and 0.02 dB), `stratified_stride_is_not_exact`, the `*_exact_golden` pins,
@@ -455,7 +456,8 @@ What to preserve:
   power ratio does), which is what lets them wait. A pair pays one table lookup per band.
 - **The bound stays exact**: the series and V are held to the transition's largest power ratio,
   and the straight ground term is within the ground's own bound.
-  `stratified_resolved_{point,plate,straight_point,duct_point}_windowed_is_exact` check it, and
+  `stratified_resolved_{point,plate,straight_point}_windowed_is_exact` check it (in the calm duct
+  the resolved model changes nothing, and its run was the plain duct's to the byte), and
   the `[resolved][bounds]` Catch2 case sweeps it. `tests/test_resolved_shadow.cpp` pins a linear
   -0.02 /s lapse case (20 ft source, flush) against the PE.
 - **One approximation**: the table indexes receivers by their height above the ground (the

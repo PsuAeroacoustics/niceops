@@ -351,8 +351,8 @@ which takes it off whichever level that reaches. What to keep:
 
 - **The same blocked pairs as CNOSSOS.** It reuses `blocked()`, `--screening_min_height` and
   `rubber_band`, so where nothing is blocked the runs are the unscreened ones byte for byte
-  (`terrain_flat_*_kirchhoff_is_flat`, `terrain_tilted_plate_kirchhoff_is_unscreened`,
-  `terrain_hills_kirchhoff_is_unscreened`, each with a log check that nothing was screened).
+  (`terrain_tilted_plate_kirchhoff_is_unscreened`, with a log check that nothing was screened;
+  level terrain and the hills go through the same gate in the CNOSSOS runs).
 - **The loss goes on every unscreened level**: the ground model over the mean plane
   (`spectral_level_along`'s extra loss), the table (`table_level`'s `added_loss`), and with
   neither the free field along the straight ray, which replaces `spectral_level_at_observer` for
@@ -380,8 +380,9 @@ which takes it off whichever level that reaches. What to keep:
   each a series or a continued fraction, came to 50–64 µs per screened evaluation for δ of 0.1 to
   1 m, and the full ridge grid took 74 s against 8 s unscreened; the table takes 0.12 µs for 31
   bands.
-- Tests: `terrain_ridge_kirchhoff_{point,plate,noground,table}_windowed_is_exact`, each with a log
-  check that pairs were screened (the table's that they kept the table); all four runs pinned
+- Tests: `terrain_ridge_kirchhoff_noground_windowed_is_exact` (the knife edge adds no bound term,
+  so one pair shows it); the four runs, each with a log check that pairs were screened (the table's
+  that they kept the table), all pinned
   (`terrain_ridge_kirchhoff_*_golden`, the table's at 1e-5); `terrain_ridge_kirchhoff_is_not_cnossos`;
   and the Catch2 `[kirchhoff]` cases: the Fresnel integrals against SciPy, |F|² at grazing and in
   the shadow, the half-plane comparison, the band loss's floor and order, the table against the

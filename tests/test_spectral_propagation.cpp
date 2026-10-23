@@ -22,6 +22,7 @@
 #include "propagation.hpp"
 #include "sphere_database.hpp"
 #include "weighting.hpp"
+#include "demo_database.hpp"
 
 using namespace niceops;
 
@@ -35,7 +36,7 @@ constexpr double kFlatLevel = 90.0;
 // spectrum, so anything the propagation does shows up undiluted by directivity.
 std::string write_flat_spectral_database(const std::string& name)
 {
-    Database plain("databases/S-76D_M3.nod");
+    const Database& plain = test::demo_database();
     auto sphere = plain.interpolate_sphere(0.15, -4.0, 0.006);
     sphere.frequencies = kBands;
     sphere.amplitudes.assign(sphere.cells.size() * kBands.size(), kFlatLevel);

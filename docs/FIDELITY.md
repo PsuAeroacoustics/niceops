@@ -2408,8 +2408,9 @@ How these scores compare with earlier builds of the same databases is in
 
 ### Database screen
 
-The load-time screen ([MANUAL](MANUAL.md#screening-a-database)) on every shipped database, and on
-the NASA R44 spheres built for the cross-code comparison. Margins: a dBA cell more than 40 dB from
+The load-time screen ([MANUAL](MANUAL.md#screening-a-database)) on the databases shipped when it was
+added (`B407_M2`, `B407_M3` and `S-76D_M4` are no longer in `databases/`), and on the NASA R44
+spheres built for the cross-code comparison. Margins: a dBA cell more than 40 dB from
 the median of its sphere, a band more than 45 dB above the median of its cell's spectrum.
 
 | Database | dBA cells flagged (spheres) | Bands flagged (spheres) | Worst entry, against the median |
