@@ -37,23 +37,6 @@ The real fix is in the database builder (panam): the same data in one group with
 `(condition, channel)` arrays would load in a fraction of the time. Do not go looking for it in
 `sphere_database.cpp`.
 
-## Urban source-coherence pairs
-
-When no phase-interval variance is requested, the CPU can omit pairs beyond the coherence reach.
-It finds nearby launches with a z-sorted sweep, then sorts the candidate IDs back into `(i, j)`
-order so the band sums keep their original rounding. A tight reach usually makes that much cheaper
-than forming every pair. A dense cluster can put most pairs inside the reach, where the sweep's
-sorting and candidate buffer cost more than the direct loop. The sweep therefore stops once it has
-found 20% of all pairs and forms every pair directly. This also caps its retained candidate list at
-that point.
-
-The 20% cutoff comes from an Apple Clang `-O3` microbenchmark of the pair builder, including the
-candidate sort and per-pair metadata. For 512–4096 random launches in a spherical cap, a 6° reach
-kept about 13% of pairs and the sweep took 0.63–0.79 times direct enumeration; when it kept about
-27%, the sweep took 1.12–1.34 times as long. At 100% density it took 2.8–3.1 times as long. The
-cutoff is a conservative crossover for these synthetic distributions; it does not affect which
-pairs contribute or their summation order.
-
 ## Several databases in one run
 
 `run()` holds its databases in a `std::map<std::string, Database>` keyed by `database_key`, the
@@ -427,6 +410,26 @@ on a shared machine (load 10 to 31):
   exactness requires. The tables' accuracy is in
   [FIDELITY](../FIDELITY.md#ground-classes).
 
+## Urban source-coherence pairs
+
+`--buildings` sums each band over pairs of rays by their launch directions
+(`src/urban_point.cpp`). When no phase-interval variance is requested, a pair beyond the
+coherence reach (the cone's outer edge, or where the measured decay is negligible at the first
+band) contributes nothing, so the CPU can omit it. With a reach under 60 degrees and more than 32
+launches, it finds the nearby launches with a sweep sorted by z, then sorts the candidate pairs
+back into `(i, j)` order so the band sums keep their original rounding. A tight reach usually
+makes that much cheaper than forming every pair. A dense cluster can put most pairs inside the
+reach, where the sweep's sorting and candidate buffer cost more than the direct loop, so the sweep
+stops once it has found 20% of all pairs and forms every pair directly. That also caps its
+retained candidate list.
+
+The 20% cutoff comes from an Apple Clang `-O3` microbenchmark of the pair builder, including the
+candidate sort and per-pair metadata. For 512–4096 random launches in a spherical cap, a 6° reach
+kept about 13% of pairs and the sweep took 0.63–0.79 times direct enumeration; when it kept about
+27%, the sweep took 1.12–1.34 times as long. At 100% density it took 2.8–3.1 times as long. The
+cutoff is a conservative crossover for these synthetic distributions; it does not affect which
+pairs contribute or their summation order.
+
 ## Measured and rejected optimizations
 
 ### Rejected
@@ -543,8 +546,8 @@ Not taken:
   `seeded_zero`'s fixed-point iteration, about 13% of what is left, but moves every zero's last
   bits, which reach V's lit side as above.
 - **The PE.** A propagation table's build is 96% `pade_step`, already interleaved and fused
-  (pe.md); the factorization's complex divides are the next 4%. The profile PE's, 8.6% of a
-  terraced run, are written out (urban.md, the row of roofs).
+  ([pe.md](pe.md)); the factorization's complex divides are the next 4%. The profile PE's, 8.6%
+  of a terraced run, are written out ([urban.md](urban.md#over-a-row-of-roofs)).
 
 ### The propagation models, measured as a suite
 
@@ -613,8 +616,8 @@ Tried and not taken:
 - **A tighter bound for the windowed search.** Every grid case evaluates 97–99% of its pairs;
   the outermost 10 dB-down window covers most of the demo track for most observers, and even
   the broadband sphere bound alone (no ground term) evaluates 94%.
-- **The PE table build** is 96% `pade_step`, already interleaved and fused (pe.md): cost goes
-  as f^2 through the grid and the step, both fixed by accuracy.
+- **The PE table build** is 96% `pade_step`, already interleaved and fused ([pe.md](pe.md)):
+  cost goes as f^2 through the grid and the step, both fixed by accuracy.
 - **The stratified solve itself** is about 11 range evaluations a solve (2 at the family's
   ends, 3.5 bracketing the guess, 5.3 iterating) and 30 a pair, each a walk whose inner loop is
   a square root, a divide and a dozen other instructions a layer. Batching two p values a walk

@@ -328,7 +328,6 @@ old and new results only with them in mind.
   0.028 dB, and by 0.08 dB with a 4 ft point receiver, where the two paths nearly cancel; the
   means moved by about 1e-4 dB. The near-grazing three-term series that stood in past the cut
   was removed, since the exact term is what it approximated.
-
 - **`--coverage_file` shares out the energy the SEL integrated** (October 2026): its 10 dB-down
   window, each sample weighted by the step and its share of reception time. It summed every
   sample of the history alike, which counted states the SEL leaves out and, across operations,
@@ -342,6 +341,17 @@ old and new results only with them in mind.
   directivity or ground losses. Deep ducts can therefore take longer to evaluate and predict
   more energy
   ([Refraction through the profile's layers](MANUAL.md#refraction-through-the-profiles-layers)).
+- **A microphone just below the ground plane is solved as if on it** (September 2026). The
+  layered direct-ray solve knows no ground, so it sent a ray grazing under the plane to a ground
+  board a few centimeters below the survey datum and read the board 33 dB low on day 284.
+- **The shadow boundary law was refitted for flush microphones** (September 2026). Fitted at
+  1.2 m, it put a flush microphone's boundary about twice too far out; flush microphones take 0.75
+  and a 1.2 m one keeps 0.363, and where the fit casts no shadow each band takes a fitted multiple
+  of the layered boundary. In the same change, from 0.9 of the layered boundary the level is the linear
+  fit's ray, which carries on past the fit's boundary where the model had gone back to the layered
+  shadow ray and stepped 2–10 dB. Straight and linear rays did not move. The scores before and
+  after are in FIDELITY, [against the PE](FIDELITY.md#shadow-transition-calibration) and
+  [against day 284](FIDELITY.md#refraction-against-flight-data).
 - **`--refraction stratified` resolves a calm floor** only as finely as the run's highest band
   can. A profile with calm, isothermal air at the ground (a log law written below its roughness
   length) used to put the shadow boundary kilometers out and flush microphones 22–28 dB low.
@@ -363,7 +373,6 @@ old and new results only with them in mind.
   reciprocal march. Against the exact field at 17–45°, those rows moved from 0.03–0.08 dB off to
   0.01–0.05 dB; at grazing nothing moved by more than 0.001 dB
   ([Propagation loss tables](MANUAL.md#propagation-loss-tables)).
-
 - **`--refraction stratified` interpolates the layered rays between every fourth state** by
   default (`--ray_stride 4`; October 2026). Each path's rays were solved at every trajectory
   state; now at every fourth and the last, with the states between interpolated where the two
@@ -392,8 +401,9 @@ old and new results only with them in mind.
 - **The `azimuth_reference` attribute.** panam's builder writes it on every database: `track`
   by default, `heading` for spheres built with its heading-frame option
   (`build_sphere(azimuth_reference='heading')`, `--azimuth-reference`), and `track` for a NORAH2
-  import; it refuses to mix the two in one database. Every shipped database predates it and
-  records nothing, which reads as `track`, so nothing shipped moved.
+  import; it refuses to mix the two in one database. The shipped AS350 databases record `track`,
+  and every other shipped database predates the attribute and records nothing, which reads as
+  `track`, so nothing shipped moved.
 - **`--path_smoothing 0` carries the spline's curvature.** `SmoothingSpline` used to
   short-circuit at λ = 0 and return zero curvature, so the load factor came out as exactly 1 g
   on every state. With the interpolating spline carrying its own curvature, exact interpolation

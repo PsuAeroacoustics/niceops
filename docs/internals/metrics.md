@@ -167,7 +167,11 @@ cases, the frames' energy and timing, and the end-to-end `epnl_*` CTests) are de
   two arrays as geolocation.
 - **The `-m` area is the 65 dB contour's polygon area** (`append_metrics_file`), not the
   observer fraction times the grid's area, which is the column before it.
+
 ## Time weighting, day metrics, C-SEL
+
+This section covers `--lamax_weighting`, `--nax_file`, `--ta_file`, `--lden_file`, `--cnel_file` and
+`--csel_file` (`src/util/time_weighting.hpp`; the day schedules are in `src/util/sel.hpp`).
 
 **The period levels** (`DayMetric::lday` … `laeq` in `util/sel.hpp`) reuse the penalized-exposure
 path: a sample outside the period takes a penalty of −∞, so it carries no energy and the 10 dB-down
@@ -181,9 +185,7 @@ its period levels recombined" pins the arithmetic. A metric whose penalty is the
 state of a trajectory skips its own pass, which for a flight inside one period is most of them: 0
 everywhere is the SEL itself, bit for bit (x + 0 = x), and −∞ everywhere is no energy, as above.
 
-
-`--lamax_weighting`, `--nax_file`, `--ta_file`, `--lden_file`, `--cnel_file` and `--csel_file`
-(`src/util/time_weighting.hpp`; the day schedules are in `src/util/sel.hpp`). What to keep:
+What to keep:
 
 - **The time weighting runs in reception time, on the SEL integral's own weights.**
   `reception_durations` is T times `reception_factor`, the very weights `sel_over_window` applies,
@@ -266,7 +268,7 @@ everywhere is the SEL itself, bit for bit (x + 0 = x), and −∞ everywhere is 
   at 13:00, 21:00 and 03:00: that would cost three runs, and CNEL's 10^(lg 3) is 3 only to
   rounding. The two are refused together in one file, so a row never carries both a clock and a
   period. `operations_period_day_is_clocked_day` (byte for byte) and
-  `operations_period_night_matches_clock` (1e-9) tie the routes together where they agree.
+  `operations_period_night_matches_clock_*` (1e-9) tie the routes together where they agree.
 - **C-SEL reuses `--band_history`'s per-band recording** (`record_bands`, `record_path`). Every path
   that writes `bands_out` for the band history (straight, table, refracted, each extra arrival)
   feeds it, so a new propagation branch that forgets `bands_out` breaks both. Bands outside

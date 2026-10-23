@@ -286,7 +286,8 @@ and ground finish. What to keep:
 - **Interpolate the solves, not the levels.** The sphere's direction, the ground, the absorption
   and the shadow transition are formed at each state from its own geometry and the interpolated
   ray. Interpolating levels would miss the dips between anchors that move the 10 dB window, as
-  decimating the trajectory does ([performance.md](performance.md#the-sel-window-the-oversampling-and-the-windowed-peak-search)).
+  decimating the trajectory does
+  ([performance.md](performance.md#the-sel-window-the-oversampling-and-the-windowed-peak-search)).
 - **Anchors are fixed states** (every K-th and the last), each solved exactly as without the
   option, so a state's ray does not depend on which state the windowed search asked for first:
   windowed equals marched byte for byte. `stratified_windowed_is_exact` and its twins run at the

@@ -248,8 +248,8 @@ keep the true 3-D path. The geometry is in [THEORY.md](../THEORY.md) §6.3.
   with a deliberate change, and say so.
 - **The bounds need nothing new** without screening (with it, see
   [Screening](#screening---terrain_screening)). `ground_gain_bounds` and
-  `PlateReceiver::gain_bounds` hold for every geometry and receiver height, and the bound test's geometry is the true 3-D path, as the
-  level's spreading is. `terrain_hills_point_windowed_is_exact` and
+  `PlateReceiver::gain_bounds` hold for every geometry and receiver height, and the bound test's
+  geometry is the true 3-D path, as the level's spreading is. `terrain_hills_point_windowed_is_exact` and
   `terrain_hills_plate_windowed_is_exact` hold it. The tables' reach (`reach()` in
   `process_trajectory`) extends below z = 0 under terrain; node placement does not depend on the
   reach, so the flat case is unmoved.
@@ -296,7 +296,8 @@ in [THEORY §6.4](../THEORY.md#64-terrain-screening). What to keep:
   δ ≈ h²/2s, about 0.14 m at 5 m, under λ/20 at 63 Hz, so it would screen level terrain. (The
   Directive also asks δ > λ/4 − δ′, δ′ by the ground images, which keeps the low bands out; the
   conformance case TC06, a path clearing a plateau's edge by 0.67 m, is diffracted at 500 Hz
-  and 1 kHz in the TR and unscreened here, `ISO/TR 17534-4 TC06` in `tests/test_screening.cpp`.)
+  and 1 kHz in the TR and unscreened here, `ISO/TR 17534-4 TC06: a path just over a crest is not
+  screened` in `tests/test_screening.cpp`.)
 - **A minimum protrusion** (`--screening_min_height`, 0.5 m): a sample blocks only when it is
   that far above the line of sight. At Sweetwater the 1 m lidar grid's texture 3–5 m from a
   flush board, 0.03–0.14 m above a path at 1–2° elevation, screened it, and the screened level came
@@ -458,8 +459,8 @@ every 20 ft):
   5% in CPU: the quick test per pair, and the bound's screened term, up to 4.1 dB above the
   ground term in 28 of 31 bands, which evaluated 0.7 points more of the pairs.
 - **Behind the ridge** 9.27 million evaluations were screened (9.9% of those made, at 6057 of
-  14,400 observers; 8.95 million at 6048 with the minimum protrusion added since), 3.51 million of them (38%) reached the 25 dB cap in some band, and F was
-  held at 1 on neither side. The 18 s of extra CPU, the pairs the looser bound adds included, is
+  14,400 observers; 8.95 million at 6048 with the minimum protrusion added since), 3.51 million
+  of them (38%) reached the 25 dB cap in some band, and F was held at 1 on neither side. The 18 s of extra CPU, the pairs the looser bound adds included, is
   about 2 µs per screened evaluation, as at one thread on the 441-observer grid (0.55 s for
   289,159).
 - **The screening cache** holds about 16 bytes more per sample per ray. At these fixtures' 42.8 m

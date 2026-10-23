@@ -62,8 +62,8 @@ scattered (φ, θ) channels of dBA level and EAA excess-attenuation factor.
   - **Masking recomputes `sphere_max_` and `max_level_`** from the masked grid. `cull_range` and
     the bounds rest on them, and a kept 1450 dBA maximum keeps every observer in range. The
     bounds themselves are built from the grid on demand, so they follow the mask. The
-    `cull_range` check in "a dBA cell far from the rest of its sphere is reported, and dropped when asked"
-    is a mutation guard: without the recompute the rest of the suite passed.
+    `cull_range` check in `a dBA cell far from the rest of its sphere is reported, and dropped
+    when asked` is a mutation guard: without the recompute the rest of the suite passed.
   - `--self_test` re-reads the file, so it refuses `--mask_suspect_cells`.
 - **`sphere_frame` with no velocity, or velocity along the thrust axis,** takes +x's projection
   for its nose, instead of a zero frame that looks every observer up at (φ 0, θ 90).
@@ -225,7 +225,7 @@ the fix-up unnecessary; the loader then trusts the file as written.
   ones the database's EAA was built at, and EAA being a linear-in-range rate anchored at 1 km
   where the true loss is concave.
 - **`spectra_` is condition-innermost** (`[(cell·n_bands + band)·n_conditions + condition]`,
-  `sphere_database.hpp:826`), so the per-band loop reads the conditions of one band
+  as its declaration in `sphere_database.hpp` says), so the per-band loop reads the conditions of one band
   contiguously, on one cache line. The netCDF file stores them the other way round, and the
   loader transposes once.
 - `--db_cutoff` works on the spectral path through `spectral_direction_bounds`, the

@@ -31,7 +31,7 @@ measured (or model minus reference), and LAmax is fast-weighted.
 - **The demo footprint.** `golden/197421_LAE.csv` comes from the C++ build, because it departs
   from D on purpose (see [HISTORY](HISTORY.md#departures-from-d)). The port agreed with D on the
   demo case before those departures.
-- **The other goldens** (the LAmax, NA and TA metrics, the stratified runs and the terrain
+- **The other goldens** (the LAmax, NA and TA metrics, and the stratified, terrain and urban
   runs) come from the C++ build. The metric goldens were checked against a brute-force
   detector run on a 5e-5 s reception-time grid built from the run's state and level histories.
   It agrees with them to 1e-4 dB; the same detector in emission time is up to 0.018 dB off. On
@@ -43,8 +43,7 @@ measured (or model minus reference), and LAmax is fast-weighted.
 - **Physics ported from panam is pinned to it:** ISO 9613-1 absorption, the ground effect,
   the A-weighting and EPNL. EPNL agrees with panam to 1e-6 dB (the cases are listed in
   [internals/testing.md](internals/testing.md#epnl-and-band-frames)). The plate receiver's exact
-  form matches panam's
-  board level to 1e-6 dB. The C weighting matches IEC 61672-1 Table 3 within its 0.1 dB
+  form matches panam's board level to 1e-6 dB. The C weighting matches IEC 61672-1 Table 3 within its 0.1 dB
   rounding from 10 Hz to 20 kHz.
 
 The goldens, how each is made and the tests that guard them are listed in
@@ -685,7 +684,7 @@ it is within 4.5 dB of position 28's measured row up to 500 Hz and 7–9 dB too 
 vertical-plane method leaves out both sound reaching the microphone around the hill's flanks and
 turbulent scattering into the shadow; which of them fills the shadow here is not settled. The
 same runs found the 1 m grid's texture 3–5 m from a flush board screening paths at 1–2°
-elevation, by 0.03–0.14 m: `--screening_min_height` (0.5 m) now leaves those unscreened.
+elevation, by 0.03–0.14 m: `--screening_min_height` (0.5 m) leaves those unscreened.
 
 ### Urban receivers
 
@@ -2302,6 +2301,13 @@ The states sampled agree with every state evaluated to 0.003 dB, as without scat
 20 ft agree with the default 4 m to 0.03 dB. Cost: 1.7 s on the GPU against 1.5 s specular, and
 3.8 s with `--no-gpu` against 3.4 s, each microphone's field built once for the run.
 
+### `--db_cutoff` and SEL
+
+The cutoff is exact for an observer whose peak level reaches it, but an SEL exceeds its peak level
+by 1 to 12 dB, so a cell at or above the cutoff in SEL can have its window cut. On the demo case
+`--db_cutoff 85` changes about a quarter of the cells at or above 85 dB, by at most 0.43 dB, and
+none about 3 dB above the cutoff.
+
 ### Trajectory smoothing
 
 The demo track's own latitude, longitude and altitude columns, fed back in as a WGS84 track and
@@ -2532,7 +2538,7 @@ direction turned by the 13.6° declination, taken as 2 m high. Station winds wer
   and 7 z₀) moves day 284 by 0.014 dB rms and 0.15 dB at most; dropping every level below 1 m
   moves it by 0.046 dB rms, 0.30 dB at most.
 - **Stability classes are unvalidated.** Class II comes nearly back to straight rays: its
-  inversion and shear deepen the upwind shadow, −3.3 dB median at 5–10°. An earlier trial of
+  inversion and shear deepen the upwind shadow, −3.3 dB median at 5–10°. A separate trial of
   class II's exponent with a +3 K/100 m inversion, driven by the LIDAR's 46 ft wind, scored
   1.90 dB where the log law through that wind scored 1.72. One day, scored after the fact,
   cannot choose a class.
@@ -2556,7 +2562,8 @@ under 20° of veer):
   down the log law, it predicts the station cups (2 m, near-neutral runs) to +0.03 m/s (rms 0.37)
   where the study's 0.1 ft gives +0.54 (0.59); the cups alone imply 0.47 m. With it, the R44's
   `stratified_plate` SEL rms at 0–5° falls 4.60 → 4.13 dB [−0.63, −0.31], and over all its
-  mic-runs 1.77 → 1.66 (straight rays: 1.27).
+  mic-runs 1.77 → 1.66 (straight rays: 1.16,
+  [Shipped databases](#shipped-databases-approach-scores-per-aircraft)).
 - **Amedee, Salton Sea, Sweetwater**: no run meets the screen (the bulk Richardson number's
   median is +2.0 at Amedee), so the fit is refused. Relaxed screens give values the stability
   decides, not the surface: at Eglin the apparent z₀ runs from the search's lower bound (Ri < −1)
@@ -2592,22 +2599,22 @@ A windowed run equals its marched run byte for byte at any stride (`stratified_w
 ### Refraction against flight data
 
 **`--refraction stratified` on day 284** (`min2_no284`, plate, 729 mic-runs, SNR ≥ 10 dB,
-records that miss the flyover left out), median / rms in dB, before and after the boundary law
-was refitted for flush microphones
-([Shadow-transition calibration](#shadow-transition-calibration)):
+records that miss the flyover left out), median / rms in dB, with the boundary law before and
+after it was refitted for flush microphones
+([Shadow-transition calibration](#shadow-transition-calibration)), both scored at the refit:
 
-| | before the flush refit | current law |
+| | before the flush refit | after it |
 | --- | --- | --- |
 | upwind, peak elevation 5–10° (65) | +0.45 / 3.72 | +0.28 / 3.06 |
 | upwind, 10–20° (80) | +0.99 / 2.24 | +0.71 / 1.87 |
 | all | +0.09 / 1.85 | +0.09 / 1.70 |
 
-The calm day 286 barely moves (1.46 → 1.45 dB rms overall): its winds cast few shadows.
+The calm day 286 barely moves (1.46 → 1.45 dB rms overall): its winds cast few shadows. These
+predate the rebuild of the shipped B407 database; the law's scores on the databases scored
+elsewhere in this file are in [Wind profile and stability](#wind-profile-and-stability).
 
 - **The plate's own transition table**, with the offset K, takes `stratified`'s day-284 rms at
   5–10° from 4.5 to 3.6 dB.
-- **Microphones just below the plane.** Before the direct-ray solve placed such microphones on
-  the ground plane, a ray grazing under it read them 33 dB low on day 284.
 - **The hovering end of the day-286 approaches** (sources under 100 ft and 20 kt).
   `stratified` was 6.5 dB over straight rays there on the measured frames, 63–250 Hz, at
   microphones 150–450 ft away, while the PE on those paths agreed with straight rays. In the
@@ -2653,6 +2660,10 @@ The calm day 286 barely moves (1.46 → 1.45 dB rms overall): its winds cast few
 | R66 approaches, < 10° | 99 | 1.99 | 2.13 | +0.15 [+0.10, +0.20] |
 | R44 turns (held out), all | 4992 | 1.55 | 1.56 | +0.00 [+0.00, +0.00] |
 | R44 turns, < 10° | 11 | 0.94 | 0.90 | −0.04 [−0.07, +0.00] |
+
+The R44 rows were scored on the RO-44 database before its frame-bearing rebuild
+([HISTORY](HISTORY.md#the-2017-noise-abatement-databases)), so their `stratified_plate` column
+differs from the Eglin scores in [Wind profile and stability](#wind-profile-and-stability).
 
 - On the R44 it matches the per-run PE propagation tables (1.47 dB overall and 3.51 at 0–5°)
   with no table.
@@ -2895,21 +2906,26 @@ range-dependent source fit would confound descent state drift with path loss.
   next to the microphone and along the path decides ([Ground classes](#ground-classes)).
 - **The nose.** No shipped database records a heading-filed azimuth, and a WGS84 track's
   heading has to be given as a column.
-- **A point source among buildings** diffracts at three edges at most but over roofs, where chains
-  take up to eight; with both ends above a step's tilted line, double diffraction is the cascade,
-  and the level steps by up to 6.4 dB where a microphone crosses the line unless
-  `--tilted_step_split` is given; above the row profile's fade a row's cascades step 3-5 dB across
-  the roofs' plane at 6.3-10 kHz, and touching steps that are not dips step there at every
-  frequency; blocks thinner than a wavelength or so
-  are 2-6 dB low below 500 Hz; and by UTD an edge's end, where its transition meets a face's plane through the vertex,
-  is up to 3.7 dB off the edge-source integral, no better than with the edge unending
-  ([A point source among buildings](#a-point-source-among-buildings)). A pitched roof's
-  slopes reflect with walls, and a level roof or a slope at one bare end of a twice-diffracted ray,
-  but not with walls on that ray, nor on rays diffracted three times or more; an end exactly in a
-  slope's extended plane admits rays grazing along it that exist nowhere else, up to 6 dB off the
-  field 1 µm away; over a roof of nearly flat wedges whose pairs share the faces
-  the ray runs along (a mansard's) the cascade is 3-4 dB rms off the exact field; the FDTD's
-  staircase makes it no reference for a sloped roof below 1.5 mm cells at EDGE's scale
-  ([Pitched roofs](#pitched-roofs)).
+- **A point source among buildings**
+  ([A point source among buildings](#a-point-source-among-buildings)):
+  - It diffracts at three edges at most, except over roofs, where chains take up to eight.
+  - With both ends above a step's tilted line, double diffraction is the cascade, and the level
+    steps by up to 6.4 dB where a microphone crosses the line unless `--tilted_step_split` is
+    given.
+  - Above the row profile's fade, a row's cascades step 3-5 dB across the roofs' plane at
+    6.3-10 kHz, and touching steps that are not dips step there at every frequency.
+  - Blocks thinner than a wavelength or so are 2-6 dB low below 500 Hz.
+  - By UTD, an edge's end, where its transition meets a face's plane through the vertex, is up to
+    3.7 dB off the edge-source integral, no better than with the edge unending.
+- **Pitched roofs** ([Pitched roofs](#pitched-roofs)):
+  - A slope reflects together with walls, and a level roof or a slope reflects at one bare end of
+    a twice-diffracted ray, but not with walls on that ray, nor on rays diffracted three times or
+    more.
+  - An end exactly in a slope's extended plane admits rays grazing along it that exist nowhere
+    else, up to 6 dB off the field 1 µm away.
+  - Over a roof of nearly flat wedges whose pairs share the faces the ray runs along (a
+    mansard's), the cascade is 3-4 dB rms off the exact field.
+  - The FDTD's staircase makes it no reference for a sloped roof at cells of 1.5 mm or
+    coarser at EDGE's scale.
 - **Source coverage.** Every aircraft over-predicts at low elevation; the B407 hover between 3°
   and 17° below the horizon, and under the aircraft, is an interpolation.

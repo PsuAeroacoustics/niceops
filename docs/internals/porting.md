@@ -50,11 +50,11 @@ question was settled.
 
 ## Port fidelity and its exceptions
 
-**Port fidelity outranks correctness, with two deliberate exceptions.** Several `NOTE:` comments
-mark places that faithfully reproduce D quirks; leave them alone unless you are also regenerating
-the golden outputs, and say so explicitly. The exceptions are the 4x EAA multiplier and the
-energy ambient mix (see [HISTORY](../HISTORY.md#departures-from-d), which also covers the
-spreading cap at the sphere surface). Each was a physics error rather than a quirk, and each was
+**Port fidelity outranks correctness, with three deliberate exceptions.** Several `NOTE:`
+comments mark places that faithfully reproduce D quirks; leave them alone unless you are also
+regenerating the golden outputs, and say so explicitly. The exceptions are the 4x EAA
+multiplier, the energy ambient mix and the spreading cap at the sphere surface (see
+[HISTORY](../HISTORY.md#departures-from-d)). Each was a physics error rather than a quirk, and each was
 measured against the physics before it changed; `golden/197421_LAE.csv` was regenerated from the
 C++ build ([testing.md](testing.md#golden-files)). That is the bar for departing from D: a
 measured case that the D behavior is wrong, not a reading that it looks wrong.

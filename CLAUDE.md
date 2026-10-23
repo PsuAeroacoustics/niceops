@@ -100,11 +100,12 @@ Commands and options are in `README.md`; rationale is in
   `niceops --buildings`, `niceops_point_field`, `niceops_urban_table --wave_below` and
   `niceops_fdtd_field` take the GPU unless `--no-gpu`, and fall back to the CPU where the GPU does
   not take the case (`--edge_source`, `--fade`, `--ray_coherence measured`, `--phase_interval`, an
-  FDTD grid the device cannot hold); `--gpu` asks for it and is refused where it cannot run. They work in float (phases in
-  float-float), are tested against the CPU at a stated tolerance, never bit-for-bit, and never feed
-  a golden: **a test pinned to CPU results passes `--no-gpu`**, or it fails on a Mac and passes on
-  Linux CI. Kernels are written once, in the dialect of `src/gpu/kernels`, so another backend takes
-  the same source: [docs/internals/gpu.md](docs/internals/gpu.md).
+  FDTD grid the device cannot hold); `--gpu` asks for it and is refused where it cannot run. They
+  work in float (phases in float-float), are tested against the CPU at a stated tolerance, never
+  bit-for-bit, and never feed a golden: **a test pinned to CPU results passes `--no-gpu`**, or it
+  fails on a Mac and passes on Linux CI. Kernels are written once, in the dialect of
+  `src/gpu/kernels`, so another backend takes the same source:
+  [docs/internals/gpu.md](docs/internals/gpu.md).
 - **The ground model returns a gain, not a loss.**
 - **Compass bearings** are turned into the local frame by `--frame_bearing` through one
   rotation, `CompassToLocal`. The shipped AC tracks need 210.
@@ -327,7 +328,6 @@ Speed:
   the BEM). It runs in a trajectory (`--buildings --edge_source`, CPU only) but is not the
   default, for its cost (about 0.8 s of CPU a pair on the demo district).
 
-
 ## Code conventions
 
 - **Port fidelity outranks correctness, with a bar for departing from it.** Leave the `NOTE:`
@@ -344,7 +344,8 @@ Speed:
 
   When a D construct looks obvious, check it against Phobos with a throwaway `ldc2` program.
   See [porting.md](docs/internals/porting.md).
-- `using namespace niceops;` at the top of `src/*.cpp` is intentional (`// NOLINT`).
+- `using namespace niceops;` at the top of a `src/*.cpp` is intentional (`// NOLINT`); the other
+  files wrap their definitions in `namespace niceops { ... }`.
 - Logging goes through `src/util/logger.hpp` (`log/niceops.log`). `fatal()` is `[[noreturn]]`
   and aborts, so RAII cleanup doesn't run on fatal paths.
 - Flags are defined in the CLI11 setup in `src/niceops.cpp`; document a new one in the MANUAL.

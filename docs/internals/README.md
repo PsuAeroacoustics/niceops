@@ -55,7 +55,7 @@ Sources are in `src/`; a name without an extension means its `.cpp` and `.hpp`.
 | Contour polygons (`--contour_file`) | `contour` | [metrics.md](metrics.md#contours) |
 | Gridded levels as CF netCDF (`--raster_file`) | `raster` | [metrics.md](metrics.md#raster) |
 | Energy by sphere (`--provenance_spheres`) | `sphere_energy` | [metrics.md](metrics.md#source-provenance) |
-| Build, link layout, shared helpers, the run manifest | `CMakeLists.txt`, `util/paths.hpp`, `util/netcdf.hpp`, `util/netcdf_write.hpp`, `util/constants.hpp`, `util/hermite.hpp`, `manifest`, `build_info`, `util/sha256.hpp`, `cmake/build_info.cmake` | [build.md](build.md) |
+| Build, link layout, shared helpers, the run manifest | `CMakeLists.txt`, `util/paths.hpp`, `util/netcdf.hpp`, `util/netcdf_write.hpp`, `util/constants.hpp`, `util/hermite.hpp`, `manifest`, `build_info.cpp`, `util/sha256.hpp`, `cmake/build_info.cmake` | [build.md](build.md) |
 | Plotting (pybind11-embedded matplotlib, created lazily, `Agg` backend) | `plotting`, `plotting_disabled.cpp` | [build.md](build.md#plotting) |
 | GPU backends, the kernel dialect, band energies and point rays on the GPU (`niceops --buildings`, `niceops_point_field`), the canyon solver's and the FDTD's marches | `gpu/gpu.hpp`, `gpu/gpu_metal.mm`, `gpu/gpu_disabled.cpp`, `gpu/band_energy`, `gpu/point_rays`, `gpu/band_stream`, `gpu/kernels/`, `cmake/embed_kernels.cmake` | [gpu.md](gpu.md) |
 

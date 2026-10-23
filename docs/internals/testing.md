@@ -15,7 +15,10 @@ output with a file in `golden/` or with another run, through `golden_compare`:
 
 - **Tolerance.** The default is 1e-9 relative, scaled by max(1, |value|). An optional third
   argument is an absolute tolerance, for runs that are meant to agree only that closely; a value
-  then agrees within the larger of the two. Header lines (anything non-numeric) are skipped.
+  then agrees within the larger of the two. A fourth and fifth argument compare the candidate
+  less an offset, after a number of leading numeric lines compared as they are (a grid file's x
+  and y axes): a level that should sit a known number of dB from another. Header lines (anything
+  non-numeric) are skipped.
 - **Non-finite values.** A NaN agrees only with a NaN, and an infinity only with the same
   infinity (a culled cell is −inf in both runs). `golden_compare` is tested itself
   (`golden_compare_rejects_nan`, `golden_compare_rejects_inf`,
@@ -49,7 +52,7 @@ condition-bin bounds, frame alignment and common prediction coverage. It is not 
 | File | Made by | Compared by (tolerance) | Producing run | Regenerate |
 | --- | --- | --- | --- | --- |
 | `state_197421.csv` | D reference | `state_golden` (1e-9 rel.) | `regression_default` (`-S state/ci_state.csv`) | `regenerate-goldens` skill |
-| `197421_LAE.csv` | C++ build | `regression_golden` (1e-9 rel.); also `blend_barycentric_is_golden`, `ambient_negligible_matches` | `regression_default` | copy `integrated/197421_LAE.csv` |
+| `197421_LAE.csv` | C++ build | `regression_golden` (1e-9 rel.); also `blend_barycentric_is_golden`, `ambient_negligible_matches`, `mask_suspect_cells_clean_is_golden`, `config_demo_is_golden`, `operations_count_one_is_golden` | `regression_default` | copy `integrated/197421_LAE.csv` |
 | `metrics_197421_lafmax.csv` | C++ build | `lafmax_golden` (1e-9 rel.) | `metrics_broadband` | copy `integrated/metrics_bb_lafmax.csv` |
 | `metrics_197421_na64.csv` | C++ build | `nax_golden` (1e-9 rel.) | `metrics_broadband` | copy `integrated/metrics_bb_na64.csv` |
 | `metrics_197421_ta70.csv` | C++ build | `ta_golden` (1e-9 rel.) | `metrics_broadband` | copy `integrated/metrics_bb_ta70.csv` |
@@ -118,6 +121,10 @@ Notes on each:
   tolerance is absolute because the root solves are not bit-stable across compilers.
   `stratified_calm_floor_plate_200hz` ends `--band_limits` at the 200 Hz band, so the layered
   solve's resolution frequency is not the 10 kHz default.
+- **The four stratified goldens were regenerated when `--ray_stride 4` became the default**; the
+  files from before, every state solved, are kept as `*_exact.csv` and pinned by runs with
+  `--ray_stride 1`, which reproduce them to the bit. `stratified_stride_{windy,duct}_is_close`
+  holds the default within 0.005 and 0.02 dB of them.
 - **`terrain_hills_{point,plate}.csv`** were made by the build that added `--terrain`. They are
   pinned for the same reason: passing the plate's receiver as a point receiver at its call site
   (the plate then measures the source from the line, not from its microphone) moved cells by
@@ -133,10 +140,6 @@ Notes on each:
   pair the whole path's ground as well (ground counted twice) fails both, and giving a plate's
   microphone side the point model in place of the plate fails the plate's. The windowed/marched
   pairs compare a run with itself and pass with either.
-- **The four stratified goldens were regenerated when `--ray_stride 4` became the default**; the
-  files from before, every state solved, are kept as `*_exact.csv` and pinned by runs with
-  `--ray_stride 1`, which reproduce them to the bit. `stratified_stride_{windy,duct}_is_close`
-  holds the default within 0.005 and 0.02 dB of them.
 - **`terrain_ridge_kirchhoff_{point,plate,noground,table}.csv`** were made by the builds that
   added `--terrain_screening kirchhoff` (point, plate) and its band-loss table (the other two;
   the table moved the first two by under 10⁻⁸ dB), behind the ridge fixture, and pin the

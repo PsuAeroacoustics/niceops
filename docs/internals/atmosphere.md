@@ -62,9 +62,9 @@ preserve:
 - **`Database` knows nothing about profiles.** The caller hands `spectral_level_at_observer`
   per-band coefficients exactly as before. Without `--atmosphere` the run-wide array goes through
   untouched, so the default output is byte-identical.
-- **F is quadratic within a node.** α is linear between nodes and F is its exact integral, so the
+- **F is quadratic between nodes.** α is linear between nodes and F is its exact integral, so the
   difference quotient tends smoothly to α as the heights meet. Within 1 mm it switches to α at the
-  midpoint.
+  midpoint (`mean_coefficients`).
 - **One level means uniform at every height.** With several levels, a trajectory above the top is
   refused, not extrapolated.
 - **The surface level supplies the sound speed** for the reception time and the ground impedance.
@@ -90,12 +90,13 @@ preserve:
   observation gives a profile with *no wind columns*, not columns of zeros;
   `refer_to_database_speed` treats a `--wind` of zero as calm stated, so `--speed_reference air` is
   not refused for it.
-- **Each trajectory's air travels in its `PathJob`** (`--atmosphere`, `--wind`, `--humidity`,
-  `--temperature`, `--pressure`, `--start_utc`, once for the run or once each), and
-  `process_trajectory` reads it through its own copy of the run's options, so everything below it
-  that reads `options` sees that trajectory's air without knowing there are several. The run's
-  options hold the first trajectory's. Each distinct `--wind` and `--atmosphere` is parsed once.
-  `air_*_is_its_own` and `air_clock_is_each_tracks_own` pin each of the six against a run alone.
+- **Each trajectory's air travels in its own copy of the run's options** (`--atmosphere`, `--wind`,
+  `--humidity`, `--temperature`, `--pressure`, `--start_utc`, once for the run or once each).
+  `run()` fills that copy beside the trajectory's `PathJob` and hands it to `process_trajectory`, so
+  everything below it that reads `options` sees that trajectory's air without knowing there are
+  several. The run's options hold the first trajectory's. Each distinct `--wind` and `--atmosphere`
+  is parsed once. `air_*_is_its_own` and `air_clock_is_each_tracks_own` pin each of the six against
+  a run alone.
 - **Built per trajectory, in `process_trajectory`, not in `run()`.** Its surface air is that
   trajectory's vehicle file's (under `--temperature` and friends, which `--wind`, unlike
   `--atmosphere`, accepts), and its top has to clear that track. Inside `process_trajectory` the
@@ -141,8 +142,9 @@ equations are in [THEORY.md](../THEORY.md) §7. The things to preserve:
   same reason as `--wind`'s; measured levels below that stay levels. A temperature, humidity or
   pressure measured at or below z₀ under the log law (a screen-height sensor at a forest or urban
   site) is left out of the levels with a warning, not refused: its value still enters the
-  interpolation. An explicit `--levels` height there would be calm and is refused. A measured calm level is refused, or dropped with `--calm_levels drop`. A column calm
-  at every level gives a profile without wind columns.
+  interpolation. An explicit `--levels` height there would be calm and is refused. A measured
+  calm level is refused, or dropped with `--calm_levels drop`. A column calm at every level gives
+  a profile without wind columns.
 - **The explicit level list exists because the stratified search follows the layers.** Grid cells
   1500 m downwind move ±0.2 dB under any re-layering (see the discretization bullet below), so
   reproducing a profile someone else ran needs their levels, not only their values.
@@ -195,9 +197,8 @@ equations are in [THEORY.md](../THEORY.md) §7. The things to preserve:
   or chase it here.
 - **The builder** is pinned in `tests/test_atmosphere_builder.cpp`: one observation is
   `synthetic_profile` with `==`; the fill is the law through the lowest gate; no level above the
-  ground is calm for random gates and roughness lengths, nor for a temperature and pressure
-  measured below z₀ (left out as levels, and still setting the ground's values); ground levels
-  from the station, across
-  the ground, or held; the explicit level list; the column reader's wind convention against
-  `read_atmosphere_profile`, the dew point and specific humidity against closed forms, and fill
-  values; and a built profile reads back as itself.
+  ground is calm for random gates and roughness lengths, nor for a temperature and pressure measured
+  below z₀ (left out as levels, and still setting the ground's values); ground levels from the
+  station, across the ground, or held; the explicit level list; the column reader's wind convention
+  against `read_atmosphere_profile`, the dew point and specific humidity against closed forms, and
+  fill values; and a built profile reads back as itself.

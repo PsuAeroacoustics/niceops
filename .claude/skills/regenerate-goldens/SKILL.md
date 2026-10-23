@@ -45,9 +45,9 @@ cmake --build /tmp/drefbuild --target niceops
   `watts_trim()`/`adapt()` both commented out. The older copy runs trimming and spline
   adaptation, computes a different trajectory, and yields a golden the port can never match.
 - **D prints only 6 significant figures** by default, so a stock D build agrees with the
-  port to just 5e-6. For a 1e-9 golden, patch the writers to `%.17g` (`write_levels` in
-  `niceops.d`, `write_state` in `trajectory.d`, both recovered from `c74bab3`) — formatting
-  only, no numerics.
+  port to just 5e-6. For a 1e-9 golden, patch the writers to `%.17g` (`write_levels` in the
+  `niceops.d` copied from `c74bab3`, `write_state` in `trajectory.d`, which is the same in both
+  commits) — formatting only, no numerics.
 - The D CMakeLists hardcodes `/usr/local` paths for netCDF and Eigen; override as above on
   Apple Silicon. D also crashes if `state/` does not already exist (it does not create the
   directory, unlike the port).

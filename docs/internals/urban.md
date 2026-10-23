@@ -1199,7 +1199,8 @@ from 0.33 to 0.043 s a pair. Grouped by where they act:
   pool, indexed from the pair's entry. Where the pair's box spans an eighth of the facade grid or
   more, the candidates are walked as the AND of two per-edge bitsets of the facades each edge
   has an end in front of (`FrontFacades`: `facade_side`'s expression on a normal formed as
-  `frame_of` forms it, kept per district under a 64 MB budget), kept where the facade's grid
+  `frame_of` forms it; `Buildings::front_facades(edge)`, one table shared by the threads, each
+  edge's row filled once under `std::call_once`), kept where the facade's grid
   cells (`Buildings::facade_cells`, `PlanGrid::item_cells`, the grid's own registration) meet the
   box's: the same set `facades_in_box` returns, ascending, with no dedup or sort (`the facades in a
   box are those whose cells meet the box's` checks that). Smaller boxes

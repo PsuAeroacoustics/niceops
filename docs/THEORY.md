@@ -30,9 +30,9 @@ NICEOPS is a source–path–receiver model. For each state of a flight trajecto
 source directivity from a database of measured noise "spheres" [1]. For each observer it
 carries the level along a path through the atmosphere to the ground. It then integrates each
 observer's level history into exposure metrics. The approach follows the maneuvering-flight
-noise model of Greenwood and Rau [2]. Every observer is paired with every state; by default a pair is skipped only where a
-bound proves it below the observer's 10 dB-down window, which leaves the result unchanged. The demo
-case has 6,551 states and 14,400 observers.
+noise model of Greenwood and Rau [2]. Every observer is paired with every state; by default a
+pair is skipped only where a bound proves it below the observer's 10 dB-down window, which
+leaves the result unchanged. The demo case has 6,551 states and 14,400 observers.
 
 | Symbol | Meaning |
 | --- | --- |
@@ -186,7 +186,7 @@ $$
 $$
 
 added to every level and band. $C_T$ is capped at `--max_load_factor` (default 2) times
-$C_{T,\mathrm{ref}}$. Below 1 g the law is not applied by default, as PANAM applies it.
+$C_{T,\mathrm{ref}}$. By default the law applies only above 1 g, as PANAM applies it.
 `--load_factor_correction two_sided` applies it below 1 g too, down to `--min_load_factor`
 (default 0.5), below which the correction is held: near zero load factor, or below it where
 $C_T$ is negative, the logarithm would fail.
@@ -197,7 +197,8 @@ Each sphere is fixed to the rotor. Its axes are $\hat{\mathbf{n}}$, the nose $\h
 (a horizontal direction $\mathbf{v}$, below, projected into the tip-path plane) and starboard
 $\hat{\mathbf{s}} = \hat{\mathbf{e}} \times \hat{\mathbf{n}}$. When the projection vanishes (no
 velocity, or a velocity along $\hat{\mathbf{n}}$), the nose falls back to $+x$ (or $+y$, if
-$\hat{\mathbf{n}}$ lies along $x$) projected into the tip-path plane.
+$\hat{\mathbf{n}}$ lies near the $x$ axis, $\lvert n_x\rvert \ge 0.9$) projected into the
+tip-path plane.
 
 **The nose.** By default the database's `azimuth_reference` decides: a database built on the
 heading takes `--nose heading` (below), and any other takes the velocity of §2.1
@@ -220,7 +221,8 @@ horizontal direction is $\psi_h$ at every speed, with the same climb $w\,u_z/\lv
 a heading along the track gives the velocity's nose; in a crosswind it is turned by the crab
 angle. When the run has no frame, the low-speed turn uses instead the circular mean of heading
 against track over the states above 20 kt (at least 50 of them), and `--nose heading` is
-refused. Without a heading, or without either offset, the nose is the velocity at every speed.
+refused. Without a heading, or with neither a frame nor that mean, the nose is the velocity at
+every speed.
 $\mu$, $\gamma$ and $C_T$ do not depend on the nose.
 
 **The angles.** For the unit vector $\hat{\mathbf{d}}$ from source to observer:
@@ -304,9 +306,9 @@ point, 90% of the radius or more toward the inside of a turn, is refused. Where
 $|\mathbf v|$ is below 3 kt, $\hat{\mathbf n}$ is taken from the nearest point that is faster.
 A slow interval bounded by different travel directions is refused: switching held normals
 would introduce a discontinuity in the displaced path. Normals within $10^{-6}$ in Euclidean
-norm are treated as the same direction to allow numerical roundoff.
+norm are treated as the same direction, to allow for roundoff.
 
-- **WGS84 tracks.** Both derivatives used to calculate $\kappa$ come from a preliminary fit
+- **WGS84 tracks.** Both derivatives in $\kappa$ come from a preliminary fit
   of the raw samples at the same $\sigma$. The file's velocity columns, when present, set
   only $\hat{\mathbf n}$ and the 3 kt threshold, not the curvature. Each raw sample is moved
   by $d\,\hat{\mathbf n}$, and the displaced samples are fitted as above.
@@ -470,8 +472,9 @@ $\mathrm{w}(z) = 2e^{-z^2} - \mathrm{w}(-z)$. For speed, the hot path uses the a
 for $\lvert z\rvert \ge 6$ in the upper half-plane or where $x^2 - y^2 \ge 36$ ($z = x + iy$), a
 sixth-order Taylor expansion about nodes 0.05 apart for $\lvert z\rvert < 6$ with
 $\mathrm{Re}\,z \ge 0$ and $-0.25 \le \mathrm{Im}\,z \le 6$, and Weideman's series for every
-other argument. Both fast paths agree with the series to about $10^{-11}$, and the series agrees
-with SciPy's `wofz` to $3\times10^{-13}$.
+other argument. How closely the fast paths follow the series is in
+[FIDELITY](FIDELITY.md#ground-and-plate-tables), and the series' own accuracy in the
+[developer guide](internals/ground.md#faddeeva-function).
 
 **Roughness.** An rms roughness height $\sigma_r$ (`--roughness`, default 0) reduces the
 coherent reflection by the Kirchhoff (Ament) factor [27]:
@@ -490,7 +493,8 @@ G = 1 + \frac{\lvert Q\rvert^2}{\varrho^2} +
 $$
 
 with $\Omega = \pi(2^{1/6} + 2^{-1/6}) = 6.325159$ and $\Delta = \pi(2^{1/6} - 2^{-1/6}) = 0.727477$.
-These are the interference evaluated at the band's arithmetic center, averaged over its width.
+They place the interference at the band's arithmetic center and average it over the band's
+width.
 Over a rigid surface with the receiver on the ground, and with no turbulence ($C = 0$, the
 default) or under HARMONOISE, $G \to 4$ (+6 dB). Chessell's factor depends on range alone, so
 it decorrelates even coincident paths.
@@ -561,9 +565,9 @@ with $h_r$ set to that height, over the run's ground or over the microphone's gr
 ### 6.2 Ground-plane microphones
 
 `--plate_table` models a microphone mounted in a circular plate on the ground: the GRAS 67AX in a
-GR1425 plate, 0.2 m in radius, with the microphone 3/4 of the radius from the center: the plate
-size and microphone position of SAE ARP 4055 [33], though ARP 4055's microphone is inverted
-above the plate, not flush. The plate's response is tabulated by PANAM's axisymmetric boundary
+GR1425 plate, 0.2 m in radius, with the microphone 3/4 of the radius from the center. These are
+the plate size and microphone position of SAE ARP 4055 [33], though ARP 4055's microphone is
+inverted above the plate, not flush. The plate's response is tabulated by PANAM's axisymmetric boundary
 element method as complex transfer functions of the direct and image waves, $P_d$ and $P_r$,
 over frequency, elevation and azimuth. The band gain averages the table's $N_\mathrm{sub}$
 sub-frequencies $f_j$ across the band (five in the GR1425 tables):
@@ -577,9 +581,9 @@ the plate's top surface. Neither turbulence model (§5.3) applies, because the p
 path is millimeters longer than the direct path. This is the reference form. A run takes $Q$
 at each band's edges and center and interpolates it quadratically in $\lg f$ to the $f_j$
 (by default from a per-trajectory table of $Q$ over the grazing cosine and the image path's
-length). That is within 0.07 dB of the reference above −15 dB re free field, and up to about
-1.5 dB off in deep near-grazing nulls. `--exact_ground` evaluates those values of $Q$ directly
-instead of from the table.
+length); how closely that follows the reference is in
+[FIDELITY](FIDELITY.md#ground-and-plate-tables). `--exact_ground` evaluates those values of $Q$
+directly instead of from the table.
 
 $P_d$ and $P_r$ are interpolated bilinearly, real and imaginary parts, in elevation and
 azimuth. They are held below the table's lowest elevation and above its highest, and periodic
@@ -628,8 +632,9 @@ With `--terrain_screening` a path the terrain blocks is screened instead (§6.4)
 microphone's foot and the source's footprint, by one of two models: `cnossos`, the CNOSSOS-EU
 diffraction over the path's terrain profile [34, 35], as amended [37, 38], with the ground on each
 side of its edges in place of the whole path's; or `kirchhoff`, the Fresnel-Kirchhoff loss of one
-equivalent knife edge [39], taken off the level the path would have unscreened. Heights are taken relative to the terrain at the microphone's foot, $s$ is
-the horizontal distance from it, and $\Delta$ is the terrain sampling step. The microphone is
+equivalent knife edge [39], taken off the level the path would have unscreened. Heights are
+taken relative to the terrain at the microphone's foot, $s$ is the horizontal distance from it,
+and $\Delta$ is the terrain sampling step. The microphone is
 $R = (0, h_m)$, with $h_m$ its height above the ground (zero for a plate), the profile is
 $P_k = (k\Delta, z_k)$ for the samples strictly between the ends, $1 \le k < D/\Delta$, and the
 source is $S = (D, z_S)$, raised onto the profile at its footprint if it lies below it. The
@@ -670,8 +675,8 @@ are not. Since $\delta > 0$ on a screened path, $\Delta_\mathrm{dif}(S,R) \ge 10
 dB, so screening switches on with a step of at least that size as a source drops behind a
 crest.
 
-**CNOSSOS-EU: ground on each side.** The source side's mean line is fitted to the profile from $O_m$ to the
-footprint, and the receiver side's from the microphone to $O_1$, as in §6.3. $S'$ and $R'$ are
+**CNOSSOS-EU: ground on each side.** The source side's mean line is fitted to the profile from
+$O_m$ to the footprint, and the receiver side's from the microphone to $O_1$, as in §6.3. $S'$ and $R'$ are
 $S$ and $R$ mirrored in them, and $\Delta_\mathrm{dif}(S', R)$ and $\Delta_\mathrm{dif}(S, R')$
 are evaluated over the same edges, a path difference being negative when the line of sight
 between its ends passes over every edge. Then
@@ -690,8 +695,8 @@ are raised to zero. The Directive writes $\sqrt{G}$ as $10^{-A_\mathrm{ground}/2
 ground model; §5's is used here. The clamp on $F$ departs from the Directive only where an
 image path is shorter than the real one, which only steeply tilted side lines give.
 
-**CNOSSOS-EU: the level.** The screened path keeps the straight line's spreading, absorption and sphere
-direction (§4), and its band levels are lowered by
+**CNOSSOS-EU: the level.** The screened path keeps the straight line's spreading, absorption
+and sphere direction (§4), and its band levels are lowered by
 
 $$
 A = \min\!\left[\Delta_\mathrm{dif}(S,R), 25\right] + \Delta_\mathrm{ground}(S,O) + \Delta_\mathrm{ground}(O,R),
@@ -700,8 +705,8 @@ $$
 in place of the whole path's ground term of §5 or a propagation table's level (§9.3): the
 ground is counted once, on the two sides. Without a ground model $A = \Delta_\mathrm{dif}(S,R)$.
 
-**CNOSSOS-EU: the peak search.** Each side's factor $|1 + (\sqrt{G} - 1)F|^2$ is at most $\max(1, G)$ for
-$F \in [0, 1]$, and $\Delta_\mathrm{dif}(S,R) \ge 10 \lg 3$, so a screened path is at most
+**CNOSSOS-EU: the peak search.** Each side's factor $|1 + (\sqrt{G} - 1)F|^2$ is at most
+$\max(1, G)$ for $F \in [0, 1]$, and $\Delta_\mathrm{dif}(S,R) \ge 10 \lg 3$, so a screened path is at most
 $\max(1, G_S^\mathrm{max}) \max(1, G_R^\mathrm{max})/3$ above free field, with
 $G^\mathrm{max}$ the bounds of §5 and §6.2. That term joins the bound per band.
 
@@ -2060,9 +2065,9 @@ and zero at or below $z_0$. Its direction is the same at every height. The log l
 only the neutral surface layer, about a tenth of a boundary layer one to two kilometers deep.
 Above it the wind turns and grows slowly toward the geostrophic wind, which a single surface
 observation says nothing about, so the profile holds the surface layer's top value rather than
-extrapolate the law or model the turning. The roughness length
-$z_0$ (`--roughness_length`) defaults to 0.03 m, the Davenport–Wieringa class "open flat terrain" [57, 58]. The
-anemometer height $z_\mathrm{ref}$ defaults to the standard 10 m.
+extrapolate the law or model the turning. The roughness length $z_0$ (`--roughness_length`)
+defaults to 0.03 m, the Davenport–Wieringa class "open flat terrain" [57, 58]. The anemometer
+height $z_\mathrm{ref}$ defaults to the standard 10 m.
 
 As run, the law is sampled at levels. The ground, $z = 0$, is calm. The first level above it is
 at $\min(10 z_0, z_\mathrm{ref})$, and from there levels are spaced geometrically,
@@ -2166,8 +2171,8 @@ The level is read from the sphere at the ray's launch direction, and absorbed ov
 length (§4.3). The reflected ray is found by iteration on its launch angle, and a point
 receiver's ground model is evaluated at the equivalent straight geometry with the ray's grazing
 angle $\psi$ and path length; a plate microphone takes the direct ray's arrival angle. Compass
-wind directions are turned into the frame by `--frame_bearing` (default 90°, $+x$ east). In
-uniform air the rays are the straight lines of §4.
+wind directions are turned into the frame by `--frame_bearing` (§3; without it, 90°, $+x$
+east). In uniform air the rays are the straight lines of §4.
 
 **Shadow zone.** In an upward-refracting atmosphere ($a < 0$) no ray reaches beyond
 
@@ -2177,8 +2182,9 @@ $$
 
 Beyond it, sound arrives as a creeping wave diffracted along the ground. The level starts from
 the limiting ray's: its spreading range is continued in proportion to range,
-$R_\mathrm{eq} = r\mathcal{L}/h_c$ ($h_c = \mathcal{L} - z_s$), and its travel time at $c_0$. It decays at the rate of the
-first mode [47, §9-5; 65]. Over rigid ground, with $\tau_1 = 1.01879$ the first zero of
+$R_\mathrm{eq} = r\mathcal{L}/h_c$ ($h_c = \mathcal{L} - z_s$), and its travel time is
+continued at $c_0$. Past $r_b$ the level decays at the rate of the first creeping mode
+[47, §9-5; 65]. Over rigid ground, with $\tau_1 = 1.01879$ the first zero of
 $\mathrm{Ai}'(-x)$:
 
 $$
@@ -2192,8 +2198,9 @@ admittance admits a surface wave ($\arg\beta < -60°$) cannot follow that root a
 rigid-ground rate. Real ground is not always the deeper shadow. To first order the impedance
 rate is up to 12% below the rigid one at low frequency and weak gradients, and up to 2.3 times
 it once the ground is soft on the wave's scale: at 1 kHz in the benchmark's case 3 (§9.2, $c$
-falling 0.1 /s) it is 146 dB/km against rigid ground's 70. The loss $\min(\alpha_\mathrm{sh}(r - r_b), L_\mathrm{floor})$, with
-`--shadow_floor` $L_\mathrm{floor}$ (default 20 dB), is subtracted. The floor stands for the
+falling 0.1 /s) it is 146 dB/km against rigid ground's 70. The loss
+$\min(\alpha_\mathrm{sh}(r - r_b), L_\mathrm{floor})$, with `--shadow_floor` $L_\mathrm{floor}$
+(default 20 dB), is subtracted. The floor stands for the
 energy turbulence scatters into the shadow.
 
 **The shadow transition.** The ray picture is wrong near the boundary, where the field
@@ -2337,8 +2344,8 @@ exact slope every 1/128 from $-60$ to $64$, read by cubic Hermite interpolation)
 past $x = 72$, where every sub-frequency's $\mathrm{Ai}^2$ is below the $10^{-300}$ floor, and
 evaluated directly elsewhere.
 
-**Interpolated states.** With `--ray_stride` $K > 1$ (4 by default) the layered solves -- the direct eigenray,
-the arrivals and wave arrivals, and for a point receiver the reflected ray's grazing angle and
+**Interpolated states.** With `--ray_stride` $K > 1$ (4 by default) the layered solves -- the
+direct eigenray, the arrivals and wave arrivals, and for a point receiver the reflected ray's grazing angle and
 the length its ground term takes -- are made at the anchor states $nK$ and the last state, and a
 state a fraction $t$ of the way between two anchors takes theirs interpolated, provided the two
 agree: the same lit or shadowed primary, a boundary or none, the same hand-over to the linear fit,
@@ -2525,8 +2532,9 @@ $$
 K(f, \phi, \varepsilon) = L_\mathrm{plate}(f, \phi, \varepsilon) - L_\mathrm{bare}(f, \varepsilon; h_0),
 $$
 
-the plate's level (§6.2) less bare ground's at $h_0$ (§5), for a source on a 1 km sphere at azimuth $\phi$ in the plate's frame and elevation $\varepsilon$, interpolated
-bilinearly in $\phi$ and $\varepsilon$. Unlike the shadow transition's $K$(band, azimuth) of
+the plate's level (§6.2) less bare ground's at $h_0$ (§5), for a source on a 1 km sphere at
+azimuth $\phi$ in the plate's frame and elevation $\varepsilon$, interpolated bilinearly in
+$\phi$ and $\varepsilon$. Unlike the shadow transition's $K$(band, azimuth) of
 §8.1, taken at 2°, it depends on elevation, because over a raised $h_0$ the bare term is a comb
 in elevation that $K$ has to follow; over $h_0 = 0$ it is the plate's offset from flush.
 
