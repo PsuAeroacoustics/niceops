@@ -547,6 +547,27 @@ bool sees_air(const Edge& f, const Edge& e)
             || air_or_face(f, normal_part(f, e.start + e.length * e.direction - f.start));
 }
 
+// Whether edge e lies wholly inside the solid between edge f's faces, so
+// that air_or_face puts none of its points in f's air or on its faces: both
+// its ends 1 cm or more off f's line and 1e-6 rad inside the solid, clear of
+// onto_face's 1e-7 and of rounding.  The solid narrowed by that margin is
+// convex (n >= 1), so the segment lies inside it whole; and with n > 1.01 its
+// points stay at least 1.5% of the nearer end's distance off the line, so
+// their angles, formed from any point of f's line, round no worse than 1e-8.
+bool inside_solid(const Edge& f, const Edge& e)
+{
+    if (!(f.n > 1.01 && f.n < 2.0))
+        return false;
+    for (const Vec3& p : {e.start, e.start + e.length * e.direction})
+    {
+        const Vec3 v = normal_part(f, p - f.start);
+        const double theta = f.angle(v);
+        if (!(v.norm() > 1e-2 && theta > f.n * pi + 1e-6 && theta < 2.0 * pi - 1e-6))
+            return false;
+    }
+    return true;
+}
+
 // How a point stands about an edge (PathEnd::View), seeing [from, to] of it
 // or nothing.
 // `faces`: a point on a surface, whose leg to the edge may run along a face.
@@ -656,8 +677,10 @@ class PairTable
 {
 public:
     // A pair; which of the last source ends tried on it reached its first
-    // edge straight (bit k for end k), and whether any did by any way; and
-    // where the field keeps the facades between its edges, once worked out.
+    // edge straight (bit k for end k), and whether any did by any way; where
+    // the field keeps the facades between its edges, once worked out; and
+    // whether the edges see each other's air straight (twice_pair; -1 not
+    // yet asked).
     struct Met
     {
         static constexpr std::uint32_t no_list = std::numeric_limits<std::uint32_t>::max();
@@ -666,6 +689,7 @@ public:
         std::uint8_t reach = 0;
         bool any = false;
         std::uint32_t between = no_list, between_count = 0;
+        std::int8_t air = -1;
     };
 
     void start()
@@ -685,6 +709,12 @@ public:
 
     Met& met(const std::vector<Edge>& edges, std::size_t e1, std::size_t e2)
     {
+        return pairs_[index(edges, e1, e2)];
+    }
+
+    // Where met() keeps a pair, for at(): an index outlasts the next get().
+    std::uint32_t index(const std::vector<Edge>& edges, std::size_t e1, std::size_t e2)
+    {
         if (2 * (pairs_.size() + 1) > key_.size())
             grow();
         const std::uint64_t key = (static_cast<std::uint64_t>(e1) << 32) | static_cast<std::uint64_t>(e2);
@@ -692,15 +722,17 @@ public:
         while (stamp_[i] == generation_)
         {
             if (key_[i] == key)
-                return pairs_[value_[i]];
+                return value_[i];
             i = (i + 1) & (key_.size() - 1);
         }
         stamp_[i] = generation_;
         key_[i] = key;
         value_[i] = static_cast<std::uint32_t>(pairs_.size());
         pairs_.push_back({edge_pair(edges[e1], edges[e2]), {}, 0, false, Met::no_list, 0});
-        return pairs_.back();
+        return value_[i];
     }
+
+    const Met& at(std::uint32_t index) const { return pairs_[index]; }
 
 private:
     std::size_t slot(std::uint64_t key) const
@@ -2483,6 +2515,7 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
         Edge mirror;
         EdgePair pair;
         bool floor = false;
+        bool air = true;
     };
     struct Via
     {
@@ -2600,7 +2633,8 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
             Edge mirror = via.floor ? floor_mirrored_edge(edges[e2])
                                     : mirrored_edge(buildings.facades()[via.facade], edges[e2]);
             EdgePair pair = edge_pair(edges[e1], mirror, via.on1);
-            betweens.push_back({via.floor ? Buildings::no_facade : via.facade, std::move(mirror), pair, via.floor});
+            const bool air = !inside_solid(edges[e1], mirror) && !inside_solid(mirror, edges[e1]);
+            betweens.push_back({via.floor ? Buildings::no_facade : via.facade, std::move(mirror), pair, via.floor, air});
         }
         return betweens[via.full];
     };
@@ -2808,7 +2842,8 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
         PointRay ray = twice_diffracted_ray(g1, h2, pa, pb, q1, q2, ends);
         if (options.edge_ends)
             twice_ends(g1, h2, pa, pb, ray.length, ray.wedge[0].ends, ray.wedge[1].ends);
-        ray.facades = *A.facades;
+        ray.facades.reserve(A.facades->size() + 1 + B.facades->size());
+        ray.facades.assign(A.facades->begin(), A.facades->end());
         if (via != nullptr && !via->floor)
         {
             ray.facades.push_back(via->facade);
@@ -2840,7 +2875,8 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
         ray.edge_source.microphone = pb_real;
         ray.edge_source.stretches[0] = {from_source.from, from_source.to};
         ray.edge_source.stretches[1] = {from_microphone.from, from_microphone.to};
-        ray.path = {source};
+        ray.path.reserve(4 + to_source.size() + across.size() + to_microphone.size());
+        ray.path.assign(1, source);
         ray.path.insert(ray.path.end(), to_source.rbegin(), to_source.rend());
         ray.path.push_back(q1);
         ray.path.insert(ray.path.end(), across.begin(), across.end());
@@ -2942,6 +2978,14 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
             // twice() does not form a Between, so `via` lasts it.
             const Between* via = way_via != nullptr ? &formed(*way_via, e1, e2) : nullptr;
             const EdgePair& pair = via != nullptr ? via->pair : direct;
+            // A way on which either edge lies wholly inside the other's solid
+            // (inside_solid): twice() would refuse every stationary point it
+            // found there, its leg between the edges in neither's air.  Asked
+            // once a field, where a source's end first reaches by the way.
+            if (via == nullptr && met.air < 0)
+                met.air = !inside_solid(edges[e1], edges[e2]) && !inside_solid(edges[e2], edges[e1]);
+            if (via != nullptr ? !via->air : met.air == 0)
+                continue;
             if (options.prune)
             {
                 for (int k = 0; k < nb; k++)
@@ -3218,10 +3262,11 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                     {
                         const Edge& g2 = edges[e2];
                         // g2's points about g1's and g3's lines, and theirs
-                        // about g2's (copies: the table's references last
+                        // about g2's (by index: the table's references last
                         // until its next get).
-                        const EdgePair p12 = pairs.get(edges, e1, e2);
-                        const EdgePair p32 = pairs.get(edges, e3, e2);
+                        const std::uint32_t i12 = pairs.index(edges, e1, e2), i32 = pairs.index(edges, e3, e2);
+                        const EdgePair& p12 = pairs.at(i12).pair;
+                        const EdgePair& p32 = pairs.at(i32).pair;
                         bool reach_source[2] = {true, true}, reach_microphone[2] = {true, true};
                         if (options.prune)
                         {

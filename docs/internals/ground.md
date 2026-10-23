@@ -941,6 +941,20 @@ it bought:
   previous commit: suburb 0.931 -> 0.641 s (mic 1), 1.117 -> 0.802 s (mic 300), 0.863 -> 0.590 s
   (mic 5); DigiCity at 12 m 0.111 -> 0.101 s; a synthetic 900-building grid (3600 facades, 3
   mics) 4.90 -> 2.77 s. Peak RSS of one suburb mic 569 -> 299 MB.
+- **A way whose edges lie in each other's solid is skipped** (`inside_solid`, `Met::air`,
+  `Between::air`). `twice` refuses a point whose leg between the edges is in neither edge's air or
+  on its faces (`air_or_face`). Where one edge (mirrored, for a facade or the floor) has both ends
+  1 cm or more off the other's line and 1e-6 rad inside its solid, every point of it is inside:
+  the solid less that margin is convex for n >= 1, and with n > 1.01 the segment stays far
+  enough off the line that its points' angles round to within 1e-8 rad, well short of the margin
+  over `onto_face`'s 1e-7 snap. The test runs once a field per pair and way, after a source end
+  first reaches by it, and `any` is set before it, so the prune memo stays conservative. Only
+  calls that made no ray are skipped, in order, and the ray dumps did not change by a byte.
+  Tracing, thread CPU, best of 4, alternated against the previous commit: suburb 0.642 -> 0.620 s
+  (mic 1), 0.802 -> 0.775 s (mic 300), 0.591 -> 0.573 s (mic 5), about 3%; DigiCity 0.177 s
+  either way. The same change reserves a twice-diffracted ray's path and facades before filling
+  them, and `thrice` reads its two pairs by `PairTable::index` instead of copying them per middle
+  edge.
 - **A moving source traces each end once** (`PathEnd`, `--sources`). A field's image trees depend
   on the pair only through which near edges each image keeps, so an end traced with the edges
   near every end it will meet (its `partners`, `edges_near` over their points, ascending), each
