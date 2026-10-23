@@ -29,8 +29,9 @@ Footprint box(double x0, double y0, double x1, double y1, double top)
 // at its ends), the point must lie within the stretch it returns.  Over every
 // image to two reflections and every edge each keeps, with and without the
 // floor, from points among DigiCity's containers, a block of a district with
-// an L-shaped building (not convex, so never used to prove anything) and a
-// street of gabled houses.  It must also prove most of the edges no sample
+// an L-shaped building, a street of gabled houses, and U-, T- and L-shaped
+// buildings (one pitched, one with a vertex in line with its neighbours),
+// which prove through their convex pieces.  It must also prove most of the edges no sample
 // sees wholly hidden, and most of the unseen samples of the rest, or it is no
 // use: for the point and its images of one reflection, and for those of two,
 // each on its own.
@@ -56,6 +57,23 @@ TEST_CASE("a point of an edge proved hidden is hidden", "[point_paths]")
     const Buildings street({gabled(0.0, 0.0, 10.0, 12.0, 6.0, 9.0), gabled(12.0, 0.0, 22.0, 12.0, 6.0, 10.5),
             gabled(25.0, 0.0, 33.0, 12.0, 6.0, 9.0), gabled(0.0, 22.0, 12.0, 34.0, 6.0, 10.5),
             gabled(14.0, 22.0, 22.0, 34.0, 6.0, 9.0), gabled(24.0, 22.0, 34.0, 34.0, 6.0, 10.5)});
+    auto ring = [](std::vector<double> x, std::vector<double> y, double top) {
+        Footprint f;
+        f.x = std::move(x);
+        f.y = std::move(y);
+        f.top = top;
+        return f;
+    };
+    // An L gabled along x, ridge 12 m over y = 80, hipped at its west end.
+    Footprint pitched = ring({200.0, 240.0, 240.0, 215.0, 215.0, 200.0}, {60.0, 60.0, 75.0, 75.0, 100.0, 100.0}, 12.0);
+    pitched.roof = {{0.0, 0.3, 6.0 - 0.3 * 60.0}, {0.0, -0.3, 6.0 + 0.3 * 100.0}, {0.3, 0.0, 6.0 - 0.3 * 200.0}};
+    const Buildings shapes({ring({200.0, 240.0, 240.0, 230.0, 230.0, 210.0, 210.0, 200.0},
+                                   {0.0, 0.0, 40.0, 40.0, 10.0, 10.0, 40.0, 40.0}, 15.0),
+            ring({275.0, 285.0, 285.0, 300.0, 300.0, 260.0, 260.0, 275.0}, {0.0, 0.0, 30.0, 30.0, 40.0, 40.0, 30.0, 30.0},
+                    20.0),
+            pitched,
+            ring({300.0, 340.0, 340.0, 320.0, 320.0, 310.0, 300.0}, {60.0, 60.0, 75.0, 75.0, 100.0, 100.0, 100.0},
+                    10.0)});
     struct Case
     {
         const Buildings* city;
@@ -73,6 +91,11 @@ TEST_CASE("a point of an edge proved hidden is hidden", "[point_paths]")
         {&street, {16.0, 17.0, 1.5}},
         {&street, {5.0, 40.0, 15.0}},
         {&street, {23.0, 6.0, 12.0}},
+        {&shapes, {220.0, 30.0, 1.5}},
+        {&shapes, {250.0, 50.0, 3.0}},
+        {&shapes, {290.0, 10.0, 25.0}},
+        {&shapes, {270.0, 80.0, 1.2}},
+        {&shapes, {330.0, 90.0, 4.0}},
     };
     // Per order of the image: the point itself and its images of one
     // reflection, then those of two.
@@ -129,5 +152,67 @@ TEST_CASE("a point of an edge proved hidden is hidden", "[point_paths]")
         CHECK(visible[o] > 100);
         CHECK(proved[o] > unseen[o] / 2);
         CHECK(points_proved[o] > points_unseen[o] / 2);
+    }
+}
+
+// A footprint that is not convex is cut into convex pieces that tile it: each
+// counterclockwise and turning left throughout, its vertices the footprint's,
+// their areas summing to the footprint's, and with its top and roof.  One
+// that is convex, or has a courtyard, is not cut.
+TEST_CASE("a footprint that is not convex is cut into convex pieces", "[buildings]")
+{
+    auto ring = [](std::vector<double> x, std::vector<double> y) {
+        Footprint f;
+        f.x = std::move(x);
+        f.y = std::move(y);
+        f.top = 10.0;
+        return f;
+    };
+    auto area = [](const Footprint& f) {
+        double a = 0.0;
+        for (std::size_t i = 0; i < f.x.size(); i++)
+        {
+            const std::size_t j = (i + 1) % f.x.size();
+            a += f.x[i] * f.y[j] - f.x[j] * f.y[i];
+        }
+        return 0.5 * a;
+    };
+    Footprint court = box(100.0, 100.0, 140.0, 140.0, 10.0);
+    court.holes.push_back({{110.0, 110.0, 130.0, 130.0}, {110.0, 130.0, 130.0, 110.0}});
+    Footprint ell = ring({0.0, 40.0, 40.0, 15.0, 15.0, 0.0}, {0.0, 0.0, 15.0, 15.0, 40.0, 40.0});
+    ell.top = 20.0;
+    ell.roof = {{0.0, 0.3, 6.0}, {0.3, 0.0, 6.0}};
+    const Buildings city({ell, ring({50.0, 90.0, 90.0, 80.0, 80.0, 60.0, 60.0, 50.0}, {0.0, 0.0, 40.0, 40.0, 10.0, 10.0, 40.0, 40.0}),
+            ring({0.0, 40.0, 40.0, 20.0, 20.0, 10.0, 0.0}, {60.0, 60.0, 75.0, 75.0, 100.0, 100.0, 100.0}),
+            box(60.0, 60.0, 80.0, 80.0, 10.0), court});
+    for (std::size_t b = 0; b < city.size(); b++)
+    {
+        const Footprint& f = city.footprints()[b];
+        const std::vector<Footprint>& pieces = city.convex_pieces(b);
+        INFO("building " << b << ", " << pieces.size() << " pieces");
+        if (b >= 3)
+        {
+            CHECK(pieces.empty());
+            continue;
+        }
+        REQUIRE(pieces.size() >= 2);
+        double total = 0.0;
+        for (const Footprint& p : pieces)
+        {
+            const std::size_t n = p.x.size();
+            for (std::size_t i = 0; i < n; i++)
+            {
+                const std::size_t j = (i + 1) % n, k = (i + 2) % n;
+                CHECK((p.x[j] - p.x[i]) * (p.y[k] - p.y[j]) - (p.y[j] - p.y[i]) * (p.x[k] - p.x[j]) >= 0.0);
+                bool vertex = false;
+                for (std::size_t v = 0; v < f.x.size(); v++)
+                    vertex = vertex || (p.x[i] == f.x[v] && p.y[i] == f.y[v]);
+                CHECK(vertex);
+            }
+            CHECK(p.top == f.top);
+            CHECK(p.roof.size() == f.roof.size());
+            total += area(p);
+        }
+        CHECK(std::abs(total - area(f)) < 1e-9 * area(f));
     }
 }

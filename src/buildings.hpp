@@ -225,6 +225,14 @@ public:
         return footprints_;
     }
 
+    // A footprint that is not convex cut into convex pieces with its top and
+    // roof, for proofs that need convex solids (edge_visibility.cpp); empty
+    // for one that is convex already, or has courtyards, which is not cut.
+    const std::vector<Footprint>& convex_pieces(std::size_t building) const
+    {
+        return convex_pieces_[building];
+    }
+
     // Every side of every footprint as a facade standing from the floor to the
     // roof, its base direction clockwise around the building so that the
     // outside is on its left (facade_side > 0).
@@ -403,6 +411,7 @@ private:
     };
 
     std::vector<Footprint> footprints_;
+    std::vector<std::vector<Footprint>> convex_pieces_;
     std::vector<Facade> facades_;
     std::vector<FacadeFrame> frames_;
     std::vector<std::size_t> orientations_;

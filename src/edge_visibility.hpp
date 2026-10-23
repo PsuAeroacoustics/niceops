@@ -18,9 +18,11 @@
 // hidden points are those the intervals of some buildings cover, and those
 // outside the stretch whose path meets the facade at all; from and to are
 // the first and last point left.  Buildings are shrunk by a margin
-// first, which makes every such passage one blocked() counts; footprints that
-// are not convex, or have courtyards, are left out, which can only leave a
-// point visible.  For a chain of facades the path is not one segment, so the
+// first, which makes every such passage one blocked() counts; a footprint
+// that is not convex goes in as its convex pieces (Buildings::convex_pieces),
+// each under the building's own top and roof and so within its solid, and one
+// with courtyards is left out, either of which can only leave a point
+// visible.  For a chain of facades the path is not one segment, so the
 // proof goes leg by leg in the real world instead: the leg to facade k lies on
 // the line from q, mirrored in the facades after k, to the end's image through
 // the facades up to k, and between the planes of the facades either side of

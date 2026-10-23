@@ -89,7 +89,8 @@ bool hidden_interval(const Vec3& apex, const Vec3& q0, const Vec3& d, double len
 }
 
 // The planes of a convex footprint's prism from z_low to top, each moved in
-// by the margin; false for a footprint not convex or with holes.  `mirror`,
+// by the margin; false for a footprint not convex or with holes (a
+// building's convex pieces stand in for one not convex).  `mirror`,
 // when set, reflects the footprint in that facade's vertical plane first.  A
 // pitched roof's planes stand in for the top (the solid under the least of
 // them is the prism cut by each), and below the floor (z_low < 0, the
@@ -341,14 +342,19 @@ bool visible_stretch(const Buildings& buildings, const Edge& edge, const Vec3& e
         {
             if (!boxes_meet(buildings.bounds(k), x0, x1, y0, y1))
                 continue;
-            const Footprint& f = buildings.footprints()[k];
-            planes.clear();
-            if (!prism_planes(f, below_floor ? -f.top : 0.0, mirror, planes))
-                continue;
-            planes.insert(planes.end(), bounds, bounds + n_bounds);
-            double lo, hi;
-            if (hidden_interval(apex, p0, dp, length, planes, lo, hi))
-                hidden.push_back({lo, hi});
+            // A footprint that is not convex, piece by piece.
+            const std::vector<Footprint>& pieces = buildings.convex_pieces(k);
+            const Footprint* first = pieces.empty() ? &buildings.footprints()[k] : pieces.data();
+            for (const Footprint* f = first; f != first + std::max<std::size_t>(pieces.size(), 1); f++)
+            {
+                planes.clear();
+                if (!prism_planes(*f, below_floor ? -f->top : 0.0, mirror, planes))
+                    continue;
+                planes.insert(planes.end(), bounds, bounds + n_bounds);
+                double lo, hi;
+                if (hidden_interval(apex, p0, dp, length, planes, lo, hi))
+                    hidden.push_back({lo, hi});
+            }
         }
     };
     const Vec3 qL = edge.start + length * edge.direction;

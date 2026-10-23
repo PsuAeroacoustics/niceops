@@ -237,6 +237,106 @@ std::size_t active_plane(const Footprint& f, double x, double y)
     return best;
 }
 
+// A footprint that is not convex cut into convex pieces, each with its top and
+// roof, counterclockwise; empty for one that is convex, or has courtyards,
+// which is left whole.  Ears are clipped (a left turn whose triangle holds no
+// other vertex, its sides included) until what is left is convex, and then
+// two pieces that share a diagonal are merged wherever the merged ring still
+// turns left throughout.  Every piece lies within the footprint and under its
+// roof, so whatever passes through a piece passes through the building; a
+// clip that stalls on vertices in line keeps what it has cut, which only
+// leaves part of the building out.
+std::vector<Footprint> convex_pieces_of(const Footprint& f)
+{
+    const std::size_t n = f.x.size();
+    auto turn = [&](std::size_t a, std::size_t b, std::size_t c) {
+        return cross2(f.x[b] - f.x[a], f.y[b] - f.y[a], f.x[c] - f.x[b], f.y[c] - f.y[b]);
+    };
+    auto convex = [&](const std::vector<std::size_t>& ring) {
+        const std::size_t m = ring.size();
+        for (std::size_t i = 0; i < m; i++)
+            if (turn(ring[i], ring[(i + 1) % m], ring[(i + 2) % m]) < 0.0)
+                return false;
+        return true;
+    };
+    std::vector<std::size_t> left(n);
+    for (std::size_t i = 0; i < n; i++)
+        left[i] = i;
+    if (!f.holes.empty() || convex(left))
+        return {};
+    std::vector<std::vector<std::size_t>> pieces;
+    while (left.size() > 3 && !convex(left))
+    {
+        const std::size_t m = left.size();
+        std::size_t ear = m;
+        for (std::size_t i = 0; i < m && ear == m; i++)
+        {
+            const std::size_t a = left[(i + m - 1) % m], b = left[i], c = left[(i + 1) % m];
+            if (!(turn(a, b, c) > 0.0))
+                continue;
+            ear = i;
+            for (const std::size_t p : left)
+                if (p != a && p != b && p != c && turn(a, b, p) >= 0.0 && turn(b, c, p) >= 0.0
+                        && turn(c, a, p) >= 0.0)
+                {
+                    ear = m;
+                    break;
+                }
+        }
+        if (ear == m)
+            break;
+        pieces.push_back({left[(ear + m - 1) % m], left[ear], left[(ear + 1) % m]});
+        left.erase(left.begin() + static_cast<std::ptrdiff_t>(ear));
+    }
+    if (convex(left))
+        pieces.push_back(left);
+    // Merge across shared diagonals: piece p runs from i to j where piece q
+    // runs from j to i.
+    for (bool merged = true; merged;)
+    {
+        merged = false;
+        for (std::size_t p = 0; p < pieces.size() && !merged; p++)
+            for (std::size_t q = p + 1; q < pieces.size() && !merged; q++)
+                for (std::size_t s = 0; s < pieces[p].size() && !merged; s++)
+                {
+                    const std::vector<std::size_t>& a = pieces[p];
+                    const std::vector<std::size_t>& b = pieces[q];
+                    const std::size_t i = a[s], j = a[(s + 1) % a.size()];
+                    const auto at = std::find(b.begin(), b.end(), j);
+                    if (at == b.end())
+                        continue;
+                    const std::size_t t = static_cast<std::size_t>(at - b.begin());
+                    if (b[(t + 1) % b.size()] != i)
+                        continue;
+                    // p from j round to i, then q's vertices after i up to j.
+                    std::vector<std::size_t> ring;
+                    for (std::size_t k = 1; k <= a.size(); k++)
+                        ring.push_back(a[(s + k) % a.size()]);
+                    for (std::size_t k = 2; k < b.size(); k++)
+                        ring.push_back(b[(t + k) % b.size()]);
+                    if (!convex(ring))
+                        continue;
+                    pieces[p] = std::move(ring);
+                    pieces.erase(pieces.begin() + static_cast<std::ptrdiff_t>(q));
+                    merged = true;
+                }
+    }
+    std::vector<Footprint> out;
+    for (const std::vector<std::size_t>& ring : pieces)
+    {
+        Footprint piece;
+        for (const std::size_t i : ring)
+        {
+            piece.x.push_back(f.x[i]);
+            piece.y.push_back(f.y[i]);
+        }
+        piece.top = f.top;
+        piece.roof = f.roof;
+        out.push_back(std::move(piece));
+    }
+    return out;
+}
+
 } // namespace
 
 std::vector<std::tuple<double, double, std::size_t>> roof_stretches(const Footprint& f, double ax, double ay,
@@ -887,6 +987,9 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
     for (std::size_t i = 0; i + 1 < edges_.size(); i++)
         assert(edges_[i].building <= edges_[i + 1].building);
     continue_edges();
+    convex_pieces_.reserve(footprints_.size());
+    for (const Footprint& f : footprints_)
+        convex_pieces_.push_back(convex_pieces_of(f));
 }
 
 void Buildings::continue_edges()

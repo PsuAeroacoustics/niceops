@@ -780,8 +780,20 @@ it bought:
   - **It errs one way only.** A point outside the stretch is one `folded_path_open` refuses:
     `a point of an edge proved hidden is hidden` samples every 2 cm and finds every point it sees
     inside the stretch, and `pruning the diffracted paths loses no ray` holds the rays the same
-    with pruning off. Footprints that are not convex, or have courtyards, are left out, which
-    only widens a stretch.
+    with pruning off. Footprints with courtyards are left out, which only widens a stretch.
+  - **A footprint that is not convex proves through its convex pieces.** `Buildings` cuts each
+    one once, at construction (`convex_pieces`: ears clipped until the rest is convex, then
+    pieces merged across a diagonal wherever the result still turns left), and each piece keeps
+    the building's top and roof planes, so it is the building's solid over that piece and every
+    passage through it is one `blocked()` counts. Shrunk by the margin, two pieces leave a
+    2e-4 m seam the union does not bridge, and a clip that stalls on vertices in line keeps
+    what it has cut; both only lose proof. On DigiCity, whose one non-convex container proved
+    nothing before, tracing 40 microphones went from 0.239 to 0.187 s at 2 m and 0.132 to
+    0.114 s at 12 m (thread CPU, best of 3); the suburb, terraces and district have none and
+    are unchanged. The rays are the same to the bit. `a point of an edge proved hidden is
+    hidden` now samples U-, T- and L-shaped buildings, one pitched and one with a vertex in
+    line: with the pieces it proves 648k of the 654k points no path sees on edges not proved
+    hidden whole, and without them 538k of 1.20M, failing its half-proved check.
   - **Images of two facades or more are proved leg by leg in the real world**, since their path
     does not unfold into one segment. The leg to facade k lies on the line from q, mirrored in the
     facades after k, to the end's image through the facades up to k: each hit lies on its facade,
