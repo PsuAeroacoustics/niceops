@@ -2,6 +2,8 @@
 
 Oct 19, 2026
 
+*Superseded by [NICEOPS urban model gaps plan 2026-10-21](NICEOPS%20urban%20model%20gaps%20plan%202026-10-21.md): several gaps listed here (roofs in the plane-wave tables among them) have since closed. Kept as a record.*
+
 ## Summary
 
 The urban model now runs a point source among LoD1 buildings inside a trajectory run (`--buildings`), with

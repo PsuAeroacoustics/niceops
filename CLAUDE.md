@@ -105,156 +105,6 @@ Commands and options are in `README.md`; rationale is in
   a golden: **a test pinned to CPU results passes `--no-gpu`**, or it fails on a Mac and passes on
   Linux CI. Kernels are written once, in the dialect of `src/gpu/kernels`, so another backend takes
   the same source: [docs/internals/gpu.md](docs/internals/gpu.md).
-- **`--edge_source` is the point-source model's exact diffraction, and is held to exact
-  solutions**, not to the UTD rays it replaces: Sommerfeld's half-plane, the wedge series, the
-  long block's boundary elements. Its second order is localized by partner corrections that
-  subtract the first-order model's own ray, and a vertical edge on the floor is integrated through
-  it; both are what make it consistent with the ray set, and removing either moves real cases by
-  decibels. See [ground.md](docs/internals/ground.md#the-edge-source-integral-srcedge_source---edge_source).
-- **`niceops_fdtd_field` is a reference, never a prediction path.** It is held to exact
-  solutions (two rays over a floor, the wedge, an impedance wall) and the GPU march to the CPU's.
-  Judge a run's length band by band (`truncation_db`), not by the tail's raw energy, and give
-  parallel walls their absorption: a rigid canyon's reflections die away as 1/n. Each step
-  marches only its light cones' box, which must grow at the scheme's fastest group speed (1.23 c
-  at fourth order), not at c; the GPU kernels are bound by memory, so cut cells, not arithmetic. The
-  transfer divides by the march's own time difference, -i (2/dt) sin(omega dt/2), not -i omega, and
-  the air's delay weighting goes on Q as on p (the transfer at a complex frequency); either undone
-  fails the two-ray test at its tightened tolerance. See
-  [ground.md](docs/internals/ground.md#the-full-wave-reference-srcfdtd-niceops_fdtd_field).
-- **The point-source model's roofs are the floor at their own height**: a ray reflects in one
-  horizontal surface at most, a roof's bounce is tested to round-off (`Buildings::on_roof`, not
-  `inside()`) so it meets its edge's reflection boundary, and no ray off a roof diffracts at that
-  roof's own edges, whose coefficients carry it already. Each ray's directivity is read along
-  `point_ray_launch`, minus its length's gradient in the source position.
-- **Buildings that touch stand against each other as one solid.** A side shared exactly drops the
-  lower building's facade, roof edge and corners there; a side shared in part is split at the
-  neighbour's vertices first (`split_at_junctions`), or rays diffract at a junction's corner and
-  run along the seam between the two. Two level roofs across a shared side are one roof there
-  (`ceded_`), or a bounce on the join counts twice.
-- **`niceops --buildings` with one far building and a floor absorbing everything is the run without
-  a ground model** (`buildings_far_is_open_without_ground`); keep each ray's sphere weight on the
-  sphere's own spreading and absorption conventions. Its microphones are the run's observer points
-  raised by their height column, as in any run without a ground model: by default `--buildings`
-  turns the ground model off, and a database without spectra is refused, not run to `-inf`.
-- **`--buildings --ground_effect` gives the floor the ground's Q, bounce by bounce**
-  (`FloorModel`, `FloorBounce`; THEORY 6.5). Every place that builds a ray with a floor records
-  each bounce's leg and grazing sine; a new ray kind that does not is silently rigid, and
-  `each floor bounce is its leg's, unfolded` is the check. Held at the band centre, Q gives the
-  open-ground model exactly; the 0.06-0.14 dB `buildings_far_ground` leaves is the floor ray's
-  own launch and Q across a band, not an error. Plates take P_d on the direct ray and Q P_r on
-  its floor partner. The GPU's `reflected` is complex per problem (`BandProblem::slot`). `niceops.cpp` cannot include `buildings.hpp`
-  (its `Ring` clashes with `contour.hpp`'s), so the district stays behind `UrbanDistrict`.
-- **`--buildings` adds rays in energy beyond a 1° cone by default** (`src/source_coherence`;
-  THEORY 6.5). Do not assume the source's phase: weighted by A-weighted power the flight data
-  (harness `coherence/`) cannot tell any cone up to 2.5° from the energy sum. The cone is there
-  because rays leaving together are one emission: without it the field jumps at shadow boundaries
-  and a flush microphone loses its doubling. A database's record (`main_rotor_*`, `coherence_*`,
-  written by panam's `directional_coherence`) switches to the measured model; the main rotor's
-  delay comes from that record only, never the vehicle file. The delay rides on the rays as an
-  effective length, the wrap a one-turn shift, and holds only to 4.5 blade-passage frequencies.
-  `--ray_coherence coherent` keeps the old coherent sum to the bit. The record's spread fit and
-  tonal fractions set `--phase_interval` under the cone as well (`cone_coherence(angle, record)`):
-  the cone is the mean, the record measures the coherence the interval is about. Do not use `std::polar` with
-  the sinc as its magnitude: it can be negative, and libc++ returns NaN.
-- **`--buildings` samples states, not the source** (`--state_tolerance`, 0.02 dB; ground.md "In a
-  run"). Each band's transfer -- its level less the direct ray's in free field at that state -- is
-  evaluated at some states and interpolated; every state keeps its own sphere. The transfer is NaN
-  where unknown (a band buried 120 dB or at band_level's -300 dB floor) and -infinity where no ray
-  arrives; do not merge the two, and do not drop the outright evaluation of a state whose loud band
-  has no known transfer (the B407 database's top bands jump by 1000 dB between states).
-  `--state_tolerance 0` is the every-state path, byte for byte.
-- **Shared faces are sampled** (`PointPathOptions::sample_shared_faces`): the cascade times the
-  integral's ratio to it, taken two thirds of an octave apart while the transition parameter is
-  under 30. An end's angle off the face's plane counts on either side: with an end in the plane
-  the cascade has the wrong sign. `--exact_shared_faces` takes the integral at every wavenumber.
-  The GPU samples by the same rule (`shared_face_samples`), its `face_ratios` kernel applying R.
-- **Scattering walls in `niceops_point_field` and `niceops --buildings` (`--facade_scattering`)
-  reuse the urban tables' radiosity**, lit by the source's own specular paths to each patch; with
-  s = 0 nothing is built and the run is byte for byte the specular one. In a run each lighting path
-  reads the sphere along its own launch (`DiffuseFacades::SourcePower`), which is what holds the
-  run to the tool for an omnidirectional source at 1e-9 dB. The roofs scatter too (`DiffuseOptions::roofs`), with their building's
-  first wall's coefficients as their reflection takes them, so a building then scatters as a whole
-  where any wall is in reach; a roof patched while its reflection kept its whole rho, or the
-  reverse, would make or lose energy.
-- **Rays reflect between two edges and cross three** (`max_between_reflections`, `triple_diffraction`;
-  docs/internals/ground.md). A reflection between edges unfolds about the facade or the floor, the
-  second edge mirrored with every vector (`mirrored_edge`); under `--edge_source` it takes the integral
-  unfolded about the facade (a floor bounce keeps UTD), which is what carries the vertex where the
-  first edge runs into the wall. Three edges
-  are roof edges only by default: every edge multiplied the demo run's cost by eight for nothing.
-  A middle edge meeting an outer one at a corner is left out (a vertex, not a cascade). The GPU's
-  shared-face ray kind is `NK_KIND_FACE`, freeing 3 for three wedge terms.
-- **The edge source's speed** (`--edge_source`, ground.md): its cost is the level curves', not the
-  wavenumbers'. Tolerances 1e-3/1e-4 (`edge_source.cpp`), the cascade times `end_ratios` out of both
-  transitions, and `edge_source_threads` in point_field. The choice is per wavenumber (a band must
-  not depend on the run's others); the ratios let the other edge's point slide (A - C^2/B), and a
-  corner (both edges' ends near) or a partner's boundary takes the integral -- that rule is
-  DigiCity's 10.5 -> 17 s. Giving shared faces their uniform form was measured and rejected (0.74 dB
-  off the BEM).
-  It runs in a trajectory (`--buildings --edge_source`, CPU only) but is not the default: ~0.8 s CPU
-  a pair on the demo district.
-- **A facade relief is a grating** (`--relief`, `--facade_relief`; `facade_relief`, `grating_paths`;
-  THEORY 6.5). Specular rays that diffract nowhere take its order 0 at the incidence recorded in
-  `PointRay::hits`; rays that diffract reflect whole (measured: the other way DigiCity's mic 7 fell
-  2.4 dB). Grating rays' floor variants add with their phases. The default `hybrid` hands what a
-  relief scatters onto other walls to the diffuse field (`first_scattering_elsewhere`), so its
-  grating rays reach the microphone straight or off the floor only (`max_microphone_reflections`
-  0; more counts that energy twice). The source tree goes `grating_reflections + 1` deep
-  whatever `max_order`. Shares are sub-band means; beyond the diffuse reach a relief reflects
-  whole; a relief building's roof does not scatter. Against EDGE
-  the orders match the FDTD; behind DigiCity's containers the diffuse field matters; FIDELITY has
-  the table.
-- **Pitched roofs are the least of planes** (`--roofs`, `Footprint::roof`; ground.md "Pitched
-  roofs"). Convex by construction, so a valley or a step is several buildings sharing sides. A
-  wall's top is `facade_top`, never `Footprint::top`; the input's top caps the roof (a level plane
-  added within 1 mm); the pruning proof cuts the prism by the roof planes (the full prism hides real
-  rays; `pruning finds every ray among pitched houses`). A slope reflects as a mirror in its plane
-  (`on_plane`; floor at either end, facade chains on both sides), and once-diffracted rays take a slope on either side
-  of the edge: the partners that keep the field continuous where another edge cuts a slope's
-  reflection off (8 dB steps without); twice-diffracted rays take a level roof or a slope between
-  one bare end and its edge (`PathEnd::bounces`, the beam through the roof's box; one `twice`
-  lambda over `TwiceEnd`s). Slopes scatter (tilted patches in `add_roof_patches`), or
-  their rays' rho (1 - s) would lose s; a level
-  deck reflects and scatters (`on_roof`). A shared side is judged along its profile: cut where
-  either roof breaks or the two cross, each wall piece straight-topped and straight-bottomed
-  (`Facade::bottom_start/bottom_end`, `facade_bottom`; the prefilter samples between them), each
-  edge where one roof is above the other. A ridge needs its two planes least either side. The FDTD's
-  slope is a staircase, 5 dB loud at 6.3 kHz with EDGE's 3 mm cells, so pitched scenes are scored
-  against the measurements and the BEM, not it.
-- **An end may lie on a wall or a level roof** (`Buildings::support`, within `contact`; ground.md
-  "Ends on a surface"). The floor's partners are traced; a wall's or a roof's are a factor
-  `1 + R` in `reflected_amplitude`, halved where the end wedge has that surface as a face (judged
-  geometrically, `edge_face`, never by an angular slack). A plate on a roof takes `P_d + R P_r`.
-  An end on a slope takes the roof's coefficient; edges are refused, and plates on walls and slopes.
-  In a run each microphone's floor is at its observer's z unless it
-  stands on z = 0 or a surface of the district (`floor_height`); each floor is evaluated with the
-  source lowered by it. The plane-wave tables take a microphone on a wall the same way
-  (`BuildingReceiver::surface_factor`): the table then holds its first-order reflections (no run
-  facades), a departure into the wall's own building is no ray (else a source behind it came through
-  at full strength), and an end on a wedge's face is at that face's angle. They refuse one on or over
-  a roof: the tables have no roofs.
-- **Four roof edges and more are a chain** (`max_chain`, default 8, at most 14 for the GPU's ray
-  kind): the corners of the taut string in the vertical plane through the ends, the path the
-  convex least of its length. Only chains of more than three (fewer are the double and triple
-  searches'); terms past the third in `more_wedges`, read through `wedge_term`. Over a mansard's
-  nearly flat, face-sharing wedges the cascade is 3-4 dB rms off the BEM with three edges as with
-  four; a gable's is 0.17.
-- **A row of flat roofs with a street, crossed near grazing, is a parabolic equation**
-  (`profile_pe`, `apply_profile`; ground.md). Three or more roof edges in each other's transitions
-  defeat every cascade (8 dB at 500 Hz over one street). The row's rays give way to four, the parts
-  of its 2-D field (source or floor image, to microphone or image), each its own length so a band
-  averages their interference: one ray carrying the sum was 3.3 dB high at 2 kHz. They share one
-  solve per wavenumber (`ProfileSolutions`). Weighed in by elevation, the line's clearance of the
-  blocks' ends and the ends' angle off the vertical over the outer corners; the field is reciprocal
-  and smooth through all of it (tests in `test_profile_pe.cpp`). Split-step Padé in fixed step
-  lengths, poles factored from the top; the domain grows as sqrt(8 lambda L) or the layer reflects
-  grazing waves (3 dB at 8 kHz). 0.29 s a row to 10 kHz; Numerov was tried and buys nothing, and
-  so does sampling the parts in frequency (1.35x on random rows, 0.9 dB off; ground.md).
-- **`--scattering` with `--buildings` fills the buildings' shadows** (`turbulence_scattering`, Forssén
-  et al. 2014 without its canyon term). gamma_T is taken as velocity turbulence of
-  C_v^2 = (3/22) c0^2 gamma_T; the paper's temperature coefficients are not used (they contradict its
-  own cross section). A pair the buildings do not shield is untouched to the bit, and the total is
-  held to open ground's. Off by default: unvalidated, and the strength is the weak input.
 - **The ground model returns a gain, not a loss.**
 - **Compass bearings** are turned into the local frame by `--frame_bearing` through one
   rotation, `CompassToLocal`. The shipped AC tracks need 210.
@@ -271,6 +121,212 @@ Commands and options are in `README.md`; rationale is in
   skipped trajectory exits 1. Readers refuse non-increasing time, non-finite values, unit
   mismatches, text after data, and observer files that yield nothing. A new reader follows the
   same rules: [docs/internals/inputs.md](docs/internals/inputs.md).
+
+## Urban model invariants
+
+Propagation among buildings: the plane-wave tables (`--urban_table`, `niceops_urban_table`), the
+point-source model (`niceops --buildings`, `niceops_point_field`) and its full-wave reference
+(`niceops_fdtd_field`). Read [urban.md](docs/internals/urban.md) before changing any of it; the GPU's share is in
+[gpu.md](docs/internals/gpu.md).
+
+Geometry:
+
+- **Buildings that touch stand against each other as one solid.** A side shared exactly drops the
+  lower building's facade, roof edge and corners there; a side shared in part is split at the
+  neighbor's vertices first (`split_at_junctions`), or rays diffract at a junction's corner and
+  run along the seam between the two. Two level roofs across a shared side are one roof there
+  (`ceded_`), or a bounce on the join counts twice.
+- **Pitched roofs are the least of planes** (`--roofs`, `Footprint::roof`;
+  [urban.md](docs/internals/urban.md#pitched-roofs-footprintroof---roofs-srcbuilding_inputhpp)).
+  - Convex by construction, so a valley or a step is several buildings sharing sides. A ridge needs
+    its two planes least either side.
+  - A wall's top is `facade_top`, never `Footprint::top`. The input's top caps the roof (a level
+    plane added within 1 mm).
+  - The pruning proof cuts the prism by the roof planes: the full prism hides real rays
+    (`pruning finds every ray among pitched houses`).
+  - A slope reflects as a mirror in its plane (`on_plane`; floor at either end, facade chains on
+    both sides). Once-diffracted rays take a slope on either side of the edge: those are the
+    partners that keep the field continuous where another edge cuts a slope's reflection off
+    (8 dB steps without them). Twice-diffracted rays take a level roof or a slope between one bare
+    end and its edge (`PathEnd::bounces`, the beam through the roof's box; one `twice` lambda over
+    `TwiceEnd`s).
+  - Slopes scatter (tilted patches in `add_roof_patches`), or their rays' rho (1 - s) would lose
+    s; a level deck reflects and scatters (`on_roof`).
+  - A shared side is judged along its profile: cut where either roof breaks or the two cross, each
+    wall piece straight-topped and straight-bottomed (`Facade::bottom_start`/`bottom_end`,
+    `facade_bottom`; the prefilter samples between them), with an edge wherever one roof is above
+    the other.
+  - The FDTD's slope is a staircase (5 dB loud at 6.3 kHz with EDGE's 3 mm cells), so pitched
+    scenes are scored against the measurements and the BEM, not the FDTD.
+- **The point-source model's roofs are the floor at their own height**: a ray reflects in one
+  horizontal surface at most; a roof's bounce is tested to round-off (`Buildings::on_roof`, not
+  `inside()`) so that it meets its edge's reflection boundary; and no ray off a roof diffracts at
+  that roof's own edges, whose coefficients carry it already. Each ray's directivity is read along
+  `point_ray_launch`, minus its length's gradient in the source position.
+- **An end may lie on a wall or a level roof** (`Buildings::support`, within `contact`;
+  [urban.md](docs/internals/urban.md#ends-on-a-surface-and-each-microphones-floor-buildingssupport-pathendsurface)).
+  The floor's partners are traced; a wall's or a roof's are a factor `1 + R` in
+  `reflected_amplitude`, halved where the end wedge has that surface as a face (judged
+  geometrically, `edge_face`, never by an angular slack). A plate on a roof takes `P_d + R P_r`.
+  An end on a slope takes the roof's coefficient; ends on edges are refused, as are plates on walls
+  and slopes. In a run each microphone's floor is at its observer's z unless it stands on z = 0 or
+  a surface of the district (`floor_height`); each floor is evaluated with the source lowered by
+  it. The plane-wave tables take a microphone on a wall, a roof or a slope the same way
+  (`BuildingReceiver::surface_factor`): the table then holds its first-order reflections (no run
+  facades), a departure into the surface's own building is no ray (else a source behind it came
+  through at full strength), and an end on a wedge's face is at that face's angle. The tables
+  carry the roofs by default; they refuse a microphone on a building's edge, and, under
+  `--no_roofs`, one on or over a roof.
+
+Rays and the floor:
+
+- **`niceops --buildings` with one far building and a floor absorbing everything is the run without
+  a ground model** (`buildings_far_is_open_without_ground`); keep each ray's sphere weight on the
+  sphere's own spreading and absorption conventions. Its microphones are the run's observer points
+  raised by their height column, as in any run without a ground model: by default `--buildings`
+  turns the ground model off. A database without spectra is refused, not run to `-inf`.
+- **`--buildings --ground_effect` gives the floor the ground's Q, bounce by bounce**
+  (`FloorModel`, `FloorBounce`; THEORY 6.5). Every place that builds a ray with a floor records
+  each bounce's leg and grazing sine; a new ray kind that does not is silently rigid, and
+  `each floor bounce is its leg's, unfolded` is the check. Held at the band center, Q gives the
+  open-ground model exactly; the 0.06-0.14 dB `buildings_far_ground` leaves is the floor ray's
+  own launch and Q across a band, not an error. Plates take P_d on the direct ray and Q P_r on
+  its floor partner. The GPU's `reflected` is complex per problem (`BandProblem::slot`).
+  `niceops.cpp` cannot include `buildings.hpp` (its `Ring` clashes with `contour.hpp`'s), so the
+  district stays behind `UrbanDistrict`.
+- **Rays reflect between two edges and cross three** (`max_between_reflections`,
+  `triple_diffraction`). A reflection between edges unfolds about the facade or the floor, the
+  second edge mirrored with every vector (`mirrored_edge`); under `--edge_source` it takes the
+  integral unfolded about the facade (a floor bounce keeps UTD), which is what carries the vertex
+  where the first edge runs into the wall. Three edges are roof edges only by default: every edge
+  multiplied the demo run's cost by eight for nothing. A middle edge meeting an outer one at a
+  corner is left out (a vertex, not a cascade).
+- **Four roof edges and more are a chain** (`max_chain`, default 8): the corners of the taut
+  string in the vertical plane through the ends, the points the convex least of the path's length.
+  Only chains of more than three (fewer are the double and triple searches'); terms past the
+  third go in `more_wedges`, read through `wedge_term`. On the GPU a ray's kind is its wedge count
+  and the shared-face kind is `NK_KIND_FACE` (15), so a chain there has at most 14 edges. Over a
+  mansard's nearly flat, face-sharing wedges the cascade stays 3-4 dB rms off the BEM, with three
+  edges as with four (a gable's is 0.17).
+
+Diffraction:
+
+- **Shared faces are sampled** (`PointPathOptions::sample_shared_faces`): the cascade times the
+  integral's ratio to it, taken two thirds of an octave apart while the transition parameter is
+  under 30. An end's angle off the face's plane counts on either side: with an end in the plane
+  the cascade has the wrong sign. `--exact_shared_faces` takes the integral at every wavenumber.
+  The GPU samples by the same rule (`shared_face_samples`), its `face_ratios` kernel applying R.
+- **`--edge_source` is the point-source model's exact diffraction, and is held to exact
+  solutions**, not to the UTD rays it replaces: Sommerfeld's half-plane, the wedge series, the
+  long block's boundary elements. Its second order is localized by partner corrections that
+  subtract the first-order model's own ray, and a vertical edge on the floor is integrated through
+  it; both are what make it consistent with the ray set, and removing either moves real cases by
+  decibels. See [urban.md](docs/internals/urban.md#the-edge-source-integral-srcedge_source---edge_source); its cost
+  is under "Speed" below.
+- **`--tilted_step_split` is opt-in** (`PointPathOptions::tilted_step_split`, `TiltedStepSplit`):
+  its shares were fitted on one step and gained less on a held-out one, so keep it off by default.
+  A split ray carries its foot field's carry (`PointRay::jump_weight`, `summed_length`, which the
+  phases, the sort and the air's absorption take); the foot fields do not split again, and there is
+  no split under `RaySum::energy`.
+
+The source's coherence and the states:
+
+- **`--buildings` adds rays in energy beyond a 1° cone by default** (`src/source_coherence`;
+  THEORY 6.5). Do not assume the source's phase: weighted by A-weighted power the flight data
+  (harness `coherence/`) cannot tell any cone up to 2.5° from the energy sum. The cone is there
+  because rays leaving together are one emission: without it the field jumps at shadow boundaries
+  and a flush microphone loses its doubling.
+  - A database's record (`main_rotor_*`, `coherence_*`, written by panam's
+    `directional_coherence`) switches to the measured model; only the record selects it, never the
+    vehicle file. The main rotor's delay, where the record gives one, turns at the database's rpm,
+    else at the vehicle file's tip speed over radius. The delay rides on the rays as an effective
+    length, the wrap as a one-turn shift, and holds only to 4.5 blade-passage frequencies.
+  - The record's spread fit and tonal fractions set `--phase_interval` under the cone as well
+    (`cone_coherence(angle, record)`): the cone is the mean, and the record measures the coherence
+    the interval is about.
+  - `--ray_coherence coherent` keeps the old coherent sum to the bit.
+  - Do not use `std::polar` with the sinc as its magnitude: it can be negative, and libc++ returns
+    NaN.
+- **`--buildings` samples states, not the source** (`--state_tolerance`, 0.02 dB;
+  [urban.md](docs/internals/urban.md#in-a-run---buildings-srcurban_point)). Each band's transfer (its level less the
+  direct ray's in free field at that state) is evaluated at some states and interpolated; every
+  state keeps its own sphere. The transfer is NaN where unknown (a band buried 120 dB, or at
+  `band_level`'s -300 dB floor) and -infinity where no ray arrives: do not merge the two, and do
+  not drop the outright evaluation of a state whose loud band has no known transfer (the B407
+  database's top bands jump by 1000 dB between states). `--state_tolerance 0` is the every-state
+  path, byte for byte.
+
+Scattering:
+
+- **Scattering walls in `niceops_point_field` and `niceops --buildings` (`--facade_scattering`)
+  reuse the urban tables' radiosity**, lit by the source's own specular paths to each patch; with
+  s = 0 nothing is built and the run is byte for byte the specular one. In a run each lighting path
+  reads the sphere along its own launch (`DiffuseFacades::SourcePower`), which is what holds the
+  run to the tool for an omnidirectional source at 1e-9 dB. The roofs scatter too
+  (`DiffuseOptions::roofs`), with their building's first wall's coefficients as their reflection
+  takes them, so a building then scatters as a whole where any wall is in reach; a roof patched
+  while its reflection kept its whole rho, or the reverse, would make or lose energy.
+- **A facade relief is a grating** (`--relief`, `--facade_relief`; `facade_relief`,
+  `grating_paths`; THEORY 6.5).
+  - Specular rays that diffract nowhere take its order 0 at the incidence recorded in
+    `PointRay::hits`; rays that diffract reflect whole (the other way, DigiCity's mic 7 fell
+    2.4 dB). Grating rays' floor variants add with their phases.
+  - The default `hybrid` hands what a relief scatters onto other walls to the diffuse field
+    (`first_scattering_elsewhere`), so its grating rays reach the microphone straight or off the
+    floor only (`max_microphone_reflections` 0; more counts that energy twice).
+  - The source tree goes `grating_reflections + 1` deep whatever `max_order`.
+  - Shares are sub-band means; beyond the diffuse reach a relief reflects whole; a relief
+    building's roof does not scatter.
+- **`--scattering` with `--buildings` fills the buildings' shadows** (`turbulence_scattering`,
+  Forssén et al. 2014 without its canyon term). gamma_T is taken as velocity turbulence of
+  C_v^2 = (3/22) c0^2 gamma_T; the paper's temperature coefficients are not used (they contradict
+  its own cross section). A pair the buildings do not shield is untouched to the bit, and the total
+  is held to open ground's. Off by default: unvalidated, and the strength is the weak input.
+
+The row-of-roofs parabolic equation:
+
+- **A row of flat roofs with a street or a dip, crossed near grazing, is a parabolic equation**
+  (`profile_pe`, `apply_profile`). Three or more roof edges in each other's transitions defeat
+  every cascade (8 dB at 500 Hz over one street; up to 22 dB across a dip's roof plane).
+  - `apply_profile`'s gate is a street between blocks or a dip (a touching roof lower than both
+    its neighbors). Touching steps up or down keep their cascades: taking any touching row fails
+    the stored step tables.
+  - The row's rays give way to four, the parts of its 2-D field (source or floor image, to
+    microphone or image), each at its own length so that a band averages their interference (one
+    ray carrying the sum was 3.3 dB high at 2 kHz). They share one solve per wavenumber
+    (`ProfileSolutions`).
+  - It is weighed in by elevation, the line's clearance of the blocks' ends and the ends' angle
+    off the vertical over the outer corners; the field is reciprocal and smooth through all of it
+    (tests in `test_profile_pe.cpp`).
+  - Split-step Padé in fixed step lengths, poles factored from the top; the domain grows as
+    sqrt(8 lambda L), or the layer reflects grazing waves (3 dB at 8 kHz). Numerov, and sampling
+    the parts in frequency, were tried and rejected ([urban.md](docs/internals/urban.md)).
+
+The full-wave reference:
+
+- **`niceops_fdtd_field` is a reference, never a prediction path.** It is held to exact
+  solutions (two rays over a floor, the wedge, an impedance wall) and the GPU march to the CPU's.
+  - Judge a run's length band by band (`truncation_db`), not by the tail's raw energy, and give
+    parallel walls their absorption: a rigid canyon's reflections die away as 1/n.
+  - Each step marches only its light cones' box, which must grow at the scheme's fastest group
+    speed (1.23 c at fourth order), not at c. The GPU kernels are bound by memory, so cut cells,
+    not arithmetic.
+  - The transfer divides by the march's own time difference, -i (2/dt) sin(omega dt/2), not
+    -i omega, and the air's delay weighting goes on Q as on p (the transfer at a complex
+    frequency); either undone fails the two-ray test at its tightened tolerance.
+  - See [urban.md](docs/internals/urban.md#the-full-wave-reference-srcfdtd-niceops_fdtd_field).
+
+Speed:
+
+- **The edge source's cost is its level curves', not its wavenumbers'** (`--edge_source`).
+  Keep the tolerances 1e-3/1e-4 (`edge_source.cpp`), the cascade times `end_ratios` out of both
+  transitions, and `PointPathOptions::edge_source_threads`, which point_field sets. The choice is
+  per wavenumber (a band must not depend on the run's other bands); the ratios let the other
+  edge's point slide (A - C^2/B), and a corner (both edges' ends near) or a partner's boundary
+  takes the integral. Giving shared faces their uniform form was measured and rejected (0.74 dB off
+  the BEM). It runs in a trajectory (`--buildings --edge_source`, CPU only) but is not the
+  default, for its cost (about 0.8 s of CPU a pair on the demo district).
+
 
 ## Code conventions
 

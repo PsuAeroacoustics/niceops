@@ -14,6 +14,10 @@ Sources: `src/pe.{hpp,cpp}`, `src/pade_propagator.{hpp,cpp}`, `src/pe_table.{hpp
 `src/exact_solutions.{hpp,cpp}`, `src/airy.{hpp,cpp}`, `src/propagation_table.{hpp,cpp}`,
 and the tools `tools/pe_compare.cpp` (`niceops_pe_compare`), `tools/benchmark.cpp`
 (`niceops_benchmark`) and `tools/propagation_table.cpp` (`niceops_propagation_table`).
+`src/profile_pe` (the 2-D field over a row of roofs, `--buildings`) fits its own split-step Padé
+propagators with `pade_propagator` and uses `exact_solutions`; it is described in
+[urban.md](urban.md), so a change to either shared file is checked against its tests too
+(`tests/test_profile_pe.cpp`).
 
 ## Scheme and starter
 

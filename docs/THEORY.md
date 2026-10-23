@@ -776,6 +776,18 @@ $|F(v)|^2$ are compared with Sommerfeld's exact solution for a rigid half-plane 
 
 ### 6.5 Urban receivers
 
+Buildings enter in two ways. A plane-wave table per receiver (`--urban_table`, built by
+`niceops_urban_table`) carries what a street or a district does to a distant source's sound at one
+microphone. Rays from a point source among the buildings (`niceops_point_field`; in a run,
+`niceops --buildings`) carry it for a source near them. The tables come first below; then the
+point source's rays, by how many edges they diffract at, over shared faces and steps, the
+edge-source integral, the band sum and the surfaces the ends lie on, diffuse and grating
+reflection, pitched roofs, rows of roofs, turbulence in the shadows, and last how a run evaluates
+all of it along a trajectory. Below a few hundred hertz a canyon's table takes the wave solution
+of §6.6; the full-wave reference the rays are held to is §9.4's.
+
+#### Plane-wave tables (`--urban_table`)
+
 A microphone with a receiver in `--urban_table` takes, per band $b$,
 
 $$
@@ -807,7 +819,7 @@ and takes the azimuth of the arrival as it reaches the microphone, the line's ho
 mirrored back.
 
 **The ideal canyon.** The tables `niceops_urban_table --canyons` builds are those of an ideal street
-canyon [66], here with walls of unequal height and a distant source: two parallel walls of
+canyon [43], here with walls of unequal height and a distant source: two parallel walls of
 infinite length a width $W$ apart, with heights $H_A$ and $H_B$ above
 the floor, and the microphone $y_r$ from wall A at height $z_r$. Each entry is for a plane wave,
 the source being far compared with the street. Let the arrival direction (toward the source) have
@@ -824,7 +836,7 @@ mirrored ($m$, $m_f$).
 
 **Roof-edge diffraction.** Each roof edge is a rigid right-angle wedge ($n = 3/2$: its roof and its
 wall), lit unless the other wall stands between it and the source. The uniform theory of
-diffraction [67], which makes Keller's geometrical theory [68] uniform across the shadow and
+diffraction [44], which makes Keller's geometrical theory [45] uniform across the shadow and
 reflection boundaries, gives its diffracted wave, for the time convention $e^{-i\omega t}$, as
 
 $$
@@ -842,7 +854,8 @@ total field continuous across them. On a boundary itself a cotangent's pole meet
 the product's limit is taken from the side where that boundary's geometrical-optics wave exists,
 the side a ray grazing the edge is kept on: the diffracted wave is then $-\tfrac12$ of it, and the
 two make the half the field has there. For a half-plane this is Sommerfeld's exact solution [42]; for
-the right-angle wedge it is within 0.02 dB of the exact eigenfunction series [69] at $kr = 10$. The
+the right-angle wedge it is compared with the exact eigenfunction series [46] in
+[FIDELITY](FIDELITY.md#roof-edge-diffraction). The
 diffracted rays reach the microphone straight and through its images in the walls (to 40
 reflections) and the floor, an unfolded line valid while every wall it crosses stands above the
 crossing.
@@ -888,7 +901,7 @@ changes of orientation (four on a street grid) while a ray may bounce many times
 Every convex edge diffracts: each roof edge ($n = 3/2$) and each convex corner,
 $n = 2 - \alpha/\pi$ for the footprint's interior angle $\alpha$. A wave arriving at the angle
 $\beta_0$ to an edge of unit direction $\hat{\mathbf e}$ from $\mathbf E_0$ is diffracted onto Keller's
-cone, at the same angle [68], so the ray to a target $\mathbf T$ leaves from
+cone, at the same angle [45], so the ray to a target $\mathbf T$ leaves from
 
 $$
 \mathbf Q = \mathbf E_0 + \hat{\mathbf e}\left[(\mathbf T - \mathbf E_0)\cdot\hat{\mathbf e} + \frac{(\hat{\mathbf u}\cdot\hat{\mathbf e})\,\rho_\perp}{\sin\beta_0}\right],
@@ -898,7 +911,7 @@ $\rho_\perp$ being the target's distance from the edge's line; a $\mathbf Q$ off
 ray. The field is the wedge's in the plane normal to the edge, at the wavenumber and distance
 projected into it, $D(\theta, \theta_0)$ at $k\sin\beta_0$ and $r = s\sin\beta_0$ over
 $\sqrt{s\sin\beta_0}$ for the distance $s = |\mathbf T - \mathbf Q|$, which for a plane wave is the
-oblique-incidence form [67] with $L = s\sin^2\beta_0$. The targets are the microphone, $M_f$ and
+oblique-incidence form [44] with $L = s\sin^2\beta_0$. The targets are the microphone, $M_f$ and
 their images in the facades within a radius. The images are found by beam tracing in plan view:
 each carries the part of its last facade through which the microphone can be reached, a further
 facade counts only where it lies in that beam, and an edge only where it crosses it. Every
@@ -907,9 +920,9 @@ front, with no leg through a building. Buildings that share a side stand against
 there: of the shared wall only what rises above the other's roof is a facade, and an edge or a
 corner that does not stand above it is none -- judged along the side, the two roofs' heights over
 it compared stretch by stretch (straight between either's breaks and where they cross), so that
-over a neighbour's pitched roof a wall's bottom slopes with it. A side shared in part -- one building's wall against
+over a neighbor's pitched roof a wall's bottom slopes with it. A side shared in part -- one building's wall against
 part of another's, at a T-junction -- is first split at the other's vertices on it, so that the
-part they share is shared exactly; a vertex within $10^{-6}$ m of the line through its neighbours
+part they share is shared exactly; a vertex within $10^{-6}$ m of the line through its neighbors
 is no corner. Two roofs level across a shared side are one roof there, the side the earlier
 building's. An edge point or a facade patch inside another
 building takes no part. Two exactly aligned surfaces are a knife edge for these rules -- a wave
@@ -962,7 +975,7 @@ $$
 
 leaves a direction the cost of its arrivals. The diffuse energy adds to the table's band energy
 before the ratio to open ground. Patches near one another, or near the microphone, are summed
-over 4 by 4 parts; each is lit, and seen, from its centre.
+over 4 by 4 parts; each is lit, and seen, from its center.
 
 **Separating the paths.** A table keyed on the arrival direction alone assumes every path leaves
 the rotor in the direct path's direction at the direct path's range. Close to the buildings a
@@ -975,15 +988,20 @@ their own direction's numerator $n_i$ over their own squared range, so their sum
 $\max_i n_i / \left(\sum_i r_i^{-2}\right)^{-1}$, as for several eigenrays (§8.2); a reflection
 loses $\rho \le 1$ and needs nothing more.
 
+#### Point-source rays
+
 **A point source among buildings** (`niceops_point_field`). For a source near the buildings -- a
 loudspeaker in a street, a drone among the roofs -- a plane wave will not do, and the field at a
 microphone is a sum of rays from the source itself, every leg through the visibility tests above.
-Specular rays are the microphone's images in the facades and the floor, each
-$\prod\sqrt\rho\;e^{ikL}/L$ for a unit source. A ray diffracted once runs from an image of the
-source to one of the microphone, each to two facade reflections and with the floor or without, so
+The facades and edges taken are those within a horizontal radius of the source or the microphone
+(150 m by default; `--radius` in `niceops_point_field`, `--path_radius` in a run).
+Specular rays are the microphone's images in the facades (to `--max_reflections`, 4 by default)
+and the floor, each $\prod\sqrt\rho\;e^{ikL}/L$ for a unit source. A ray diffracted once runs from
+an image of the source to one of the microphone, each to `--max_edge_reflections` facade
+reflections (2 by default) and with the floor or without, so
 that an edge lit only by a reflection or off the floor diffracts too. For the spherical wave the
 edge's coefficient is the wedge's in the plane normal to it at $k\sin\beta$, with
-$L = s s'\sin^2\beta/(s + s')$ [67]:
+$L = s s'\sin^2\beta/(s + s')$ [44]:
 
 $$
 u = \frac{D(\theta, \theta_0;\ k\sin\beta,\ L/\sin\beta)}{\sqrt{\sin\beta}}\,\frac{e^{ik(s + s')}}{\sqrt{s s'(s + s')}}.
@@ -1034,14 +1052,14 @@ at their edges, the source's distance infinite.
 
 **Where an edge goes on.** An end is no end where the edge's line goes on as the same wedge. A side
 a junction cut in two goes on as the next piece; an edge ending square on a rigid plane -- a corner
-standing on the floor, an eave running into a taller neighbour's wall -- goes on as its image there,
-its whole line mirrored, and between two such planes, a low roof between taller neighbours, for
+standing on the floor, an eave running into a taller neighbor's wall -- goes on as its image there,
+its whole line mirrored, and between two such planes, a low roof between taller neighbors, for
 ever. The wall must cover the edge's wedge about the end -- the air above the roof, before the
-facade and below the eave -- for the image to be whole: a taller neighbour flush with the eave's
+facade and below the eave -- for the image to be whole: a taller neighbor flush with the eave's
 own facade stands only behind it, no mirror for a wave from the street, and the end there is a
 vertex. The ends are the line's, and only a true end has a ray past it: past a piece's end the
 Keller point lies on the next piece, whose ray it is, or on the image, whose ray is the same ray by
-image theory. A plane at an angle to the edge, or a neighbour no taller, leaves a true end.
+image theory. A plane at an angle to the edge, or a neighbor no taller, leaves a true end.
 
 **Roofs reflect.** Among vertical walls a ray changes its vertical direction only at a horizontal
 surface, and once it leaves one rising it keeps rising, so it reflects in one horizontal surface
@@ -1055,203 +1073,18 @@ the roof, since a roof's own edges carry its reflection in their coefficients. U
 `--edge_source` a ray off a roof takes UTD: the roof's outline bounds the stretch of the edge its
 image sees.
 
-**A floor of finite impedance.** The floor's $\sqrt{1-\alpha}$ is one number for every angle and
-frequency. With a ground model (`--ground_effect`) each bounce instead takes the spherical-wave
-reflection coefficient of §5.2, at its own grazing angle $\psi$ and with its own leg $\ell$ as the
-image path:
-
-$$
-Q_j = R_p(\psi, \beta_j) + \bigl(1 - R_p(\psi, \beta_j)\bigr)\,F(w_j),\qquad
-w_j \text{ at } \kappa = k_j \ell / 2,
-$$
-
-times the roughness's coherent part $e^{-2(k_j\sigma\sin\psi)^2}$, with $k_j$ and the admittance
-$\beta_j$ at sub-band $j$'s middle. The leg runs from the source or the edge before the bounce to
-the edge or the microphone after it, unfolded in the floor: $\sin\psi = (z_a + z_b)/\ell$ for ends
-at heights $z_a$ and $z_b$, which facade reflections on the leg leave as they are, since the facades
-are vertical. A diffracted wave is not a point source's, and taking its leg from the edge is the
-usual engineering choice (Nord2000 takes the same). Over open ground the field is then the direct
-ray and the floor's, summed over the three sub-bands; held at the band's centre, $Q$ gives exactly
-the open-ground model's band average (§5.3, Chessell's), whose sinc is the sub-band
-integral of the same two rays. What separates the two is $Q$'s change across a band: up to 0.12 dB
-in a band for a source 3 m up over hard ground, which the ray sum keeps and the model's single
-$Q$ does not. The ground model's turbulence is not taken: among the buildings how the rays'
-phases relate is the source's (below).
-
-A flush microphone on a ground plate (`--plate_table`) has $p/p_{free} = P_d + Q P_r$ (§6.2) for
-the pair of a ray and its floor partner beside the microphone, which are one length: the ray that
-arrives directly takes $P_d$ and its partner $Q P_r$, both at the elevation and plate-frame azimuth
-the ray arrives from, $P_d$ and $P_r$ interpolated in log frequency to each sub-band's middle. Under
-`--edge_source` a vertical edge standing on the floor is still taken through it (`through_floor`),
-the image half weighted as the ray's own bounces: exact on a rigid floor, and on a soft one the
-edge's foot is left without an end wave of its own, as UTD leaves it.
-
-The diffuse facades and the turbulence's fill of the shadows carry energy alone, and take the
-ground's diffuse-field reflection, $2\int_0^1 |R_p(\mu)|^2\mu\,d\mu$ (one less Paris's statistical
-absorption coefficient), in each band -- the diffuse field its bands' mean.
-
-**Ends on a surface.** A source or a microphone may lie on a surface of the district, within the
-`contact` tolerance (1 µm): a microphone flush on a flat roof or a mansard's deck, or on a wall, a
-loudspeaker on a roof. The floor's partners are traced as any ray's, its image coinciding with
-the point; a wall's or a roof's are not, the image trees and the roof reflection reaching only
-points strictly in front of them. Instead every ray arriving at such an end has a partner
-reflected off its surface at the end itself, of one length, so the pair is the ray times
-$1 + R$, $R$ the surface's specular amplitude reflection $\sqrt{\rho(1-s)}$ (1 for a rigid
-roof). Where the ray's wedge at that end has the surface as a face, its coefficient already holds
-that face's reflection (rigidly: a hard wedge's four terms pair on its face), and the ray takes
-$(1 + R)/2$; the leg to the end is then on the face, which every test admits for such an end and
-no other, and the angle there is the face's own. Whether the end lies on the face is geometric,
-within `contact` of its plane, as the surface itself is; an end whose wedge's other leg runs along
-the same face (an edge's grazing backscatter along its own roof) is no ray. A grating ray takes
-$(1 + R)^2$ in energy, the diffuse field's gathering at the microphone the same, and the
-turbulent fill's doubling at the receiver is the surface's. A plate on a roof takes
-$P_d + R\,P_r$ on each ray where the floor's takes $P_d$ and its partner $Q\,P_r$. A pitched
-roof's slope is such a surface too, with the roof's reflection. An end on an edge, where no one
-surface stands for it, is refused, as is a plate on a wall or a slope: a plate lies level. A point
-a hair off the surface, whose partners are traced, hears the same but for an edge's backscatter
-along the face, which the point on the face leaves out
-([FIDELITY](FIDELITY.md#microphones-on-roofs-and-walls)).
-
-**Each microphone's floor.** In a run, a microphone's floor is the plane the buildings stand on for
-it: the district's own, $z = 0$, where its observer stands there or on a surface of the district;
-otherwise the observer's own $z$, as open ground and the urban tables take an observer's ground.
-The microphones of each floor are evaluated together, the source and they lowered by its height.
-
-**In a run** (`niceops --buildings`) the source is the rotor's sphere, and each ray's amplitude in
-band $b$ is multiplied by the sphere's along the direction $\hat d$ the ray leaves the source,
-
-$$
-A_b(\hat d) = 10^{(L_b(\hat d) + 20\lg r_s)/20}\,\min(1, \ell/r_s)\,e^{a_b \min(\ell, r_s)},
-$$
-
-$L_b(\hat d)$ the sphere's level at its radius $r_s$, $\ell$ the ray's length and $a_b$ the air's
-attenuation of amplitude per metre, so each ray spreads from the sphere and is absorbed beyond it,
-as the straight path is (§4.2). $\hat d$ is $-\nabla_S \ell$, the ray's length being stationary in
-every point between its ends. The microphone is the observer's point raised by its height column,
-as in a run without a ground model, and with one (a floor of finite impedance) as in the
-open-ground run. With no buildings and a floor
-that absorbs everything, the one ray left is the straight path and the level is the run's without
-a ground model.
-
-**Along a track** the rays are not evaluated at every state. Per microphone, band $b$'s transfer at
-state $s$ is its level less the direct ray's in free field,
-
-$$
-T_b(s) = L_b(s) - D_b(s),\qquad
-D_b = L_b(\hat d_0) + 20\lg r_s + 20\lg\min(1, r/r_s) - 20\lg r - 20\lg(e)\,a_b\,(r - \min(r, r_s)),
-$$
-
-$\hat d_0$ and $r$ the straight path's direction and length. The rays are evaluated at every 32nd state
-and the last. A stretch $[s_a, s_b]$ between evaluated states is accepted where, at its middle $s_m$,
-$\hat L_b(s_m) = D_b(s_m) + T_b(s_a) + \frac{s_m - s_a}{s_b - s_a}\bigl(T_b(s_b) - T_b(s_a)\bigr)$ gives an
-A-weighted level within $\tau$ (`--state_tolerance`) of the evaluated one, and every band within
-30 dB of its loudest A-weighted band within $15\tau$, of the bands above the floor below;
-otherwise each half is a stretch. A middle with no band above the floor -- no ray, or every band at
-it -- is matched by an estimate with none, and the stretch is accepted on that alone. The states
-inside accepted stretches take $\hat L_b$. A band's transfer is not known where it lies more than
-120 dB under the state's loudest $D_b$, or where its rays' sum is at the band level's floor of
-$-300$ dB; it is silent where no ray arrives. Between a known and an unknown end the known one
-stands; with neither known, the nearest band known at both ends lends its transfer; a state where
-$D_b$ puts such a band within 30 dB of the loudest is evaluated outright. Between a known and a
-silent end the transfer goes in energy. The phase interval's ends go linearly as offsets from the
-level. With $\tau = 0$ every state is evaluated.
-
-**How rays leaving the source apart add.** The spheres carry band levels, not phases, so what two
-rays share is a model of the source's coherency between their launch directions $\hat d_i$,
-$\hat d_j$. Rays that leave together are one emission and must stay coherent, or the field jumps at
-every shadow and reflection boundary, where a diffracted ray makes up for the ray it replaces, and
-a flush microphone's pressure does not double. In sub-band $p$ of band $b$ (wavenumber $k_p$ at its
-middle, half width $h_p$) the energy is
-
-$$
-E_p = \sum_i |A_i|^2 + \sum_{i<j} 2\,\bar g_{ij}\,\mathrm{Re}\!\left(A_i A_j^* e^{ik_p \Delta_{ij}}\right)
-\mathrm{sinc}(h_p \Delta_{ij}),
-$$
-
-$A_i$ ray $i$'s amplitude without its path phase, $\Delta_{ij}$ the pair's path difference, and
-$\theta_{ij} = (180/\pi)\,\lvert\hat d_i - \hat d_j\rvert$ the separation as a chord in degrees
-(within a few hundredths of a degree of the angle while $\bar g$ is not negligible, and so a
-positive-definite kernel on the sphere).
-
-By default nothing is assumed of the source (`cone`): with $\theta_c$ = `--coherence_angle`
-(1°),
-
-$$
-\bar g_{ij} = \begin{cases} 1, & \theta_{ij} \le \tfrac34\theta_c \\
-\cos^2\!\left(\dfrac{\pi}{2}\,\dfrac{\theta_{ij} - \tfrac34\theta_c}{\tfrac12\theta_c}\right), & \tfrac34\theta_c < \theta_{ij} < \tfrac54\theta_c \\
-0, & \theta_{ij} \ge \tfrac54\theta_c, \end{cases}
-$$
-
-the same in every band, and $\Delta_{ij} = L_i - L_j$. Measured on rotorcraft, nothing simple adds
-A-weighted levels better than the energy sum
-([FIDELITY](FIDELITY.md#coherence-between-emission-directions)); the cone keeps the one emission
-together.
-
-Where a database records its vehicle's coherence (MANUAL, Source coherence), or under
-`--ray_coherence measured`, the mean is the measured decay
-
-$$
-\bar g_{ij} = \exp\!\left[-\left(\frac{f_b\,\theta_{ij}}{\theta_0}\right)^{p_0}\right],
-$$
-
-$f_b$ the band's centre, with a pair whose $\bar g$ is below $e^{-14}$ left out. Where the database
-gives the main rotor's blades $B$ and sense $s$ ($+1$ counterclockwise seen from above, $-1$
-clockwise), $\Delta_{ij}$ also carries, in bands up to $f_{\mathrm{rot}}$, the delay a pattern
-turning rigidly with the rotor puts between the two directions: it reaches azimuth
-$\psi + \delta\psi$ about the shaft $\delta\psi/\Omega$ later, so
-
-$$
-\Delta_{ij} = L_i - L_j + \frac{c\,s}{\Omega}\,\mathrm{wrap}(\psi_i - \psi_j),
-$$
-
-$\psi$ the launch's azimuth about the tip-path plane's normal from the nose, $\Omega$ the rotor's
-rate (the database's `rotor_rpm`, else the vehicle file's tip speed over radius), and wrap to
-$(-\pi, \pi]$. At a blade-passage harmonic $mB\Omega/2\pi$ that is the spinning mode's phase
-$mB\,\delta\psi$. The delay holds to $f_{\mathrm{rot}} = 4.5\,B\Omega/2\pi$ and not beyond, where
-the field is not a pattern turning rigidly with the blades. With the delay $\theta_0 = 850$ Hz deg
-and $p_0 = 1.6$; without it $\theta_0 = 475$ Hz deg and $p_0 = 2.3$, since the unremoved rotation
-reads as a faster decay; the database's own fits replace these. Under `--ray_coherence coherent`
-$\bar g = 1$; under `energy` no pair adds.
-
-**The phase interval.** About its mean $\bar g_{ij}$, the cone's or the measured model's, a pair's
-coherency spreads by
-
-$$
-\sigma_{ij}^2 = \max\!\left(\gamma_{ij}^2 - \bar g_{ij}^2,\; 0\right),
-\qquad
-\gamma_{ij}^2 = T_b + (1 - T_b)\exp\!\left[-\left(\frac{f_b\,\theta_{ij}}{\theta_s}\right)^{p_s}\right],
-$$
-
-$\gamma^2$ the coherence, which tends to the band's coherence between distant directions $T_b$ (its
-tonal fraction; by default $1/(1 + (f_b/58\,\mathrm{Hz})^{1.67})$), with $\theta_s = 2120$ Hz deg and
-$p_s = 1$ by default. A database's record supplies $T_b$, $\theta_s$ and $p_s$ where it gives them,
-under the cone as under the measured model: they measure the coherence the interval is about,
-whichever mean the sum takes. Rays whose $\bar g \ge 0.99$, by single linkage, deviate together, so each pair of such
-groups $G$, $H$ contributes one term to the band energy's variance:
-
-$$
-\mathrm{Var}\,E_b = \sum_{G<H} \tfrac12 \Bigl\lvert \sum_p w_p \sum_{i\in G,\, j\in H} 2\,\sigma_{ij}\,
-A_i A_j^* e^{ik_p \Delta_{ij}} \mathrm{sinc}(h_p \Delta_{ij}) \Bigr\rvert^2,
-\qquad w_p = \frac{g_{2,p} - g_{1,p}}{f_2 - f_1},
-$$
-
-the sub-bands sharing the band's deviation, and the bands independent. The A-weighted energy then
-has mean $\mu = \sum_b G_b E_b$ and variance $\sigma^2 = \sum_b G_b^2\,\mathrm{Var}\,E_b$, and the
-interval's ends are the quantiles of the gamma distribution with shape $k = \mu^2/\sigma^2$ and
-scale $\sigma^2/\mu$; past $k = 10^4$ by Wilson and Hilferty's
-$\mu\,\bigl(1 - 1/9k + z_q/3\sqrt k\bigr)^3$, $z_q$ the normal quantile, which is the gamma's to
-$4\times10^{-7}$ dB there. `--phase_interval` takes the SEL of the history whose every state sits at the same
-end: one vehicle's phases do not change from state to state.
+#### Two edges and more
 
 A ray diffracted twice runs between two edges, the source's and the microphone's images to
-`--max_twice_reflections` each (2 by default), through the points where the path is stationary: where Keller's condition holds
-at both edges at once, a fixed point of meeting it at each in turn (by Steffensen's method, and in
-closed form for parallel edges, where the path unfolds into a line). Where the two edges meet at a
-building's corner the fixed point is the corner itself, which is no ray. In general it is the
-cascade of two coefficients: the first edge's wave reaches the second curved about the first edge
-across it (radius $s_2$) and about the source along it ($s_1 + s_2$). Past the second edge it spreads
-by its curvature along that edge, $1/\rho_e = c^2/(s_1 + s_2) + (1 - c^2)/s_2$ by Euler's formula,
-$c$ the cosine between the two edges' directions projected normal to the ray between them [67], as
+`--max_twice_reflections` each (2 by default), through the points where the path is stationary:
+where Keller's condition holds at both edges at once, a fixed point of meeting it at each in turn
+(by Steffensen's method, and in closed form for parallel edges, where the path unfolds into a line).
+Where the two edges meet at a building's corner the fixed point is the corner itself, which is no
+ray. In general it is the cascade of two coefficients: the first edge's wave reaches the second
+curved about the first edge across it (radius $s_2$) and about the source along it ($s_1 + s_2$).
+Past the second edge it spreads by its curvature along that edge,
+$1/\rho_e = c^2/(s_1 + s_2) + (1 - c^2)/s_2$ by Euler's formula, $c$ the cosine between the two
+edges' directions projected normal to the ray between them [44], as
 $\sqrt{\rho_e/(s_3(\rho_e + s_3))}$, so the spreading is
 
 $$
@@ -1289,15 +1122,46 @@ $$
 
 $c_k$ the cosine between edges $k$ and $k+1$ projected normal to the leg between them, the spreading
 being $s_1^{-1} \prod_k \sqrt{\rho_k/(s_{k+1}(\rho_k + s_{k+1}))}$; two edges give the expression
-above, and three parallel ones $1/\sqrt{s_1 s_2 s_3 s_4 S}$. The distance parameters are again
-$s_k s_{k+1}/(s_k + s_{k+1})$ about each edge. Swept across the boundary where a middle corner cuts
-the ray between the outer two, the field moves by under 0.01 dB in 4 mm steps, where without the
-third edge it steps by 1.6-2.6 dB. A middle edge that meets either outer one at a corner is left
-out: the path's points close on the vertex there, as two edges that meet have their fixed point at
-the corner. By default only roof edges are taken (`roofs`): rows of buildings across a street,
-which is where a third edge was missing on EDGE's scale models. Taken among all edges (`all`), the
-chains of vertical corners round a block came to thousands of rays in the demo district and eight
-times the cost of its run, for no level that moved there; on EDGE they changed nothing either.
+above, and three parallel ones $1/\sqrt{s_1 s_2 s_3 s_4 S}$, $S = s_1 + s_2 + s_3 + s_4$. The
+distance parameters are again $s_k s_{k+1}/(s_k + s_{k+1})$ about each edge. The third edge keeps the
+field continuous where a middle corner cuts the ray between the outer two. A middle edge that meets
+either outer one at a corner is left out: the path's points close on the vertex there, as two edges
+that meet have their fixed point at the corner. By default only roof edges are taken (`roofs`): rows
+of buildings across a street. Taken among all edges (`all`), the chains of vertical corners round a
+block add many weak rays. The ends' images go to `--max_thrice_reflections` facade reflections each
+(0 by default), and nothing reflects between the edges. What the third edge and the choice of edges
+change is measured in [the developer guide](internals/urban.md#three-edges-and-chains-of-more) and
+[FIDELITY](FIDELITY.md#the-full-wave-reference-among-buildings).
+
+**Four edges and more** (`--max_chain` in `niceops_point_field`, up to 8 edges by default, at most
+14). From low beside a building to a
+microphone low and close behind, the path over a mansard's or a gambrel's roof bends at more
+edges than three -- the near deck edge, the far one, the far break and the far eave -- and over
+several rows of roofs too. Such a path lies near the vertical plane through its two ends, so its
+edges are found there: the buildings' cross-section in that plane, each roof's profile along it
+(its corners where the plan line crosses a footprint's side or the least plane changes; "Pitched
+roofs" below), and the
+upper convex hull of those corners between the source and the microphone, the taut string over
+them. Each corner of the string with more than three is matched to the roof edge it lies on, a
+corner at a footprint's vertex ending the search. The ray over the edges $g_i$ meets each at
+$\mathbf Q_i = \mathbf E_i + t_i\hat{\mathbf e}_i$ where
+
+$$
+L(\mathbf t) = |\mathbf Q_1 - \mathbf S| + \sum_i |\mathbf Q_{i+1} - \mathbf Q_i| + |\mathbf M - \mathbf Q_N|
+$$
+
+is stationary, which is Keller's law at every edge. $L$ is a sum of norms of affine functions of
+$\mathbf t$, so it is convex, its Hessian is tridiagonal, and damped Newton from the string's
+corners finds its least in a few steps; a least on an edge's end is no ray. The ray takes the
+cascade of the edges' coefficients, each wedge term the thrice-diffracted ray's: its distance
+parameter from the legs either side, its spreading by the same recursion over each edge's $\rho_e$,
+and a term halved where the leg reaching it runs along a face it shares with the edge before. Each
+end's floor image gives its own string, so a ray off the floor at either end or both is found the
+same way. No facade reflects on a chain. Over a mansard's nearly flat wedges ($n \approx 1.1$), each
+pair sharing the face the ray runs along, the cascade itself is the limit, with three edges as with
+four ([FIDELITY](FIDELITY.md#pitched-roofs)).
+
+#### Shared faces and steps
 
 **Over a shared face.** Where the two edges are parallel and share a face -- a flat roof from one
 edge to the other, a wall from one corner to the next -- the second edge lies in the first's
@@ -1305,7 +1169,7 @@ transition region whenever an end is near the face's plane, and there the first 
 transition field, not a ray, which the cascade loses. In the plane normal to the edges, with the
 first edge at the origin, the second at $(w, 0)$, the face between them and the air above it, and
 the source $S$ below the face's plane and before the first edge, the field above the first edge is
-taken as a Kirchhoff aperture [53] on the half-line $P_t = (0, t)$, $t > 0$, each of its points a
+taken as a Kirchhoff aperture [47] on the half-line $P_t = (0, t)$, $t > 0$, each of its points a
 line source of the incident wave, and each such wave diffracted by the second wedge:
 
 $$
@@ -1326,7 +1190,7 @@ diffraction, and the incident wave and its reflections off the two faces where t
 second wedge -- each a smooth amplitude times $e^{ik\ell(t)}$, $\ell$ a path length that grows along
 the aperture. Each wave reaches $R$ or not, and $D_2$ jumps, only where the second wedge's shadow
 and reflection boundaries cross the aperture, so the integral is cut there, and between cuts each
-wave is taken by Filon's rule in its own $\ell$ [70]: the amplitude per unit length
+wave is taken by Filon's rule in its own $\ell$ [48]: the amplitude per unit length
 quadratic over each panel, the oscillation exact. The panels grow geometrically away from the
 edge and the cuts. How closely that reproduces the integral is in
 [FIDELITY](FIDELITY.md#a-point-source-among-buildings).
@@ -1364,11 +1228,12 @@ and meets its aperture from below: either side, the pair's field there is half t
 A wall between two corners is the same problem turned on its side, the ends in front of the wall
 beyond its corners, and takes the same rule. The mirror needs the face along the line between the
 edges. Across a step (below), the near edge's
-transition at the far one is not odd in that sense: the mirrored field was 12 dB from the
-boundary-element solution there; the cascade stands, and the jump at the line is split (below).
+transition at the far one is not odd in that sense, and the mirrored field does not hold there
+([FIDELITY](FIDELITY.md#a-point-source-among-buildings)): the cascade stands, and the field steps
+at the line unless `--tilted_step_split` splits the jump (below).
 
 **Across a step.** Two parallel edges that share no face -- a ridge above a step down to a lower
-roof's edge, a taller block's far edge above a lower neighbour's -- take the same integral where the
+roof's edge, a taller block's far edge above a lower neighbor's -- take the same integral where the
 line between them touches both wedges from above: each wedge's face toward the other lies below the
 line, tilted off it by $\delta_1$ at the first edge and $\delta_2$ at the second, and its other face
 half a turn or more round -- and where the two faces below the line meet, the step closed beneath
@@ -1393,12 +1258,13 @@ the ray over the first edge alone is blocked, and a receiver on the boundary is 
 where the roof's reflected ray is traced. With $\delta_1 = \delta_2 = 0$ all of
 this is the shared face's.
 
-**The jump across a step's line.** Where the receiver crosses the line through the two edges the
-rays change: below it the pair is the receiver's aperture and the first edge's ray is blocked;
-above it that ray appears beside the pair's cascade. With the second edge deep in the first's
-transition, the once-diffracted ray (distance parameter $s_1(s_2+s_3)/S$) is not the jump the
-aperture and the cascade make (theirs $s_1s_2/(s_1+s_2)$ and Kirchhoff's), and the level stepped by
-up to 6 dB with the source near the line. The jump is split between the two sides. With $\hat n$
+**The jump across a step's line** (`--tilted_step_split`, off by default). Where the receiver
+crosses the line through the two edges the rays change: below it the pair is the receiver's
+aperture and the first edge's ray is blocked; above it that ray appears beside the pair's cascade.
+With the second edge deep in the first's transition, the once-diffracted ray (distance parameter
+$s_1(s_2+s_3)/S$, $S = s_1 + s_2 + s_3$) is not the jump the aperture and the cascade make (theirs
+$s_1s_2/(s_1+s_2)$ and Kirchhoff's), so by default the level steps at the line, most with the source
+near it. The option splits the jump between the two sides. With $\hat n$
 the normal to the plane through both edges, toward the open air, the receiver $R$ off it by
 $o = (R - E_1)\cdot\hat n$, and its foot $F = R - o\,\hat n$, the field's jump there is
 
@@ -1417,29 +1283,30 @@ $$
 
 $T$ the Fresnel integral's tail (`fresnel_tail`), $d_1$ the edges' separation and $d_3$ the foot's
 distance from the second edge, both in the plane normal to the edges: $x = \pi v^2/2$, $v$ the
-second edge's Fresnel parameter for the receiver off the line. The field is $p - \beta DCg$ on or
-above the line and $p + (1-\beta)DCg$ below it, $\beta = 0.85$, so it is continuous across the line
+second edge's Fresnel parameter for the receiver off the line. The field is $p - \beta_s DCg$ on or
+above the line and $p + (1-\beta_s)DCg$ below it, $\beta_s = 0.85$, so it is continuous across the line
 by construction. Along the line it lasts as long as the pair's rays reach the receiver, past the
 edges' ends too, and stops with them, where the rays themselves step. Where $F \pm \epsilon\hat n$
 would lie under the floor or in a building (the line gone into the ground or a wall past the
 street), $F$ slides back along the line toward the second edge to the last point where neither
-does, and $d_3$, $C$ and $g$ are taken from there. $\beta$ puts most of the jump above the line, because the receiver's aperture is
-the accurate field below it. This is a fitted transition, not a diffraction coefficient: $\beta$
-and the fade's power were fitted against boundary-element solutions over one step. Where $g$
+does, and $d_3$, $C$ and $g$ are taken from there. $\beta_s$ puts most of the jump above the line,
+because the receiver's aperture is the accurate field below it. This is a fitted transition, not a
+diffraction coefficient: $\beta_s$ and the fade's power were fitted against boundary-element
+solutions over one step, which is why it is not the default
+([FIDELITY](FIDELITY.md#a-point-source-among-buildings), "Across a step"). Where $g$
 falls below $10^{-3}$ it is tapered to 0 and the two foot fields are not taken. A source on
 either side of the line takes it, the source before the first edge and the receiver past the
 second. $D$ is the difference of the two foot fields, ray by ray, and holds only where the rays add
-with their phases: summed in energy the twin rays each add, and the split is not taken. It is
-opt-in (`--tilted_step_split`): fitted over one step, on a second it was worse above the line.
+with their phases: summed in energy the twin rays each add, and the split is not taken.
 
 **The shared face sampled.** The integral is needed only where the second edge lies in the first's
 transition region. Its transition parameter there is
 
 $$
-X(k) = k\sin\beta\;\frac{s\,w}{s + w}\,(1 - \cos g),
+X(k) = k\sin\beta\;\frac{s\,w}{s + w}\,(1 - \cos\gamma),
 $$
 
-$g$ an end's angle off the face's plane (across a step, off the line between the edges) -- above it
+$\gamma$ an end's angle off the face's plane (across a step, off the line between the edges) -- above it
 or below, the face's reflection boundary leaving the edge as far above as its shadow boundary below
 -- and $s$ its distance from its edge, taken over
 the ends before the first edge and past the second, the smaller. The field is the cascade's $u_c$
@@ -1450,9 +1317,11 @@ linearly in $\ln k$. With an end in the plane, $X = 0$ and $R \approx -1$: the c
 sign there. Where a sampled cascade vanishes, or $R$ is not finite, the integral is taken at every
 wavenumber, as `--exact_shared_faces` takes it always.
 
-**The edge-source integral** (`--edge_source`). UTD is the high-frequency limit of an exact
+#### The edge-source integral (`--edge_source`)
+
+UTD, which the rays above take by default, is the high-frequency limit of an exact
 solution: the field a rigid wedge diffracts is the integral along its edge of secondary sources
-[71, 72, 74], which holds an edge's ends, and edges a wavelength apart, where the coefficient's
+[49, 50, 51], which holds an edge's ends, and edges a wavelength apart, where the coefficient's
 asymptotics do not. For a unit point source at $S$ the field the stretch $[z_\mathrm{lo}, z_\mathrm{hi}]$
 of the edge diffracts to $R$ is
 
@@ -1478,8 +1347,8 @@ $$
 taken against the integrand's value at the start; on the boundary it is $\mp\tfrac12$ the
 geometrical-optics wave, which keeps the sum continuous there. The smooth rest is taken by
 Gauss–Legendre near the start and, beyond, either along the integrand's steepest-descent paths
-[73], $R(h) = R(\eta) + ip$, by Gauss–Laguerre at each wavenumber, or for many wavenumbers at once by
-Filon's rule [70] of degree four in $R$, on panels geometric in $R - R_0$, the integrand there,
+[52], $R(h) = R(\eta) + ip$, by Gauss–Laguerre at each wavenumber, or for many wavenumbers at once by
+Filon's rule [48] of degree four in $R$, on panels geometric in $R - R_0$, the integrand there,
 $\beta/(r_S r_R\sinh\eta)$, being the same at every $k$.
 
 A ray diffracted twice takes the integral's second order,
@@ -1542,9 +1411,8 @@ an end of its edge still has that end's wave, which the integral over the edge c
 while the path through the end exceeds the Keller path by no more than 100 radians at the lowest
 band, weighted by $T(k\Delta_\mathrm{end};\ 50, 100)$, $\Delta_\mathrm{end}$ that excess.
 
-Once-diffracted rays take the integral over the whole edge always, but those off a roof, which
-take UTD (above). A twice-diffracted ray takes, at
-each wavenumber,
+Once-diffracted rays take the integral over the whole edge always, but those off a roof, which take
+UTD (above). A twice-diffracted ray takes, at each wavenumber,
 
 $$
 w\,p_2^\mathrm{loc} + (1 - w)\,p_\mathrm{casc},
@@ -1577,20 +1445,35 @@ takes the path's curvature along the first from $A$ to $A - C^2/B$ ($A$, $B$, $C
 derivatives in the two edges' parameters at the stationary points) -- so the first edge's integral
 runs from the source not to the second's stationary point but to a point on the leg beyond it at
 the distance with that curvature: for parallel edges the unfolded path's, exact all along the edge.
-Likewise the second's. Held at the stationary point, the ratio was 1-3 dB off the integral with one
-end near; this way 0.3 dB at worst, with the end within a Fresnel zone of the ray. With both edges'
-ends near, at a corner of their parameters, no product of the two holds (up to 11 dB off) and the
-ray takes the integral, as it does near a partner's boundary point, which the ratios know nothing
-of. Over DigiCity and the demo district it is the integral's to 0.012 dB A-weighted. The twice-diffracted
-integral itself is held to $10^{-3}$ in its curves' quadrature and $10^{-4}$ in their interpolation,
-which moves no level by 0.002 dB.
+Likewise the second's. With both edges' ends near, at a corner of their parameters, no product of
+the two holds, and the ray takes the integral, as it does near a partner's boundary point, which the
+ratios know nothing of. The twice-diffracted integral itself is held to $10^{-3}$ in its curves'
+quadrature and $10^{-4}$ in their interpolation. How closely the ratios and these tolerances
+reproduce the integral is in [FIDELITY](FIDELITY.md#a-point-source-among-buildings).
+
+**What the rays leave out.** Four edges or more except over roof edges (`--max_chain`, above); more
+than one reflection between two edges; any reflection between three edges, and more than
+`--max_thrice_reflections` (0 by default) at their ends; a shared face's aperture on a ray of three,
+which takes the cascade; more than `--max_twice_reflections` on either side of two edges; a roof
+bounce on a twice-diffracted ray other than between a bare end and its edge; and a vertex's own
+coefficient where an end's transition meets a face's plane through it (the double transition), where
+the ends' weights above stand in for it. `--edge_source` takes the ends exactly, except on a ray
+that bounces on the floor between its edges, is diffracted three times or more, or reflects in a
+roof, which takes UTD's; one that reflects in a facade between its edges takes it unfolded about the
+facade, the second edge and the microphone's image mirrored. Continuity across a ray's boundary
+rests on the diffracted ray that takes over there being traced: one with the same reflections, split
+about the boundary's edge, which a specular ray of more reflections than `--max_edge_reflections` on
+one side, or a diffracted ray whose own leg meets another edge, does not have. There the field steps
+([FIDELITY](FIDELITY.md#a-point-source-among-buildings) has how often and how far).
+
+#### Band levels, the floor and the surfaces the ends lie on
 
 The air absorbs each ray along its length: in each sub-band its amplitude is multiplied by
 $e^{-a L_r}$, $a = \alpha \ln 10 / 20$ with $\alpha$ the ISO 9613-1 coefficient (dB/m, §5) at the
-sub-band's middle frequency, $\tfrac12(f_1 + f_2)$; a run takes the band's $a_b$ in all three. The rays sum coherently, band-averaged pair by
-pair over three sub-bands as the table's are, and the band level is $10\lg$ of the result, re the
-source's level at 1 m. The same average is the
-integral of the sum's square over the sub-band,
+sub-band's middle frequency, $\tfrac12(f_1 + f_2)$; a run takes the band's $a_b$ in all three. The
+rays sum coherently, band-averaged pair by pair over three sub-bands as the table's are, and the
+band level is $10\lg$ of the result, re the source's level at 1 m. The same average is the integral
+of the sum's square over the sub-band,
 
 $$
 \left\langle|S|^2\right\rangle = \tfrac12\int_{-1}^{1}\left|S(\bar k + h t)\right|^2 dt
@@ -1602,19 +1485,66 @@ with the amplitudes held at the sub-band's center, which the GPU takes by Gauss�
 quadrature wherever it needs fewer operations than the pairs, for rays adding coherently. $|S|^2$ is a sum of
 $e^{ik\,\Delta L}$ with $|\Delta L|$ at most the rays' spread of lengths $\Delta$, so with
 $M \ge h\Delta/2 + 4\,(h\Delta)^{1/3} + 6$ nodes the rule is exact to round-off, and it keeps every
-pair. Left out: four edges or more; more than one reflection between two edges; any reflection between three edges or at their ends (`--max_thrice_reflections`); a shared
-face's aperture on a ray of three, which takes the cascade; more than `--max_twice_reflections` on
-either side of two edges; a roof bounce on a twice-diffracted ray; and a vertex's own coefficient
-where an end's transition meets a face's plane through it (the double transition), where the
-ends' weights above stand in for it. `--edge_source` takes the ends exactly, except on a ray that
-bounces on the floor between its edges or is diffracted three times, which takes UTD's; one that
-reflects in a facade between its edges takes it unfolded about the facade, the second edge and
-the microphone's image mirrored. Continuity across
-a ray's boundary rests on the diffracted ray that takes over there being traced: one with the same
-reflections, split about the boundary's edge, which a specular ray of more reflections than
-`--max_edge_reflections` on one side, or a diffracted ray whose own leg meets another edge, does not
-have. There the field steps
-([FIDELITY](FIDELITY.md#a-point-source-among-buildings) has how often and how far).
+pair.
+
+**A floor of finite impedance.** By default the floor's $\sqrt{1-\alpha}$ (`--floor_absorption`) is
+one number for every angle and frequency. With a ground model (`--ground_effect`) each bounce
+instead takes the spherical-wave reflection coefficient of §5.2, at its own grazing angle $\psi$ and
+with its own leg $\ell$ as the image path:
+
+$$
+Q_j = R_p(\psi, \beta_j) + \bigl(1 - R_p(\psi, \beta_j)\bigr)\,F(w_j),\qquad
+w_j \text{ at } \kappa = k_j \ell / 2,
+$$
+
+times the roughness's coherent part $e^{-2(k_j\sigma\sin\psi)^2}$, with $k_j$ and the admittance
+$\beta_j$ at sub-band $j$'s middle. The leg runs from the source or the edge before the bounce to
+the edge or the microphone after it, unfolded in the floor: $\sin\psi = (z_a + z_b)/\ell$ for ends
+at heights $z_a$ and $z_b$, which facade reflections on the leg leave as they are, since the facades
+are vertical. A diffracted wave is not a point source's, and taking its leg from the edge is the
+usual engineering choice (Nord2000 takes the same [32]). Over open ground the field is then the
+direct ray and the floor's, summed over the three sub-bands; held at the band's center, $Q$ gives
+exactly the open-ground model's band average (§5.3, Chessell's), whose sinc is the sub-band integral
+of the same two rays. What separates the two is $Q$'s change across a band, which the ray sum keeps
+and the model's single $Q$ does not ([FIDELITY](FIDELITY.md#the-point-source-model-in-a-run), "A
+ground model's floor"). The ground model's turbulence is not taken: among the buildings how the
+rays' phases relate is the source's (below).
+
+A flush microphone on a ground plate (`--plate_table`) has $p/p_{free} = P_d + Q P_r$ (§6.2) for
+the pair of a ray and its floor partner beside the microphone, which are one length: the ray that
+arrives directly takes $P_d$ and its partner $Q P_r$, both at the elevation and plate-frame azimuth
+the ray arrives from, $P_d$ and $P_r$ interpolated in log frequency to each sub-band's middle. Under
+`--edge_source` a vertical edge standing on the floor is still taken through it (`through_floor`),
+the image half weighted as the ray's own bounces: exact on a rigid floor, and on a soft one the
+edge's foot is left without an end wave of its own, as UTD leaves it.
+
+The diffuse facades and the turbulence's fill of the shadows carry energy alone, and take the
+ground's diffuse-field reflection, $2\int_0^1 |R_p(\mu)|^2\mu\,d\mu$ (one less Paris's statistical
+absorption coefficient), in each band -- the diffuse field its bands' mean.
+
+**Ends on a surface.** A source or a microphone may lie on a surface of the district, within the
+`contact` tolerance (1 µm): a microphone flush on a flat roof or a mansard's deck, or on a wall, a
+loudspeaker on a roof. The floor's partners are traced as any ray's, its image coinciding with
+the point; a wall's or a roof's are not, the image trees and the roof reflection reaching only
+points strictly in front of them. Instead every ray arriving at such an end has a partner
+reflected off its surface at the end itself, of one length, so the pair is the ray times
+$1 + R$, $R$ the surface's specular amplitude reflection $\sqrt{\rho(1-s)}$ (1 for a rigid
+roof). Where the ray's wedge at that end has the surface as a face, its coefficient already holds
+that face's reflection (rigidly: a hard wedge's four terms pair on its face), and the ray takes
+$(1 + R)/2$; the leg to the end is then on the face, which every test admits for such an end and
+no other, and the angle there is the face's own. Whether the end lies on the face is geometric,
+within `contact` of its plane, as the surface itself is; an end whose wedge's other leg runs along
+the same face (an edge's grazing backscatter along its own roof) is no ray. A grating ray takes
+$(1 + R)^2$ in energy, the diffuse field's gathering at the microphone the same, and the
+turbulent fill's doubling at the receiver is the surface's. A plate on a roof takes
+$P_d + R\,P_r$ on each ray where the floor's takes $P_d$ and its partner $Q\,P_r$. A pitched
+roof's slope is such a surface too, with the roof's reflection. An end on an edge, where no one
+surface stands for it, is refused, as is a plate on a wall or a slope: a plate lies level. A point
+a hair off the surface, whose partners are traced, hears the same but for an edge's backscatter
+along the face, which the point on the face leaves out
+([FIDELITY](FIDELITY.md#microphones-on-roofs-and-walls)).
+
+#### Diffuse reflection and facade relief
 
 **Diffuse reflection from a point source** (`niceops_point_field --scattering`). The radiosity of
 the plane wave's diffuse reflection above, lit by the source instead: a unit source, whose free
@@ -1624,28 +1554,29 @@ $$
 E_p = \sum_{\text{paths}} \frac{\cos\theta_p}{L^2}\,\prod\rho(1 - s)\;\rho_f^{\,[\text{floor}]}\;e^{-2aL},
 $$
 
-the sum over the specular paths from the source to the patch's centre, to `--max_reflections`
+the sum over the specular paths from the source to the patch's center, to `--max_reflections`
 facades and the floor or not -- the patch's images, traced as the microphone's are, less those whose
 first reflection is the patch's own wall -- and, where the roofs reflect, those with one level roof
 or slope among their reflections, which carries its building's $\rho(1-s)$ as a wall does: a level
 roof below the source and the patch anywhere along the chain, since it commutes with the walls, and
-a slope the source stands over next to the source, the source's mirror in its plane standing in
-for it -- with $L$ each path's length, $\theta_p$ its incidence on
-the patch and $a$ the air's attenuation at the band's centre, which the gathering $g_q$ takes too,
-as $e^{-2ad}$ along each of its two paths. $\mathbf w\cdot\mathbf E$ is then energy in $|p|^2$ and
-adds to each band's energy of the rays, which carry $\rho(1 - s)$ per reflection at the walls
-within the radius and $\rho$ beyond it. For a source and microphone together at $d$ from an infinite wall, it is
-$\rho s / 2d^2$, against the specular image's $\rho(1-s)/4d^2$. The roofs, which the rays reflect
-in, scatter too: each is cut into patches facing up, with its building's $\rho$ and $s$ (those of
-its first wall, as its reflection takes them), and a building scatters as a whole, walls and roof,
-where any of its walls is within the radius. A roof is lit from above only, so the floor's image
-paths light none, and sends nothing by the floor; between patches and to the microphone it is
-taken as the walls are, its patch's normal mirrored with it below the floor.
+a slope the source stands over next to the source, the source's mirror in its plane standing in for
+it -- with $L$ each path's length, $\theta_p$ its incidence on the patch and $a$ the air's
+attenuation at the band's center, which the gathering $g_q$ takes too, as $e^{-2ad}$ along each of
+its two paths. $\mathbf w\cdot\mathbf E$ is then energy in $|p|^2$ and adds to each band's energy of
+the rays, which carry $\rho(1 - s)$ per reflection at the walls within the radius
+(`--diffuse_radius`, by default the rays' own radius) and $\rho$ beyond it. For a source and
+microphone together at $d$ from an infinite wall, it is $\rho s / 2d^2$, against the specular
+image's $\rho(1-s)/4d^2$. The roofs, which the rays reflect in, scatter too: each is cut into
+patches facing up, with its building's $\rho$ and $s$ (those of its first wall, as its reflection
+takes them), and a building scatters as a whole, walls and roof, where any of its walls is within
+the radius. A roof is lit from above only, so the floor's image paths light none, and sends nothing
+by the floor; between patches and to the microphone it is taken as the walls are, its patch's normal
+mirrored with it below the floor.
 
-In a run (`niceops --buildings --facade_scattering`) the source is the sphere, and each path
-carries its power along the path's launch, $|A_b(\hat l)|^2$ with $A_b$ as a ray's above, $\ell$
-the path's length and $\hat l$ the direction from the source to the patch's image, which is the
-path's first leg. Each microphone's weights $\mathbf w$ are solved once for the run, and its
+In a run (`niceops --buildings --facade_scattering`) the source is the sphere, and each path carries
+its power along the path's launch, $|A_b(\hat l)|^2$ with $A_b$ as a ray's (below, "In a run"),
+$\ell$ the path's length and $\hat l$ the direction from the source to the patch's image, which is
+the path's first leg. Each microphone's weights $\mathbf w$ are solved once for the run, and its
 diffuse energy adds to its rays' at every state evaluated.
 
 **A facade's relief as a grating** (`--relief`, `--facade_relief`). A relief periodic along a wall
@@ -1664,46 +1595,45 @@ wall and sees the profile at its horizontal wavenumber, so it takes the table at
 order leaves on the cone of its elevation $e$ -- unlike Lambert's law, which sends a wall's
 scattering into every elevation. Three things follow:
 
-- A ray that reflects in a relief and diffracts nowhere takes $\sqrt{e_0}$ there, at the incidence
+-  A ray that reflects in a relief and diffracts nowhere takes $\sqrt{e_0}$ there, at the incidence
   it meets the wall at (each ray records it where it is built), in each third of each band. A ray
   that diffracts reflects whole: what it would scatter reaches nothing in the model, the grating
-  rays and the diffuse field's lighting being specular paths, so it carries on the specular way.
-- A **grating ray** of order $m \ne 0$ off wall $F$ leaves its point $P$ with its direction's
+  rays and the diffuse field's lighting being specular paths, so it carries on the specular way. - A
+  **grating ray** of order $m \ne 0$ off wall $F$ leaves its point $P$ with its direction's
   component along $F$ raised by $m\lambda/\Lambda$ and its vertical component kept. Before $F$ and
-  after it it reflects specularly in the walls through which the source's and the microphone's
-  image trees reach $F$, two at most besides it by default; $P$ is where
+  after it it reflects specularly in the walls through which the source's and the microphone's image
+  trees reach $F$, `--grating_reflections` at most besides it (2 by default); $P$ is where
   $|P - S'| + |P - M'| + m(\lambda/\Lambda)x$ is least, $S'$ and $M'$ the ends' images through those
   walls and the floor, $x$ along $F$ -- convex, so Newton's method from the specular point finds it.
   It carries $e_m$ times the other walls' coefficients (a relief's $e_0$ among them), the floor's,
   the air's, and its tube's spreading $d\Omega/dA$, found by perturbing its launch ($1/L^2$ for
-  $m = 0$). It is solved at each band's centre, since its path follows the wavelength, its share
-  the mean of $e_m$ over the band's three sub-bands as $e_0$ is taken in each. The source's image
-  tree goes as deep as the grating rays' reflections need, whatever the edges' orders. A grating ray
-  and its floor partner are one length near the floor, as a specular ray and its partner are, so the
-  floor variants of one order add with their phases over the band; the orders add in energy.
-- **What a relief scatters further.** With `orders` that is all; a path with two non-specular
-  orders is left out. With `lambert` the grating rays are off, and the diffuse field takes the rest
-  by Lambert's law, each lighting path depositing $s(\psi) = 1 - e_0(\psi)$ at the incidence it
-  meets the wall at (and reflecting $\rho\,e_0$ at the walls it crosses), scaled from the patch's
-  random-incidence $s$. The `hybrid`, the default, does both and counts nothing twice: the grating
-  rays carry a relief's first scattering straight to the microphone (or off the floor), and the
-  diffuse field only what the relief scatters onto other walls, its own direct share left out
-  ($\mathbf w = S(\mathbf y - \mathbf g)$ on its patches); a grating ray that reflected in another
-  wall on its way to the microphone would be counted again by the diffuse field, which re-emits
-  what reaches that wall. A relief's scattering is its walls': the roof, which takes a wall's
-  coefficients, does not scatter by it. Beyond a microphone's diffuse reach, by Lambert's law alone,
-  a relief reflects whole, as a plain wall there does. A grating ray's floor bounce takes the
+  $m = 0$). It is solved at each band's center, since its path follows the wavelength, its share the
+  mean of $e_m$ over the band's three sub-bands as $e_0$ is taken in each. The source's image tree
+  goes as deep as the grating rays' reflections need, whatever the edges' orders. A grating ray and
+  its floor partner are one length near the floor, as a specular ray and its partner are, so the
+  floor variants of one order add with their phases over the band; the orders add in energy. -
+  **What a relief scatters further** (`--relief_scattering`). With `orders` that is all; a path with
+  two non-specular orders is left out. With `lambert` the grating rays are off, and the diffuse
+  field takes the rest by Lambert's law, each lighting path depositing $s(\psi) = 1 - e_0(\psi)$ at
+  the incidence it meets the wall at (and reflecting $\rho\,e_0$ at the walls it crosses), scaled
+  from the patch's random-incidence $s$. The `hybrid`, the default, does both and counts nothing
+  twice: the grating rays carry a relief's first scattering straight to the microphone (or off the
+  floor), and the diffuse field only what the relief scatters onto other walls, its own direct share
+  left out ($\mathbf w = S(\mathbf y - \mathbf g)$ on its patches); a grating ray that reflected in
+  another wall on its way to the microphone would be counted again by the diffuse field, which
+  re-emits what reaches that wall. A relief's scattering is its walls': the roof, which takes a
+  wall's coefficients, does not scatter by it. Beyond a microphone's diffuse reach, by Lambert's law
+  alone, a relief reflects whole, as a plain wall there does. A grating ray's floor bounce takes the
   floor's coefficient with its phase, and at a plate microphone $P_d$, or $P_r$ off the floor.
 
-Against EDGE's measured reliefs (FIDELITY, Scattering walls) the orders match the FDTD's own error in
-a canyon, where Lambert's law returns what the relief sends out of it; behind DigiCity's containers
-the diffuse field's further scattering is what reaches a shielded microphone. The hybrid improves
-on the random-incidence $s(f)$ in every case. The ray model of a grating holds where a receiver sees
-many periods (a Fresnel zone wider than the period); nearer, the relief's facets are what it sees,
-and a relief that size is geometry: EDGE's sawtooth modelled as its own facets and ridges reproduces
-the canyon too.
+The ray model of a grating holds where a receiver sees many periods (a Fresnel zone wider than the
+period); nearer, the relief's facets are what it sees, and a relief that size is geometry, modeled
+as its own facets and ridges. How the orders, Lambert's law and the hybrid compare against measured
+reliefs and the FDTD is in [FIDELITY](FIDELITY.md#scattering-walls-point-source).
 
-**Pitched roofs** (`--roofs`, LoD2). A building's roof may be planes $z = a x + b y + c$ instead of
+#### Pitched roofs (`--roofs`, LoD2)
+
+A building's roof may be planes $z = a x + b y + c$ instead of
 a level top: its height over $(x, y)$ is the least of them, capped at the building's top. A least of
 planes is convex, so every line where two of them meet over the footprint is a ridge, a hip or a
 break that turns outward, and a roof that is not convex -- a valley, a step -- is several buildings
@@ -1746,10 +1676,10 @@ sharing sides. Its geometry follows:
   counts with that side's floor and facade reflections toward the single-edge reflection
   limit. Its coefficient remains UTD, including the finite-edge correction, also when the
   edge-source option is selected. A twice-diffracted ray takes a slope, as it takes a level
-  roof, between a bare end (after the floor or not) and its edge, on one side. Not traced: a
+  roof, between a bare end (after the floor or not) and its edge, at one end or both. Not traced: a
   slope followed by facades before the edge, a roof with facades on a twice-diffracted ray's
-  side, roofs at both of its ends, and roofs on rays diffracted three times or more. §6.5's level roof
-  reflection is a mansard's deck's, which reflects and scatters as a flat roof does.
+  side, and roofs on rays diffracted three times or more. A mansard's deck reflects and scatters as
+  a flat roof does ("Roofs reflect", above).
 - **What a slope scatters.** The slopes scatter as the walls and the level roofs do, with their
   building's $\rho$ and $s$, so that their rays' $\rho(1 - s)$ loses nothing: each is cut into
   patches in plan, each lifted onto the plane, its area the plan cell's over the plane's cosine, its
@@ -1761,49 +1691,24 @@ sharing sides. Its geometry follows:
   a convex pitched building as its prism cut by each roof plane, mirrored in a facade and in the
   floor as the footprint is, and finds the rays the unpruned search does.
 
-Against the boundary elements for a long gable 8 m across, the rays are within 0.74 dB, 0.17 rms,
-where any level roof standing in for it is 6-11 dB rms off; against EDGE's measured pitched
-scenes, 3.1 dB rms against LoD1's 4.5 at the mean height and 5.8 at the ridge (FIDELITY,
-"Pitched roofs").
+The rays among pitched roofs are compared with boundary-element solutions, with level roofs standing
+in for the pitched ones, and with EDGE's measured pitched scenes in
+[FIDELITY](FIDELITY.md#pitched-roofs).
 
-**Four edges and more** (`max_chain`, up to 8 by default). From low beside a building to a
-microphone low and close behind, the path over a mansard's or a gambrel's roof bends at more
-edges than three -- the near deck edge, the far one, the far break and the far eave -- and over
-several rows of roofs too. Such a path lies near the vertical plane through its two ends, so its
-edges are found there: the buildings' cross-section in that plane, each roof's profile along it
-(its corners where the plan line crosses a footprint's side or the least plane changes), and the
-upper convex hull of those corners between the source and the microphone, the taut string over
-them. Each corner of the string with more than three is matched to the roof edge it lies on, a
-corner at a footprint's vertex ending the search. The ray over the edges $g_i$ meets each at
-$\mathbf Q_i = \mathbf E_i + t_i\hat{\mathbf e}_i$ where
+#### Over a row of roofs
 
-$$
-L(\mathbf t) = |\mathbf Q_1 - \mathbf S| + \sum_i |\mathbf Q_{i+1} - \mathbf Q_i| + |\mathbf M - \mathbf Q_N|
-$$
-
-is stationary, which is Keller's law at every edge. $L$ is a sum of norms of affine functions of
-$\mathbf t$, so it is convex, its Hessian is tridiagonal, and damped Newton from the string's
-corners finds its least in a few steps; a least on an edge's end is no ray. The ray takes the
-cascade of the edges' coefficients, each wedge term the thrice-diffracted ray's: its distance
-parameter from the legs either side, its spreading by the same recursion over each edge's $\rho_e$,
-and a term halved where the leg reaching it runs along a face it shares with the edge before. Each
-end's floor image gives its own string, so a ray off the floor at either end or both is found the
-same way. Against the boundary elements for a long mansard, the nine cases only such a ray reaches
-come within 1.5 dB below 4 m, where none were found before; over every case the rays are 3.9 dB
-rms, the cascade over a mansard's nearly flat wedges ($n \approx 1.1$), each pair sharing the face
-the ray runs along, being the limit with three edges as with four.
-
-**Over a row of roofs** (`profile_pe`; `--no_profile_pe` in `niceops_point_field`). Where three
-or more roof edges lie in each other's transition regions -- a street between two rows of roofs,
-or a dip between two higher roofs, crossed near grazing -- the cascades over two, three and four of them each carry a share of the
+On by default; `--no_profile_pe` turns it off. Where three or more roof edges lie in each other's
+transition regions -- a street between two rows of roofs, or a dip between two higher roofs,
+crossed near grazing -- the cascades over two, three and four of them each carry a share of the
 field, and their sum does not settle as edges are added. There the rays over the row give way to
 its two-dimensional field, from a parabolic equation over its cross-section. The row is what the
 plan line from the source to the microphone crosses: two or more flat-roofed footprints, each
 entered and left once through two of its sides, every crossed side within 1° of parallel to the
 first, and either a street between at least one pair or a dip: a touching roof lower than both its
-neighbours, a run of touching blocks with one top counting as one roof. In a dip as over a street the cascade's collinear edges sit on each other's shadow
-boundaries at the roofs' plane, and only the two-dimensional field carries the grazing wave over the
-rigid roofs; touching blocks that step only up or down keep their cascades. The rays it stands for are those whose points
+neighbors, a run of touching blocks with one top counting as one roof. In a dip as over a street
+the cascade's collinear edges sit on each other's shadow boundaries at the roofs' plane, and only
+the two-dimensional field carries the grazing wave over the rigid roofs; touching blocks that step
+only up or down keep their cascades. The rays it stands for are those whose points
 between the ends all lie on its roof edges, its roofs, its crossed walls or the floor, and that
 reflect only in those roofs and walls: the direct and floor rays, the roofs' reflections, the
 diffracted rays and chains over it, and the walls' rays in its streets.
@@ -1816,7 +1721,7 @@ over a terrace of eight rows 160 m across, 5.5-11 kHz over one street 30 m acros
 band for a scale model's row.
 
 In the plane normal to the edges, $u$ across the blocks from the source and $z$ up, the field
-$p = \psi\,e^{iku}$ is marched on the wide-angle equation by Collins' split-step Padé method [56], in the
+$p = \psi\,e^{iku}$ is marched on the wide-angle equation by Collins' split-step Padé method [53], in the
 propagators of the parabolic equation (§9.1),
 
 $$
@@ -1830,16 +1735,15 @@ each street is crossed in steps of 8, 4, 2, 1, ½, ¼ and ⅛ wavelengths, the l
 fits and each shorter at most once, and what is left, under an eighth, by one Crank–Nicolson step,
 $(1 + \tfrac{1 - ik\Delta u}{4}q)\,\psi(u + \Delta u) = (1 + \tfrac{1 + ik\Delta u}{4}q)\,\psi(u)$,
 so that every face is met exactly and the propagators are fitted once. The grid has twenty points a
-wavelength in height, shortened by up to a tenth so that the roofs fall on nodes, with rigid
-ground (a ghost node) at the roof or the street's floor beneath. The column holds what the line at
-the march's end needs -- the roofs, the receiver, and where the straight line from the source to the
-receiver crosses it -- and, at the start, the source's wave that comes down to that within the march:
-up to where the source's ray to the top of it crosses the first front face. The source's own height
-is not needed, only its wave's angles; against a column up to the source the field moved by 0.024 dB
-rms over 384 rows, sources and receivers (one and two streets, a terrace of eight rows; 250 Hz to
-2 kHz), 0.1 dB at most wherever the profile has weight. Above that the physical domain reaches a
-margin $h$ further, and an absorbing layer as thick lies on it, $a$ rising as the square of the
-depth into it, with
+wavelength in height, shortened by up to a tenth so that the roofs fall on nodes, with rigid ground
+(a ghost node) at the roof or the street's floor beneath. The column holds what the line at the
+march's end needs -- the roofs, the receiver, and where the straight line from the source to the
+receiver crosses it -- and, at the start, the source's wave that comes down to that within the
+march: up to where the source's ray to the top of it crosses the first front face. The source's own
+height is not needed, only its wave's angles (what the cut moves is in
+[FIDELITY](FIDELITY.md#a-point-source-among-buildings), "Over a row of roofs"). Above that the
+physical domain reaches a margin $h$ further, and an absorbing layer as thick lies on it, $a$ rising
+as the square of the depth into it, with
 
 $$
 h = \max\bigl(15\lambda,\ \sqrt{8\lambda L}\bigr),
@@ -1874,41 +1778,45 @@ its image. Each goes as $e^{ik l_t}$, $l_t$ its own path in the plane, the taut 
 roofs' corners between those two points, and the point model carries each as a ray. A band's sum
 then averages the parts' interference over each sub-band as it does the traced rays off the floor,
 where one ray carrying the whole field would take that interference at the sub-band's middle. The
-line source is normalised to a free field $e^{ikr}/\sqrt r$, and each part's ray takes it into
+line source is normalized to a free field $e^{ikr}/\sqrt r$, and each part's ray takes it into
 space as a shared face's does: the field at $k\sin\beta$, $\beta$ from the shortest ray over the
 row, times $\sin\beta/\sqrt{l_t}$, its phase $e^{ik\sin\beta\,l_t}$ replaced by $e^{ikl}$ with
 $l = \sqrt{l_t^2 + v^2}$, $v$ the ends' separation along the edges.
 
-The march holds to about 40°. It starts from the end nearer grazing over its neighbouring roof's
+The march holds to about 40°. It starts from the end nearer grazing over its neighboring roof's
 edge, so that the steeper end is the corner's, whose Green's function takes any direction; with the
 ends' elevations within 5° of each other both ways round are taken and weighed, which keeps the
 field reciprocal. The profile's rays are weighed in by
 
 $$
 w = S\Bigl(\frac{40^\circ - \min(e_s, e_m)}{15^\circ}\Bigr)\,
-    S\Bigl(\frac{m/D - 0.1}{0.1}\Bigr)\,
+    S\Bigl(\frac{m/\ell_p - 0.1}{0.1}\Bigr)\,
     S\Bigl(\frac{\phi_s}{15^\circ}\Bigr)\,S\Bigl(\frac{\phi_m}{15^\circ}\Bigr)
 $$
 
 and the rays they stand for by $1 - w$: $S$ the smoothstep, $e$ each end's elevation over its
-neighbouring roof's edge, $m$ the plan line's distance along the crossed sides to their nearer end
-and $D$ its length, and $\phi$ each end's angle off the vertical over its outer corner, 90° at or
-below that roof's height, where it would come over the roof and the profile stop applying. Touching
-blocks keep the cascades, which hold across a step, as do pitched roofs and a footprint the line
-crosses more than once. Each part's bounces off the floor at the ends are a ray's, so a floor of
-finite impedance takes them as it does any ray's, its spherical-wave coefficient at the bounce's
-grazing angle over its unfolded leg, and a plate under a flush microphone its transfer by the
-arrival. What it leaves out: the waves it cannot carry back, chiefly a street's reverberation
+neighboring roof's edge, $m$ the least distance along a crossed side from the plan line's crossing
+to that side's nearer end, $\ell_p$ the plan line's length from the source to the microphone, and
+$\phi$ each end's angle off the vertical over its outer corner, 90° at or below that roof's height,
+where it would come over the roof and the profile stop applying. A row of touching blocks that only
+steps up or down keeps the cascades, which hold across a step, as do pitched roofs and a footprint
+the line crosses more than once. Each part's bounces off the floor at the ends are a ray's, so a
+floor of finite impedance takes them as it does any ray's, its spherical-wave coefficient at the
+bounce's grazing angle over its unfolded leg, and a plate under a flush microphone its transfer by
+the arrival. What it leaves out: the waves it cannot carry back, chiefly a street's reverberation
 between its walls, whose rays go with those it stands for; and the roofs' and the streets'
 absorption, the march's floors being rigid. The reverberation shapes the field at single
 frequencies, the street a cavity with resonances a few hertz apart, but a band's level averages
-them, and there the march is within 0.2-0.7 dB of the boundary elements; round trips across each
-street, which carry it back, were built and measured and are not kept (FIDELITY).
+them; how close the march comes to boundary-element solutions in a band, and why round trips across
+each street are not taken, is in [FIDELITY](FIDELITY.md#a-point-source-among-buildings) ("Over a row
+of roofs").
 
-**Turbulence scattering into the buildings' shadows** (`--scattering` $\gamma_T$ with
-`--buildings`). Still air leaves a shielded microphone the diffracted rays alone; turbulence
-scatters energy into the shadow, most at high frequency. The scattered level relative to free field
-is the engineering model of Forssén et al. [78], in its form without a canyon,
+#### Turbulence scattering into the shadows
+
+`--scattering` $\gamma_T$ with `--buildings`; off by default. Still air leaves a shielded microphone
+the diffracted rays alone; turbulence scatters energy into the shadow, most at high frequency. The
+scattered level relative to free field is the engineering model of Forssén et al. [54], in its form
+without a canyon,
 
 $$
 L_s = b_1 + b_2 \lg\frac{h}{10\ \mathrm m} + b_3 \lg\left(\frac{h^2}{d_S d_R} + 0.0012\right)
@@ -1929,6 +1837,140 @@ turbulence and 0.14 for temperature, so $\gamma_T$ is taken as velocity turbulen
 $C_v^2 = (3/22)\,c_0^2\gamma_T$, within 0.1 dB of either reading. The paper's temperature
 coefficients are not used. Left out: its canyon correction, whose street widths and heights a
 district does not carry, and turbulence's decorrelation of the rays themselves.
+
+#### In a run (`niceops --buildings`)
+
+**Each microphone's floor.** In a run, a microphone's floor is the plane the buildings stand on for
+it: the district's own, $z = 0$, where its observer stands there or on a surface of the district;
+otherwise the observer's own $z$, as open ground and the urban tables take an observer's ground.
+The microphones of each floor are evaluated together, the source and they lowered by its height.
+
+**The sphere as the source.** In a run the source is the rotor's sphere, and each ray's amplitude in
+band $b$ is multiplied by the sphere's along the direction $\hat d$ the ray leaves the source,
+
+$$
+A_b(\hat d) = 10^{(L_b(\hat d) + 20\lg r_s)/20}\,\min(1, \ell/r_s)\,e^{a_b \min(\ell, r_s)},
+$$
+
+$L_b(\hat d)$ the sphere's level at its radius $r_s$, $\ell$ the ray's length and $a_b$ the air's
+attenuation of amplitude per meter, so each ray spreads from the sphere and is absorbed beyond it,
+as the straight path is (§4.2). $\hat d$ is $-\nabla_S \ell$, the ray's length being stationary in
+every point between its ends. The microphone is the observer's point raised by its height column,
+as in a run without a ground model, and with one (a floor of finite impedance) as in the
+open-ground run. With no buildings and a floor
+that absorbs everything, the one ray left is the straight path and the level is the run's without
+a ground model.
+
+**Along a track** the rays are not evaluated at every state. Per microphone, band $b$'s transfer at
+state $s$ is its level less the direct ray's in free field,
+
+$$
+T_b(s) = L_b(s) - D_b(s),\qquad
+D_b = L_b(\hat d_0) + 20\lg r_s + 20\lg\min(1, r/r_s) - 20\lg r - 20\lg(e)\,a_b\,(r - \min(r, r_s)),
+$$
+
+$\hat d_0$ and $r$ the straight path's direction and length. The rays are evaluated at every 32nd
+state and the last. A stretch $[s_a, s_b]$ between evaluated states is accepted where, at its middle
+$s_m$,
+$\hat L_b(s_m) = D_b(s_m) + T_b(s_a) + \frac{s_m - s_a}{s_b - s_a}\bigl(T_b(s_b) - T_b(s_a)\bigr)$
+gives an A-weighted level within $\tau$ (`--state_tolerance`, 0.02 dB by default) of the evaluated
+one, and every band within 30 dB of its loudest A-weighted band within $15\tau$, of the bands above
+the floor below; otherwise each half is a stretch. A middle with no band above the floor -- no ray,
+or every band at it -- is matched by an estimate with none, and the stretch is accepted on that
+alone. The states inside accepted stretches take $\hat L_b$. A band's transfer is not known where it
+lies more than 120 dB under the state's loudest $D_b$, or where its rays' sum is at the band level's
+floor of $-300$ dB; it is silent where no ray arrives. Between a known and an unknown end the known
+one stands; with neither known, the nearest band known at both ends lends its transfer; a state
+where $D_b$ puts such a band within 30 dB of the loudest is evaluated outright. Between a known and
+a silent end the transfer goes in energy. The phase interval's ends go linearly as offsets from the
+level. With $\tau = 0$ every state is evaluated.
+
+**How rays leaving the source apart add.** The spheres carry band levels, not phases, so what two
+rays share is a model of the source's coherency between their launch directions $\hat d_i$,
+$\hat d_j$. Rays that leave together are one emission and must stay coherent, or the field jumps at
+every shadow and reflection boundary, where a diffracted ray makes up for the ray it replaces, and
+a flush microphone's pressure does not double. In sub-band $p$ of band $b$ (wavenumber $k_p$ at its
+middle, half width $h_p$) the energy is
+
+$$
+E_p = \sum_i |A_i|^2 + \sum_{i<j} 2\,\bar g_{ij}\,\mathrm{Re}\!\left(A_i A_j^* e^{ik_p \Delta_{ij}}\right)
+\mathrm{sinc}(h_p \Delta_{ij}),
+$$
+
+$A_i$ ray $i$'s amplitude without its path phase, $\Delta_{ij}$ the pair's path difference, and
+$\theta_{ij} = (180/\pi)\,\lvert\hat d_i - \hat d_j\rvert$ the separation as a chord in degrees
+(within a few hundredths of a degree of the angle while $\bar g$ is not negligible, and so a
+positive-definite kernel on the sphere).
+
+By default nothing is assumed of the source (`cone`): with $\theta_c$ = `--coherence_angle`
+(1°),
+
+$$
+\bar g_{ij} = \begin{cases} 1, & \theta_{ij} \le \tfrac34\theta_c \\
+\cos^2\!\left(\dfrac{\pi}{2}\,\dfrac{\theta_{ij} - \tfrac34\theta_c}{\tfrac12\theta_c}\right), & \tfrac34\theta_c < \theta_{ij} < \tfrac54\theta_c \\
+0, & \theta_{ij} \ge \tfrac54\theta_c, \end{cases}
+$$
+
+the same in every band, and $\Delta_{ij} = L_i - L_j$. Measured on rotorcraft, nothing simple adds
+A-weighted levels better than the energy sum
+([FIDELITY](FIDELITY.md#coherence-between-emission-directions)); the cone keeps the one emission
+together.
+
+Where a database records its vehicle's coherence (MANUAL, Source coherence), or under
+`--ray_coherence measured`, the mean is the measured decay
+
+$$
+\bar g_{ij} = \exp\!\left[-\left(\frac{f_b\,\theta_{ij}}{\theta_0}\right)^{p_0}\right],
+$$
+
+$f_b$ the band's center, with a pair whose $\bar g$ is below $e^{-14}$ left out. Where the database
+gives the main rotor's blades $B$ and sense $s$ ($+1$ counterclockwise seen from above, $-1$
+clockwise), $\Delta_{ij}$ also carries, in bands up to $f_{\mathrm{rot}}$, the delay a pattern
+turning rigidly with the rotor puts between the two directions: it reaches azimuth
+$\psi + \delta\psi$ about the shaft $\delta\psi/\Omega$ later, so
+
+$$
+\Delta_{ij} = L_i - L_j + \frac{c\,s}{\Omega}\,\mathrm{wrap}(\psi_i - \psi_j),
+$$
+
+$\psi$ the launch's azimuth about the tip-path plane's normal from the nose, $\Omega$ the rotor's
+rate (the database's `rotor_rpm`, else the vehicle file's tip speed over radius), and wrap to
+$(-\pi, \pi]$. At a blade-passage harmonic $mB\Omega/2\pi$ that is the spinning mode's phase
+$mB\,\delta\psi$. The delay holds to $f_{\mathrm{rot}} = 4.5\,B\Omega/2\pi$ and not beyond, where
+the field is not a pattern turning rigidly with the blades. With the delay $\theta_0 = 850$ Hz deg
+and $p_0 = 1.6$; without it $\theta_0 = 475$ Hz deg and $p_0 = 2.3$, since the unremoved rotation
+reads as a faster decay; the database's own fits replace these. Under `--ray_coherence coherent`
+$\bar g = 1$; under `energy` no pair adds.
+
+**The phase interval.** About its mean $\bar g_{ij}$, the cone's or the measured model's, a pair's
+coherency spreads by
+
+$$
+\sigma_{ij}^2 = \max\!\left(\gamma_{ij}^2 - \bar g_{ij}^2,\; 0\right),
+\qquad
+\gamma_{ij}^2 = T_b + (1 - T_b)\exp\!\left[-\left(\frac{f_b\,\theta_{ij}}{\theta_s}\right)^{p_s}\right],
+$$
+
+$\gamma^2$ the coherence, which tends to the band's coherence between distant directions $T_b$ (its
+tonal fraction; by default $1/(1 + (f_b/58\,\mathrm{Hz})^{1.67})$), with $\theta_s = 2120$ Hz deg and
+$p_s = 1$ by default. A database's record supplies $T_b$, $\theta_s$ and $p_s$ where it gives them,
+under the cone as under the measured model: they measure the coherence the interval is about,
+whichever mean the sum takes. Rays whose $\bar g \ge 0.99$, by single linkage, deviate together, so each pair of such
+groups $G$, $H$ contributes one term to the band energy's variance:
+
+$$
+\mathrm{Var}\,E_b = \sum_{G<H} \tfrac12 \Bigl\lvert \sum_p w_p \sum_{i\in G,\, j\in H} 2\,\sigma_{ij}\,
+A_i A_j^* e^{ik_p \Delta_{ij}} \mathrm{sinc}(h_p \Delta_{ij}) \Bigr\rvert^2,
+\qquad w_p = \frac{g_{2,p} - g_{1,p}}{f_2 - f_1},
+$$
+
+the sub-bands sharing the band's deviation, and the bands independent. The A-weighted energy then
+has mean $\mu = \sum_b G_b E_b$ and variance $\sigma^2 = \sum_b G_b^2\,\mathrm{Var}\,E_b$, and the
+interval's ends are the quantiles of the gamma distribution with shape $k = \mu^2/\sigma^2$ and
+scale $\sigma^2/\mu$; past $k = 10^4$ by Wilson and Hilferty's
+$\mu\,\bigl(1 - 1/9k + z_q/3\sqrt k\bigr)^3$, $z_q$ the normal quantile, which is the gamma's to
+$4\times10^{-7}$ dB there. `--phase_interval` takes the SEL of the history whose every state sits at the same
+end: one vehicle's phases do not change from state to state.
 
 ### 6.6 The canyon's wave solution
 
@@ -1996,7 +2038,7 @@ $1 - w$ and the run's explicit reflections fade out as the wave table fades in.
 An `--atmosphere` profile gives temperature, relative humidity and optionally pressure and wind
 against height. Values are linear in height between levels, pressure is log-linear, and the
 lowest level is held below the profile. Sound in moving air is treated in the
-effective-sound-speed approximation [31, 43]:
+effective-sound-speed approximation [31, 55]:
 
 $$
 c_\mathrm{eff}(z) = c\left(T(z)\right) + \hat{\mathbf{h}} \cdot \mathbf{v}_w(z),
@@ -2007,7 +2049,7 @@ wind. The approximation overstates the wind's effect on steep paths by a factor
 $1/\cos(\text{elevation})$, which matters little because steep paths refract little.
 
 **A profile from one surface wind** (`--wind`). The wind follows the neutral logarithmic law
-[44] through the observation $u_\mathrm{ref}$ at height $z_\mathrm{ref}$,
+[56] through the observation $u_\mathrm{ref}$ at height $z_\mathrm{ref}$,
 
 $$
 u(z) = u_\mathrm{ref}\,\frac{\ln(z/z_0)}{\ln(z_\mathrm{ref}/z_0)}, \qquad z_0 < z \le \delta,
@@ -2019,7 +2061,7 @@ only the neutral surface layer, about a tenth of a boundary layer one to two kil
 Above it the wind turns and grows slowly toward the geostrophic wind, which a single surface
 observation says nothing about, so the profile holds the surface layer's top value rather than
 extrapolate the law or model the turning. The roughness length
-$z_0$ (`--roughness_length`) defaults to 0.03 m, the Davenport–Wieringa class "open flat terrain" [45, 46]. The
+$z_0$ (`--roughness_length`) defaults to 0.03 m, the Davenport–Wieringa class "open flat terrain" [57, 58]. The
 anemometer height $z_\mathrm{ref}$ defaults to the standard 10 m.
 
 As run, the law is sampled at levels. The ground, $z = 0$, is calm. The first level above it is
@@ -2037,9 +2079,9 @@ are the run's own: the vehicle file's, or `--temperature`, `--humidity` and `--p
 **Stability classes** (`--stability`, unvalidated). Each class replaces the log law with a power
 law $u = u_\mathrm{ref}(z/z_\mathrm{ref})^m$, held above $\delta$ as the log law is, and the lapse
 with a class temperature gradient. The class gradient holds up to $\delta$, and every class
-lapses dry-adiabatically above it. The exponents are the Klug–Manier classes of TA Luft [47],
+lapses dry-adiabatically above it. The exponents are the Klug–Manier classes of TA Luft [59],
 and the gradients are mid-range values of the $\Delta T$ classes of U.S. NRC Regulatory
-Guide 1.23 [48] (class A, which has no lower bound, takes −2.0 K/100 m):
+Guide 1.23 [60] (class A, which has no lower bound, takes −2.0 K/100 m):
 
 | Class (TA Luft) | Pasquill | Character | $m$ | $dT/dz$ below $\delta$ |
 | --- | --- | --- | --- | --- |
@@ -2077,7 +2119,7 @@ concentration), the profile is the `--wind` profile.
 
 **A site roughness length from wind profiles** (`niceops_build_atmosphere fit_z0`). Over runs
 $j$ and gates $z_i$ between two heights (46–197 ft by default), with speeds $U_{ij}$, the model
-is the log law with one roughness length for the site and a slope per run [44, 49]:
+is the log law with one roughness length for the site and a slope per run [56, 61]:
 
 $$
 U_{ij} = A_j\,(\ln z_i - \ell), \qquad \ell = \ln z_0, \quad A_j = u_{*j}/\kappa .
@@ -2086,7 +2128,7 @@ $$
 For a given $\ell$ each $A_j = \sum_i U_{ij} x_i / \sum_i x_i^2$ with $x_i = \ln z_i - \ell$, so
 the least-squares fit is a search in $\ell$ alone, over $z_0$ from $10^{-4}$ to 3 m. Its minimum
 is where $dS/d\ell = 2\sum_j A_j \sum_i (U_{ij} - A_j x_i)$ vanishes. A run enters only if it is
-near neutral, by the bulk Richardson number between the lowest and highest gate [44],
+near neutral, by the bulk Richardson number between the lowest and highest gate [56],
 
 $$
 \mathrm{Ri}_b = \frac{g}{\bar\theta}\,\frac{\Delta\theta/\Delta z}{(\Delta U/\Delta z)^2},
@@ -2095,7 +2137,7 @@ $$
 
 with $|\mathrm{Ri}_b| \le 0.05$, at least 3 m/s at the highest gate, and at most 20° of turning
 across the gates (the law has none). The interval is the 2.5 and 97.5 percentiles of the fit
-repeated over runs drawn with replacement [50]. The fit is ill-conditioned: with gates at 46 and
+repeated over runs drawn with replacement [62]. The fit is ill-conditioned: with gates at 46 and
 197 ft and $z_0$ near 0.03 m, a 1% error in the ratio of their speeds moves $z_0$ by a factor of
 about 1.4, so runs are pooled and the interval is reported with $z_0$.
 
@@ -2105,7 +2147,7 @@ about 1.4, so runs are pooled and the interval is reported with $z_0$.
 
 `--refraction linear` fits each source–observer pair's $c_\mathrm{eff}(z)$ over the pair's
 height span (at least 10 m) with a straight line $c(z) = c_0 + a z$ by least squares. This is the
-equivalent-linear approach of HARMONOISE and Nord2000 [51, 52]. The rays are
+equivalent-linear approach of HARMONOISE and Nord2000 [63, 64]. The rays are
 then arcs of circles of radius $\mathcal{L} = c_0/\lvert a\rvert$ centered at height
 $-c_0/a$. For the direct ray, with $\kappa(z) = z(2\mathcal{L} + \sigma z)$ and
 $\sigma = \mathrm{sign}\,a$, the arc's center lies a horizontal distance
@@ -2136,7 +2178,7 @@ $$
 Beyond it, sound arrives as a creeping wave diffracted along the ground. The level starts from
 the limiting ray's: its spreading range is continued in proportion to range,
 $R_\mathrm{eq} = r\mathcal{L}/h_c$ ($h_c = \mathcal{L} - z_s$), and its travel time at $c_0$. It decays at the rate of the
-first mode [53, §9-5; 54]. Over rigid ground, with $\tau_1 = 1.01879$ the first zero of
+first mode [47, §9-5; 65]. Over rigid ground, with $\tau_1 = 1.01879$ the first zero of
 $\mathrm{Ai}'(-x)$:
 
 $$
@@ -2158,7 +2200,7 @@ energy turbulence scatters into the shadow.
 diffracts smoothly from lit to shadow. Its ground term, taken at the grazing ray's straight
 equivalent geometry, sinks toward the grazing ground wave over soft ground and doubles over
 rigid ground, where the exact field does neither, and near the ground the equivalent-linear
-method can depart from a PE by up to 10 dB [55]. When a ground model is on, NICEOPS replaces
+method can depart from a PE by up to 10 dB [66]. When a ground model is on, NICEOPS replaces
 the ray model there by a tabulated field.
 
 For each band, and each microphone height, it tabulates $V(\xi, s)$: the level of the
@@ -2166,7 +2208,7 @@ residue-series field of a profile with $k^2$ linear in height over the impedance
 relative to the ray's spreading alone. Its arguments are the Fock-scaled distance past the
 boundary $\xi = (r - r_b)/F$, with the diffraction length $F = 2s^2/k_0$, and
 $s = k_0 \ell$, $\ell = (c_0/(2\lvert a\rvert k_0^2))^{1/3}$. Relative to the ray's spreading it
-hardly depends on the source's height, which is Fock's result [54], so one table serves every
+hardly depends on the source's height, which is Fock's result [65], so one table serves every
 path. The table is built with the source at $\min(20, 0.1 s^2)\,\ell$, over
 $-2 \le \xi \le 6$ in steps of 0.1 and $5 \le s \le 3000$ at 8 nodes per decade. $V$ is capped at
 $20\lg 2$, the most two coherent rays give, held at $V(0) - L_\mathrm{floor}$ deep in the
@@ -2280,7 +2322,7 @@ shadow ray takes the creeping-wave loss at the fit's gradient. A boundary set by
 aloft is withdrawn where a ray from aloft or along a duct does arrive.
 
 **Wave corrections.** By default a caustic's focusing gain is capped at 10 dB. Two opt-in Airy
-corrections [53, §9-4] exist. `--tunneling` adds rays that turn back at a height $z_t$ just above
+corrections [47, §9-4] exist. `--tunneling` adds rays that turn back at a height $z_t$ just above
 the receiver, which the wave reaches as the evanescent tail $\mathrm{Ai}^2(x)$,
 $x = (\tfrac32\omega I)^{2/3}$, $I = \int_{z_r}^{z_t}\sqrt{p^2 - 1/c^2}\,dz$; near the family's
 caustic the pair of rays is replaced by the caustic's band-averaged Airy field. `--skip_fill` adds
@@ -2369,7 +2411,7 @@ $$
 
 with $k(z) = \omega/c_\mathrm{eff}(z) + i\alpha$ and the impedance condition
 $\partial\psi/\partial z = -ik\beta\psi$ at the ground. It is marched in range by the split-step
-Padé method of Collins [56]: $\exp[i k_a \Delta r(\sqrt{1+\mathcal{Q}} - 1)]$ is replaced
+Padé method of Collins [53]: $\exp[i k_a \Delta r(\sqrt{1+\mathcal{Q}} - 1)]$ is replaced
 by a rational function $r_0 + \sum_j c_j/(\mathcal{Q} - p_j)$, so a step costs one tridiagonal
 solve per term. **Departure:** the coefficients are not the Taylor–Padé coefficients. They come
 from a rational interpolant fitted at run time on Chebyshev nodes over the propagation angles
@@ -2383,12 +2425,12 @@ than that from the source is reported as NaN. The default range step is eight wa
 The depth operator is discretized to fourth order (Numerov), with a fourth-order impedance row
 at the ground and fourth-order interpolation that places the source on the grid and reads the
 receivers off it. The grid is 10 points per wavelength (20 with a second-order option or
-Crank–Nicolson). A Crank–Nicolson scheme, the Padé(1,1) case [43, App. G], is available as an
-independent check. The field starts from Collins's self-starter [57], the first range step
-applied to a delta function at the source, or from the Gaussian starter of [43]. An artificial
+Crank–Nicolson). A Crank–Nicolson scheme, the Padé(1,1) case [55, App. G], is available as an
+independent check. The field starts from Collins's self-starter [67], the first range step
+applied to a delta function at the source, or from the Gaussian starter of [55]. An artificial
 absorbing layer 100 wavelengths thick closes the top of the domain.
 
-**Turbulence** enters as random phase screens [58; 43, App. J], one every outer scale
+**Turbulence** enters as random phase screens [68; 55, App. J], one every outer scale
 $L_0$ (default 10 m) of range. Each screen's phase spectrum is that of a von Kármán spectrum
 with structure parameter $\gamma_T/4$, the value that puts Ostashev's coherence in HARMONOISE's
 form, with $2\gamma_p$ in place of $\gamma_p$ [23, Eqs. 18–21]:
@@ -2414,7 +2456,7 @@ deep in the shadow, at points where it is 10 dB clear of the still-air field.
 
 ### 9.2 Analytic reference solutions
 
-These are the benchmark cases of Attenborough et al. [59]: a source at 5 m, a receiver at 1 m,
+These are the benchmark cases of Attenborough et al. [69]: a source at 5 m, a receiver at 1 m,
 10, 100 and 1000 Hz, a locally reacting ground with the paper's four-parameter impedances, and
 absorption entered as $\mathrm{Im}\,k_0$ from the values the paper quotes:
 
@@ -2441,11 +2483,11 @@ with $\ell = (\mathcal{R}/(2k_0^2))^{1/3}$ and $\mathrm{w}_3 = e^{2\pi i/3}$:
 
 The Airy and Hankel functions follow the DLMF [40].
 
-**Departure: the upward mode condition.** The condition printed in [59, Eq. 11],
+**Departure: the upward mode condition.** The condition printed in [69, Eq. 11],
 $\mathrm{Ai}'(b) + i k_0 \ell \beta\,\mathrm{w}_3\,\mathrm{Ai}(b) = 0$, differs from the one derived
 here by a factor $e^{i\pi/3}$ on the admittance term. The two agree over rigid ground. Over
 impedance ground the printed form departs from the PE and the derived form agrees with it
-([FIDELITY](FIDELITY.md#the-attenborough-et-al-benchmark)). Eq. (10) of [59] is right up to an
+([FIDELITY](FIDELITY.md#the-attenborough-et-al-benchmark)). Eq. (10) of [69] is right up to an
 overall sign.
 
 **Case 2's exact profile.** The normal-mode solution's profile, $c_0/\sqrt{1 - 2z/\mathcal{R}}$,
@@ -2513,7 +2555,7 @@ a roughness the Kirchhoff factor; a PE table's turbulence is its phase screens (
 
 `niceops_fdtd_field` solves the linear acoustic equations of §6.6 in three dimensions, for a point
 source among rigid solids, as the reference for the point-source model of §6.5. Pressure lives at
-the cells' centres and each velocity component on the faces normal to it (Yee [77]), cubic cells of
+the cells' centers and each velocity component on the faces normal to it (Yee [70]), cubic cells of
 side $h$:
 
 $$
@@ -2542,14 +2584,13 @@ direction average of the $\omega$ at which the grid carries the physical wavenum
 is the error's spread over directions. Yee's error, $D(x) = \sin(x/2)$, is slow along the axes,
 where the phase speed is $c\,(1 - (kh)^2(1 - C^2/3)/24)$, and exact along the diagonals at $C = 1$;
 it is not warped. A
-cell is solid or air by its centre; a face between two air cells is open, and one at a solid is
+cell is solid or air by its center; a face between two air cells is open, and one at a solid is
 rigid ($v = 0$) or, with an absorption $\alpha$, the impedance face of §6.6. Under a pitched roof a
-cell is solid where its centre lies below the least of the planes, so a slope is a staircase of
-cells, and a staircase diffracts as a smooth slope does only well below the step: behind a gable,
-by boundary elements in the profile's plane, a staircase of 6, 3 and 1.5 mm steps on a 26.6°
-slope is 10, 5 and 2.5 dB too loud at 6.3 kHz (FIDELITY, "Pitched roofs"), converging at first
-order. The floor and a plane
-of symmetry are rigid. The other sides are a convolutional PML [75]: in a slab
+cell is solid where its center lies below the least of the planes, so a slope is a staircase of
+cells, and a staircase diffracts as a smooth slope does only well below the step: behind a gable
+it is too loud at high frequency and converges to the smooth slope only at first order in the step
+([FIDELITY](FIDELITY.md#pitched-roofs)). The floor and a plane
+of symmetry are rigid. The other sides are a convolutional PML [71]: in a slab
 normal to $x$, $\delta_x p$ becomes $\delta_x p + \psi$ with
 $\psi^n = b\,\psi^{n-1} + a\,\delta_x p^n$, $b = e^{-(\sigma + \alpha_c)\Delta t}$,
 $a = \sigma(b - 1)/(\sigma + \alpha_c)$, $\sigma$ graded as the cube of the depth to
@@ -2593,7 +2634,7 @@ width.
 **A relief's scattering coefficient** (`tools/profile_scattering.py`). A facade's relief extruded
 along one direction scatters in the plane of its profile. By boundary elements in that plane
 (as `tools/thick_barrier_bem.py`), for a plane wave from $\psi$, the far fields $p_1$ of the
-sample and $p_0$ of a flat reference of the same outline give the correlation coefficient [76]
+sample and $p_0$ of a flat reference of the same outline give the correlation coefficient [72]
 
 $$
 s(\psi) = 1 - \frac{\left|\sum_\theta p_1 p_0^*\right|^2}{\sum_\theta|p_1|^2\,\sum_\theta|p_0|^2},
@@ -2608,7 +2649,7 @@ $\sin\theta_m = -\sin\psi + m\lambda/\Lambda$, over its sum over all of them.
 
 ### 10.1 Frequency weighting and band summation
 
-The A and C weightings are the analytic forms of IEC 61672-1 [60]:
+The A and C weightings are the analytic forms of IEC 61672-1 [73]:
 
 $$
 W_C(f) = 10\lg\frac{K_C\, f^4}{(f^2 + f_1^2)^2 (f^2 + f_4^2)^2}, \qquad
@@ -2645,7 +2686,7 @@ added in energy, $10\lg(10^{L/10} + 10^{L_\mathrm{amb}/10})$, before the window 
 ### 10.3 Maximum level, time above and number above
 
 The signal is piecewise constant in mean square, $P_i = 10^{L_i/10}$, over the reception-time
-durations above. The exponential time weighting of IEC 61672-1 [60] (fast, $\tau = 0.125$ s,
+durations above. The exponential time weighting of IEC 61672-1 [73] (fast, $\tau = 0.125$ s,
 by default) is applied exactly for that input:
 
 $$
@@ -2694,9 +2735,9 @@ or the penalty. An operations file's `local_time` sets the clock the penalties a
 
 | Metric | Evening | Night | Definition |
 | --- | --- | --- | --- |
-| DNL | — | 22:00–07:00, +10 dB | 14 CFR Part 150 [61] |
-| Lden | 19:00–23:00, +5 dB | 23:00–07:00, +10 dB | Directive 2002/49/EC [62] |
-| CNEL | 19:00–22:00, +10 lg 3 dB | 22:00–07:00, +10 dB | Cal. Code Regs. tit. 21, §5001 [63] |
+| DNL | — | 22:00–07:00, +10 dB | 14 CFR Part 150 [74] |
+| Lden | 19:00–23:00, +5 dB | 23:00–07:00, +10 dB | Directive 2002/49/EC [75] |
+| CNEL | 19:00–22:00, +10 lg 3 dB | 22:00–07:00, +10 dB | Cal. Code Regs. tit. 21, §5001 [76] |
 
 A period's opening hour belongs to it. The directive's form,
 
@@ -2750,7 +2791,7 @@ metric's weighting at 13:00, 21:00 and 03:00. $L_{\mathrm{Aeq},T}$ has no period
 ### 10.5 Effective perceived noise level
 
 EPNL follows 14 CFR 36, Appendix A, §A36.4 [18], which is harmonized with ICAO Annex 16, Vol. I,
-Appendix 2 [64] but not identical to it; AC 36-4D calls them "nearly identical" [65, §201(b)(1)].
+Appendix 2 [77] but not identical to it; AC 36-4D calls them "nearly identical" [78, §201(b)(1)].
 It is ported term for term from PANAM.
 
 **The records.** The one-third-octave spectra are formed as linear averages over 0.5 s records
@@ -2785,8 +2826,8 @@ EPNL. For each record $k$ and band $i$:
 5. The band-sharing check of §A36.4.4.2: when $C$ at PNLTM is below its mean $\bar C$ over the
    five records centered there (over the records that exist, at either end of the history),
    $\Delta_B = \mathrm{PNL}(k_M) + \bar C - \mathrm{PNLTM}$, added to EPNL as a separate term;
-   otherwise $\Delta_B = 0$. This departs from Annex 16 [64, App. 2, §4.4.2–4.6.3] and AC 36-4D
-   [65, §401(d)(6)], which add $\Delta_B$ to PNLTM and use the adjusted PNLTM for the 10 dB-down
+   otherwise $\Delta_B = 0$. This departs from Annex 16 [77, App. 2, §4.4.2–4.6.3] and AC 36-4D
+   [78, §401(d)(6)], which add $\Delta_B$ to PNLTM and use the adjusted PNLTM for the 10 dB-down
    points and for EPNL. It is kept separate because, read literally, 14 CFR 36 raises PNLTM by
    $\Delta_B$ and takes $D$ from the raised PNLTM, so the two cancel in $\mathrm{PNLTM} + D$: the
    adjustment could never raise EPNL, only lower it through a narrower duration.
@@ -2812,7 +2853,7 @@ may have been cut off.
 enters it at its noy threshold SPL(d) and carries no tone, as in PANAM. By default
 (`--epnl_masking`), every band below its noy threshold is masked: it enters the procedure at
 that threshold and carries no tone correction itself, following the exclusion of tones in
-masked bands in FAA AC 36-4 [65]. Without masking, deeply absorbed high bands would read as
+masked bands in FAA AC 36-4 [78]. Without masking, deeply absorbed high bands would read as
 tones. PNL is unchanged by masking, since a masked band is 0 noy either way. The corrections the
 regulation applies to a measured spectrum (instrumentation, background noise, reference
 conditions, pseudo-tones from ground reflections) are not applied to a prediction, so every
@@ -2833,8 +2874,12 @@ than for SEL.
 - **Doppler frequency shift.** The spheres carry the measured, Doppler-shifted spectra, and
   NICEOPS applies no shift. A database whose spheres have had the shift removed is refused. The
   source's motion enters only through the reception-time factor $1 + \dot r/c$ (§10.2).
-- **Buildings**, except at microphones with an urban table (§6.5), which describes ideal
-  street canyons, their roof edges diffracting singly.
+- **Buildings**, except through an urban table at its microphones or `--buildings` (§6.5). The
+  rays among buildings leave out what §6.5 lists ("What the rays leave out"); they are straight,
+  in uniform air over a level floor, so `--buildings` is refused with `--refraction`,
+  `--atmosphere`, `--wind` and `--terrain`; a row of roofs takes a two-dimensional field without
+  the roofs' and streets' absorption; and turbulent scattering into the buildings' shadows is
+  taken only under `--scattering`.
 - **Diffraction and screening by terrain** without `--terrain_screening`, when terrain enters
   only through each path's mean ground plane (§6.3). Screening by terrain (§6.4) takes the
   vertical plane only, with no lateral paths.
@@ -2888,46 +2933,46 @@ than for SEL.
 33. "Ground-Plane Microphone Configuration for Propeller-Driven Light-Aircraft Noise Measurement," SAE ARP4055A, SAE International, Warrendale, PA, 2020.
 34. "Commission Directive (EU) 2015/996 of 19 May 2015 Establishing Common Noise Assessment Methods According to Directive 2002/49/EC of the European Parliament and of the Council," *Official Journal of the European Union*, L 168, 1 July 2015, pp. 1–823.
 35. Kephalopoulos, S., Paviotti, M., and Anfosso-Lédée, F., "Common Noise Assessment Methods in Europe (CNOSSOS-EU)," JRC Reference Report EUR 25379 EN, Publications Office of the European Union, Luxembourg, 2012. https://doi.org/10.2788/31776
-36. Olsen, H., Tuinstra, M., and van Oosten, N., "D1.5d Rotorcraft Noise Modelling Guidance," Research Project NOISE, EASA.2020.FC.06, Royal Netherlands Aerospace Centre (NLR), for the European Union Aviation Safety Agency, Cologne, January 2024.
+36. Olsen, H., Tuinstra, M., and van Oosten, N., "D1.5d Rotorcraft Noise Modeling Guidance," Research Project NOISE, EASA.2020.FC.06, Royal Netherlands Aerospace Center (NLR), for the European Union Aviation Safety Agency, Cologne, January 2024.
 37. "Commission Delegated Directive (EU) 2021/1226 of 21 December 2020 Amending, for the Purposes of Adapting to Scientific and Technical Progress, Annex II to Directive 2002/49/EC of the European Parliament and of the Council as Regards Common Noise Assessment Methods," *Official Journal of the European Union*, L 269, 28 July 2021, pp. 65–142.
 38. Kok, A., and van Beek, A., "Amendments for CNOSSOS-EU: Description of Issues and Proposed Solutions," RIVM Letter Report 2019-0023, National Institute for Public Health and the Environment, Bilthoven, Netherlands, 2019. https://doi.org/10.21945/RIVM-2019-0023
 39. "Propagation by Diffraction," Recommendation ITU-R P.526-16, International Telecommunication Union, Geneva, November 2025.
 40. Olver, F. W. J., Olde Daalhuis, A. B., Lozier, D. W., et al. (eds.), "NIST Digital Library of Mathematical Functions," Release 1.2.8, National Institute of Standards and Technology, 15 September 2026. URL: https://dlmf.nist.gov/ [retrieved 8 October 2026].
 41. Press, W. H., Teukolsky, S. A., Vetterling, W. T., and Flannery, B. P., *Numerical Recipes in C: The Art of Scientific Computing*, 2nd ed., Cambridge University Press, Cambridge, 1992, Sec. 6.9.
 42. Sommerfeld, A., "Mathematische Theorie der Diffraction," *Mathematische Annalen*, Vol. 47, Nos. 2–3, 1896, pp. 317–374. https://doi.org/10.1007/BF01447273
-43. Salomons, E. M., *Computational Atmospheric Acoustics*, Kluwer Academic Publishers, Dordrecht, 2001. https://doi.org/10.1007/978-94-010-0660-6
-44. Stull, R. B., *An Introduction to Boundary Layer Meteorology*, Kluwer Academic Publishers, Dordrecht, 1988. https://doi.org/10.1007/978-94-009-3027-8
-45. Wieringa, J., "Updating the Davenport Roughness Classification," *Journal of Wind Engineering and Industrial Aerodynamics*, Vol. 41, Nos. 1–3, 1992, pp. 357–368. https://doi.org/10.1016/0167-6105(92)90434-C
-46. "Guide to Instruments and Methods of Observation," WMO-No. 8, 2024 ed., World Meteorological Organization, Geneva, 2024.
-47. "Erste Allgemeine Verwaltungsvorschrift zum Bundes-Immissionsschutzgesetz (Technische Anleitung zur Reinhaltung der Luft — TA Luft)," 27 February 1986, *Gemeinsames Ministerialblatt*, No. 7, 28 February 1986, p. 95.
-48. "Meteorological Monitoring Programs for Nuclear Power Plants," Regulatory Guide 1.23, Rev. 1, U.S. Nuclear Regulatory Commission, Office of Nuclear Regulatory Research, Washington, DC, March 2007.
-49. Wieringa, J., "Representative Roughness Parameters for Homogeneous Terrain," *Boundary-Layer Meteorology*, Vol. 63, No. 4, 1993, pp. 323–363. https://doi.org/10.1007/BF00705357
-50. Efron, B., and Tibshirani, R. J., *An Introduction to the Bootstrap*, Chapman & Hall, New York, 1993. https://doi.org/10.1201/9780429246593
-51. Salomons, E., van Maercke, D., Defrance, J., and de Roo, F., "The Harmonoise Sound Propagation Model," *Acta Acustica united with Acustica*, Vol. 97, No. 1, 2011, pp. 62–74. https://doi.org/10.3813/AAA.918387
-52. Plovsing, B., "Nord2000. Comprehensive Outdoor Sound Propagation Model. Part 2: Propagation in an Atmosphere with Refraction," DELTA Acoustics & Vibration Report AV 1851/00 (revised), Hørsholm, Denmark, 2006.
-53. Pierce, A. D., *Acoustics: An Introduction to Its Physical Principles and Applications*, 3rd ed., ASA Press/Springer, Cham, Switzerland, 2019. https://doi.org/10.1007/978-3-030-11214-1
-54. Fock, V. A., *Electromagnetic Diffraction and Propagation Problems*, International Series of Monographs on Electromagnetic Waves, Vol. 1, Pergamon Press, Oxford, 1965.
-55. van Maercke, D., and Salomons, E., "The Harmonoise Sound Propagation Model: Further Developments and Comparison with Other Models," *Proceedings of NAG/DAGA 2009 International Conference on Acoustics*, Deutsche Gesellschaft für Akustik, Berlin, 2009, pp. 1622–1625.
-56. Collins, M. D., "A Split-Step Padé Solution for the Parabolic Equation Method," *Journal of the Acoustical Society of America*, Vol. 93, No. 4, 1993, pp. 1736–1742. https://doi.org/10.1121/1.406739
-57. Collins, M. D., "A Self-Starter for the Parabolic Equation Method," *Journal of the Acoustical Society of America*, Vol. 92, No. 4, 1992, pp. 2069–2074. https://doi.org/10.1121/1.405258
-58. Gilbert, K. E., Raspet, R., and Di, X., "Calculation of Turbulence Effects in an Upward-Refracting Atmosphere," *Journal of the Acoustical Society of America*, Vol. 87, No. 6, 1990, pp. 2428–2437. https://doi.org/10.1121/1.399088
-59. Attenborough, K., Taherzadeh, S., Bass, H. E., Di, X., Raspet, R., Becker, G. R., Güdesen, A., Chrestman, A., Daigle, G. A., L'Espérance, A., Gabillet, Y., Gilbert, K. E., Li, Y. L., White, M. J., Naz, P., Noble, J. M., and van Hoof, H. A. J. M., "Benchmark Cases for Outdoor Sound Propagation Models," *Journal of the Acoustical Society of America*, Vol. 97, No. 1, 1995, pp. 173–191. https://doi.org/10.1121/1.412302
-60. "Electroacoustics — Sound Level Meters — Part 1: Specifications," IEC 61672-1:2013, Ed. 2.0, International Electrotechnical Commission, Geneva, 2013.
-61. "Airport Noise Compatibility Planning," Title 14, Code of Federal Regulations, Part 150, Appendix A, "Noise Exposure Maps." URL: https://www.ecfr.gov/current/title-14/part-150 [retrieved 8 October 2026].
-62. "Directive 2002/49/EC of the European Parliament and of the Council of 25 June 2002 Relating to the Assessment and Management of Environmental Noise," *Official Journal of the European Communities*, L 189, 18 July 2002, pp. 12–25.
-63. "Noise Standards: Definitions," California Code of Regulations, Title 21, Sec. 5001.
-64. "Environmental Protection, Volume I — Aircraft Noise," Annex 16 to the Convention on International Civil Aviation, 8th ed., International Civil Aviation Organization, Montréal, July 2017.
-65. "Noise Standards: Aircraft Type and Airworthiness Certification," Advisory Circular AC 36-4D, Federal Aviation Administration, Washington, DC, 12 October 2017.
-66. Li, K. M., and Lai, C. Y. C., "A Note on Noise Propagation in Street Canyons," *Journal of the Acoustical Society of America*, Vol. 126, No. 2, 2009, pp. 644–655. https://doi.org/10.1121/1.3158599
-67. Kouyoumjian, R. G., and Pathak, P. H., "A Uniform Geometrical Theory of Diffraction for an Edge in a Perfectly Conducting Surface," *Proceedings of the IEEE*, Vol. 62, No. 11, 1974, pp. 1448–1461. https://doi.org/10.1109/PROC.1974.9651
-68. Keller, J. B., "Geometrical Theory of Diffraction," *Journal of the Optical Society of America*, Vol. 52, No. 2, 1962, pp. 116–130. https://doi.org/10.1364/JOSA.52.000116
-69. Bowman, J. J., Senior, T. B. A., and Uslenghi, P. L. E. (eds.), *Electromagnetic and Acoustic Scattering by Simple Shapes*, North-Holland, Amsterdam, 1969, Ch. 6.
-70. Filon, L. N. G., "On a Quadrature Formula for Trigonometric Integrals," *Proceedings of the Royal Society of Edinburgh*, Vol. 49, 1930, pp. 38–47. https://doi.org/10.1017/S0370164600026262
-71. Svensson, U. P., Fred, R. I., and Vanderkooy, J., "An Analytic Secondary Source Model of Edge Diffraction Impulse Responses," *Journal of the Acoustical Society of America*, Vol. 106, No. 5, 1999, pp. 2331–2344.
-72. Svensson, U. P., Calamia, P. T., and Nakanishi, S., "Frequency-Domain Edge Diffraction for Finite and Infinite Edges," *Acta Acustica united with Acustica*, Vol. 95, No. 3, 2009, pp. 568–572.
-73. Huybrechs, D., and Vandewalle, S., "On the Evaluation of Highly Oscillatory Integrals by Analytic Continuation," *SIAM Journal on Numerical Analysis*, Vol. 44, No. 3, 2006, pp. 1026–1048. https://doi.org/10.1137/050636814
-74. Biot, M. A., and Tolstoy, I., "Formulation of Wave Propagation in Infinite Media by Normal Coordinates with an Application to Diffraction," *Journal of the Acoustical Society of America*, Vol. 29, No. 3, 1957, pp. 381–391.
-75. Roden, J. A., and Gedney, S. D., "Convolution PML (CPML): An Efficient FDTD Implementation of the CFS–PML for Arbitrary Media," *Microwave and Optical Technology Letters*, Vol. 27, No. 5, 2000, pp. 334–339.
-76. Mommertz, E., "Determination of Scattering Coefficients from the Reflection Directivity of Architectural Surfaces," *Applied Acoustics*, Vol. 60, No. 2, 2000, pp. 201–203.
-77. Yee, K. S., "Numerical Solution of Initial Boundary Value Problems Involving Maxwell's Equations in Isotropic Media," *IEEE Transactions on Antennas and Propagation*, Vol. 14, No. 3, 1966, pp. 302–307. https://doi.org/10.1109/TAP.1966.1138693
-78. Forssén, J., Hornikx, M., Botteldooren, D., Wei, W., Van Renterghem, T., and Ögren, M., "A Model of Sound Scattering by Atmospheric Turbulence for Use in Noise Mapping Calculations," *Acta Acustica united with Acustica*, Vol. 100, No. 5, 2014, pp. 810–815. https://doi.org/10.3813/AAA.918760
+43. Li, K. M., and Lai, C. Y. C., "A Note on Noise Propagation in Street Canyons," *Journal of the Acoustical Society of America*, Vol. 126, No. 2, 2009, pp. 644–655. https://doi.org/10.1121/1.3158599
+44. Kouyoumjian, R. G., and Pathak, P. H., "A Uniform Geometrical Theory of Diffraction for an Edge in a Perfectly Conducting Surface," *Proceedings of the IEEE*, Vol. 62, No. 11, 1974, pp. 1448–1461. https://doi.org/10.1109/PROC.1974.9651
+45. Keller, J. B., "Geometrical Theory of Diffraction," *Journal of the Optical Society of America*, Vol. 52, No. 2, 1962, pp. 116–130. https://doi.org/10.1364/JOSA.52.000116
+46. Bowman, J. J., Senior, T. B. A., and Uslenghi, P. L. E. (eds.), *Electromagnetic and Acoustic Scattering by Simple Shapes*, North-Holland, Amsterdam, 1969, Ch. 6.
+47. Pierce, A. D., *Acoustics: An Introduction to Its Physical Principles and Applications*, 3rd ed., ASA Press/Springer, Cham, Switzerland, 2019. https://doi.org/10.1007/978-3-030-11214-1
+48. Filon, L. N. G., "On a Quadrature Formula for Trigonometric Integrals," *Proceedings of the Royal Society of Edinburgh*, Vol. 49, 1930, pp. 38–47. https://doi.org/10.1017/S0370164600026262
+49. Svensson, U. P., Fred, R. I., and Vanderkooy, J., "An Analytic Secondary Source Model of Edge Diffraction Impulse Responses," *Journal of the Acoustical Society of America*, Vol. 106, No. 5, 1999, pp. 2331–2344.
+50. Svensson, U. P., Calamia, P. T., and Nakanishi, S., "Frequency-Domain Edge Diffraction for Finite and Infinite Edges," *Acta Acustica united with Acustica*, Vol. 95, No. 3, 2009, pp. 568–572.
+51. Biot, M. A., and Tolstoy, I., "Formulation of Wave Propagation in Infinite Media by Normal Coordinates with an Application to Diffraction," *Journal of the Acoustical Society of America*, Vol. 29, No. 3, 1957, pp. 381–391.
+52. Huybrechs, D., and Vandewalle, S., "On the Evaluation of Highly Oscillatory Integrals by Analytic Continuation," *SIAM Journal on Numerical Analysis*, Vol. 44, No. 3, 2006, pp. 1026–1048. https://doi.org/10.1137/050636814
+53. Collins, M. D., "A Split-Step Padé Solution for the Parabolic Equation Method," *Journal of the Acoustical Society of America*, Vol. 93, No. 4, 1993, pp. 1736–1742. https://doi.org/10.1121/1.406739
+54. Forssén, J., Hornikx, M., Botteldooren, D., Wei, W., Van Renterghem, T., and Ögren, M., "A Model of Sound Scattering by Atmospheric Turbulence for Use in Noise Mapping Calculations," *Acta Acustica united with Acustica*, Vol. 100, No. 5, 2014, pp. 810–815. https://doi.org/10.3813/AAA.918760
+55. Salomons, E. M., *Computational Atmospheric Acoustics*, Kluwer Academic Publishers, Dordrecht, 2001. https://doi.org/10.1007/978-94-010-0660-6
+56. Stull, R. B., *An Introduction to Boundary Layer Meteorology*, Kluwer Academic Publishers, Dordrecht, 1988. https://doi.org/10.1007/978-94-009-3027-8
+57. Wieringa, J., "Updating the Davenport Roughness Classification," *Journal of Wind Engineering and Industrial Aerodynamics*, Vol. 41, Nos. 1–3, 1992, pp. 357–368. https://doi.org/10.1016/0167-6105(92)90434-C
+58. "Guide to Instruments and Methods of Observation," WMO-No. 8, 2024 ed., World Meteorological Organization, Geneva, 2024.
+59. "Erste Allgemeine Verwaltungsvorschrift zum Bundes-Immissionsschutzgesetz (Technische Anleitung zur Reinhaltung der Luft — TA Luft)," 27 February 1986, *Gemeinsames Ministerialblatt*, No. 7, 28 February 1986, p. 95.
+60. "Meteorological Monitoring Programs for Nuclear Power Plants," Regulatory Guide 1.23, Rev. 1, U.S. Nuclear Regulatory Commission, Office of Nuclear Regulatory Research, Washington, DC, March 2007.
+61. Wieringa, J., "Representative Roughness Parameters for Homogeneous Terrain," *Boundary-Layer Meteorology*, Vol. 63, No. 4, 1993, pp. 323–363. https://doi.org/10.1007/BF00705357
+62. Efron, B., and Tibshirani, R. J., *An Introduction to the Bootstrap*, Chapman & Hall, New York, 1993. https://doi.org/10.1201/9780429246593
+63. Salomons, E., van Maercke, D., Defrance, J., and de Roo, F., "The Harmonoise Sound Propagation Model," *Acta Acustica united with Acustica*, Vol. 97, No. 1, 2011, pp. 62–74. https://doi.org/10.3813/AAA.918387
+64. Plovsing, B., "Nord2000. Comprehensive Outdoor Sound Propagation Model. Part 2: Propagation in an Atmosphere with Refraction," DELTA Acoustics & Vibration Report AV 1851/00 (revised), Hørsholm, Denmark, 2006.
+65. Fock, V. A., *Electromagnetic Diffraction and Propagation Problems*, International Series of Monographs on Electromagnetic Waves, Vol. 1, Pergamon Press, Oxford, 1965.
+66. van Maercke, D., and Salomons, E., "The Harmonoise Sound Propagation Model: Further Developments and Comparison with Other Models," *Proceedings of NAG/DAGA 2009 International Conference on Acoustics*, Deutsche Gesellschaft für Akustik, Berlin, 2009, pp. 1622–1625.
+67. Collins, M. D., "A Self-Starter for the Parabolic Equation Method," *Journal of the Acoustical Society of America*, Vol. 92, No. 4, 1992, pp. 2069–2074. https://doi.org/10.1121/1.405258
+68. Gilbert, K. E., Raspet, R., and Di, X., "Calculation of Turbulence Effects in an Upward-Refracting Atmosphere," *Journal of the Acoustical Society of America*, Vol. 87, No. 6, 1990, pp. 2428–2437. https://doi.org/10.1121/1.399088
+69. Attenborough, K., Taherzadeh, S., Bass, H. E., Di, X., Raspet, R., Becker, G. R., Güdesen, A., Chrestman, A., Daigle, G. A., L'Espérance, A., Gabillet, Y., Gilbert, K. E., Li, Y. L., White, M. J., Naz, P., Noble, J. M., and van Hoof, H. A. J. M., "Benchmark Cases for Outdoor Sound Propagation Models," *Journal of the Acoustical Society of America*, Vol. 97, No. 1, 1995, pp. 173–191. https://doi.org/10.1121/1.412302
+70. Yee, K. S., "Numerical Solution of Initial Boundary Value Problems Involving Maxwell's Equations in Isotropic Media," *IEEE Transactions on Antennas and Propagation*, Vol. 14, No. 3, 1966, pp. 302–307. https://doi.org/10.1109/TAP.1966.1138693
+71. Roden, J. A., and Gedney, S. D., "Convolution PML (CPML): An Efficient FDTD Implementation of the CFS–PML for Arbitrary Media," *Microwave and Optical Technology Letters*, Vol. 27, No. 5, 2000, pp. 334–339.
+72. Mommertz, E., "Determination of Scattering Coefficients from the Reflection Directivity of Architectural Surfaces," *Applied Acoustics*, Vol. 60, No. 2, 2000, pp. 201–203.
+73. "Electroacoustics — Sound Level Meters — Part 1: Specifications," IEC 61672-1:2013, Ed. 2.0, International Electrotechnical Commission, Geneva, 2013.
+74. "Airport Noise Compatibility Planning," Title 14, Code of Federal Regulations, Part 150, Appendix A, "Noise Exposure Maps." URL: https://www.ecfr.gov/current/title-14/part-150 [retrieved 8 October 2026].
+75. "Directive 2002/49/EC of the European Parliament and of the Council of 25 June 2002 Relating to the Assessment and Management of Environmental Noise," *Official Journal of the European Communities*, L 189, 18 July 2002, pp. 12–25.
+76. "Noise Standards: Definitions," California Code of Regulations, Title 21, Sec. 5001.
+77. "Environmental Protection, Volume I — Aircraft Noise," Annex 16 to the Convention on International Civil Aviation, 8th ed., International Civil Aviation Organization, Montréal, July 2017.
+78. "Noise Standards: Aircraft Type and Airworthiness Certification," Advisory Circular AC 36-4D, Federal Aviation Administration, Washington, DC, 12 October 2017.

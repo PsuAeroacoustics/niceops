@@ -8,7 +8,7 @@ grid (or a scattered observer set) from a flight trajectory and a rotor-noise "s
    flight path angle, thrust coefficient), and read the level toward each observer.
 2. Carry it to the ground: a broadband database uses its own excess-attenuation factor; a
    database with spectra is propagated band by band, with ISO 9613-1 absorption, ground
-   reflection and, optionally, refraction through a stratified, windy atmosphere.
+   reflection, and optionally a stratified, windy atmosphere's refraction, terrain and buildings.
 3. Integrate each observer's level history into a sound exposure level (SEL), and a set of
    operations into a day-night level (DNL). Lden, CNEL, LAmax, NAx, time above, C-weighted SEL
    and EPNL are available on request.

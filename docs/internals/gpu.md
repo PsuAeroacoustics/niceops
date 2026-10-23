@@ -2,8 +2,10 @@
 
 The GPU paths: the backend interface, the kernel dialect, how `niceops_point_field` and
 `niceops --buildings` form the rays' amplitudes and sum the bands there, and how
-`niceops_urban_table --wave_below` marches the canyon wave solver. Accuracy is in [FIDELITY](../FIDELITY.md#a-point-source-among-buildings) and
-[FIDELITY](../FIDELITY.md#canyon-wave-solver).
+`niceops_urban_table --wave_below` marches the canyon wave solver and `niceops_fdtd_field` its
+3-D reference. Accuracy is in FIDELITY's
+[A point source among buildings](../FIDELITY.md#a-point-source-among-buildings) and
+[Canyon wave solver](../FIDELITY.md#canyon-wave-solver).
 
 ## Layout
 
@@ -17,7 +19,7 @@ The GPU paths: the backend interface, the kernel dialect, how `niceops_point_fie
 | `src/gpu/band_stream` | `BandStream`: packed sets from worker threads to the GPU a batch at a time, two in flight, each set's energies handed back; `niceops_point_field` and `UrbanDistrict::levels` share it. |
 | `src/gpu/kernels/` | Kernel sources in the dialect: `prelude_metal.h`; `common.h` (complex floats, the group sum, `nk_phase`); `wedge.h` (Faddeeva, the UTD transition, the wedge coefficient, Filon's panel); the `*_types.h` records shared with the host; `band_energy.kern`, `point_rays.kern`, `canyon_wave.kern`, `fdtd.kern`; `wedge_check.kern`, for the tests. |
 | `src/canyon_wave.cpp` (`run_gpu`) | The canyon solver's march on the GPU, beside `run()`. |
-| `src/fdtd.cpp` (`march_gpu`) | The 3-D FDTD reference's march on the GPU, beside `march_cpu` ([ground.md](ground.md#the-full-wave-reference-srcfdtd-niceops_fdtd_field)). |
+| `src/fdtd.cpp` (`march_gpu`) | The 3-D FDTD reference's march on the GPU, beside `march_cpu` ([urban.md](urban.md#the-full-wave-reference-srcfdtd-niceops_fdtd_field)). |
 | `cmake/embed_kernels.cmake` | Embeds every file of `NICEOPS_KERNEL_SOURCES` as a string, for `gpu::kernel_source()`. |
 
 A batch dispatches, in order: `ray_amplitudes` (rays not over a shared face, and a sampled shared
@@ -69,13 +71,13 @@ band's middle), then `band_pair_sum` and `band_quadrature` over their problems.
   - Phases: a length and a wavenumber each travel as a pair of floats, their product is formed
     exactly (`fma`) and reduced modulo 2 pi before its sine and cosine (`nk_phase`): about
     3e-7 rad of error, where `k L` in float loses 0.03 rad at 10 kHz and 2 km. A Filon panel's
-    phase `k u0` goes the same way; in float it lost 6e-4 rad over tens of metres.
+    phase `k u0` goes the same way; in float it lost 6e-4 rad over tens of meters.
   - A wedge's angles: each term's cotangent and the cosine in its transition function's
     argument, from `wedge_angles` or `WedgeSweep`. Near a boundary the cotangent has a pole and
     the cosine a zero; as floats each keeps its relative precision, where the angles themselves
     could not place the term so finely.
   - A Filon panel's lengths: its start's, and its other nodes' distances from it, so that a panel
-    of micrometres beside a cut keeps them.
+    of micrometers beside a cut keeps them.
 - **The shared face's aperture is worked out once for the run's wavenumbers**
   (`shared_face_geometry`): nodes, path lengths, rates, amplitudes and the second wedge's angles,
   which do not depend on k, once per ray, where the CPU keeps each wavenumber's own nodes, sharing
@@ -119,6 +121,15 @@ band's middle), then `band_pair_sum` and `band_quadrature` over their problems.
   sum throughout. For a coherent set `g` is 1.0f, and the sum's arithmetic is what it was. The cone's
   taper is not a positive-definite kernel, so a sub-band's sum can come out below zero; the kernel
   takes 0 there, as the CPU does.
+- **Factors that vary across a band are formed on the host, per sub-band** (`pack_point_rays`).
+  A ray's reflected amplitude goes up complex, six floats a band (`PointRaySet::complex_reflections`,
+  read through `BandProblem::slot`), whenever the floor has an impedance, the district has facade
+  reliefs, or any ray carries a row's profile field (`PointRay::profile`, `PointRay::row_share`) or
+  a tilted step's jump split (`PointRay::jump_weight`). The floor's Q (`floor_factors`), a relief's
+  share (`relief_factors`), the profile's field (`profile_factors`) and the fade weights
+  (`ray_weight`) are each taken at the sub-band's middle wavenumber, as the CPU takes them, and
+  multiplied into that one factor; the kernels never see the models behind them. Otherwise the
+  amplitude is one real float a band.
 - **`niceops --buildings` on the GPU** (`UrbanDistrict::levels` with a device): the sphere's weight
   on each ray in each band is folded into the ray's reflected amplitude, so the kernels are
   `niceops_point_field`'s. The measured coherence (a decay in frequency times angle, and the rotor's
@@ -140,10 +151,10 @@ band's middle), then `band_pair_sum` and `band_quadrature` over their problems.
 
 - **One dispatch a step** (`canyon_step`). A group owns a 32 by 8 tile of cells, loads the old
   pressure over the tile and a cell around it, forms the new velocity on every face its
-  pressures need -- its own faces, and again its neighbours' on its right and top -- writes its
+  pressures need -- its own faces, and again its neighbors' on its right and top -- writes its
   own faces, then its cells' new pressure, with `run()`'s rules for the PML, the impedance
   walls, the recording and the source term. Every field is double-buffered, old in and new
-  out, so a group reads its neighbours' old faces while they write their new ones. Two
+  out, so a group reads its neighbors' old faces while they write their new ones. Two
   dispatches a step (velocity, then pressure) took 27.6 s on the 20 m canyon to 707 Hz; one
   takes 23.1 s.
 - **The stopping rule is `run()`'s, judged late.** Each step on a 32nd leaves one partial energy
@@ -151,7 +162,7 @@ band's middle), then `band_pair_sum` and `band_quadrature` over their problems.
   of each finished batch in order and stops where `run()` would. A batch past that step runs on
   harmlessly, since the field never depends on when the run stops, and the recording is cut
   there. The step the test canyon stopped at was the CPU's.
-- **What follows the march is the CPU's and is threaded** (ground.md): with it serial, the GPU
+- **What follows the march is the CPU's and is threaded** (urban.md): with it serial, the GPU
   was busy 10.8 s of a 23 s solve. The table builder marches two canyons at a time on the GPU,
   so that one's transforms overlap the next one's march, and the two share the run's `-j`
   between them (`CanyonWaveSetup::threads`): the solver never takes every core of its own accord.
@@ -187,7 +198,7 @@ every shared face's integral at every wavenumber.
   exactly, and `pack_point_rays` reserves the set's per-ray arrays and grows its panels
   geometrically: grown an element at a time they were a tenth of packing in copies. Same values,
   same order; the district's `--gpu -j 8` run went from 9.7 to 8.7 s of CPU on top of the held
-  microphone ends (ground.md), 10.3 to 8.7 s for both (best of 3, alternated), and at `-j 1`
+  microphone ends (urban.md), 10.3 to 8.7 s for both (best of 3, alternated), and at `-j 1`
   from 7.5 to 7.1 s of CPU.
 
 - **The canyon wave solver**: the 20 m canyon to 707 Hz at 15 points per wavelength (1.08
@@ -223,7 +234,7 @@ Measured and left alone:
   OptiX; Vulkan's ray queries) accelerates what a renderer spends its time on: walking a bounding
   volume hierarchy and testing rays against triangles. Here that is the visibility tests inside
   the path search, a small share of an evaluated pair in a `--buildings` run
-  ([ground.md](ground.md) has the profile) and 12% of a pair on the 49-block district; the rest
+  ([urban.md](urban.md) has the profile) and 12% of a pair on the 49-block district; the rest
   is each ray's wave arithmetic at each sub-band, which no ray-tracing unit does. With
   `niceops_point_field` on the GPU the search is most of the workers' time, but the GPU sets that
   run's pace. Two places it could pay later: scenes of many triangles (pitched LoD2
@@ -232,7 +243,7 @@ Measured and left alone:
   the first facade. Either needs the path tests' contact rules (a segment ending on a wall,
   grazing one, leaving an edge) in float: a conservative filter, with the double test deciding
   what lies near a surface.
-- **The edge-source integral** (`--edge_source`, [ground.md](ground.md#the-edge-source-integral-srcedge_source---edge_source)),
+- **The edge-source integral** (`--edge_source`, [urban.md](urban.md#the-edge-source-integral-srcedge_source---edge_source)),
   refused with `--gpu`. Its factors are the same at every sub-band from one set of nodes, so the
   natural split is the host forming each ray's amplitudes and the GPU summing them as a `RaySet`
   (amplitudes from the host); that is not done.

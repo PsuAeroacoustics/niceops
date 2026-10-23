@@ -73,6 +73,7 @@ condition-bin bounds, frame alignment and common prediction coverage. It is not 
 | `urban_buildings.csv` | C++ build | `urban_buildings_golden` (1e-6 dB abs.) | `urban_buildings` | copy the run's output |
 | `urban_buildings_plate.csv` | C++ build | `urban_buildings_plate_golden` (1e-6 dB abs.) | `urban_buildings_plate` | copy the run's output |
 | `urban_buildings_diffuse.csv` | C++ build | `urban_buildings_diffuse_golden` (1e-6 dB abs.) | `urban_buildings_diffuse` | copy the run's output |
+| `buildings_scattering.csv` | C++ build | `buildings_scattering_golden` (1e-6 dB abs.) | `buildings_scattering_run` (`--buildings --facade_scattering 0.3 --no-gpu`) | copy `integrated/buildings_scattering.csv` |
 
 All files are in `golden/`; each producing run writes `integrated/<name>.csv` unless the table
 says otherwise. To regenerate a C++ golden, run its comparison with the build that carries the
@@ -167,6 +168,20 @@ Notes on each:
 - **`urban_buildings_diffuse.csv`** was made by the build that added `--facade_scattering`: the
   same district with every wall scattering 0.2. It pins the run's reflections at rho (1 - s): written
   at rho, they count the scattered share twice and fail it, with the windowed/marched pair green.
+- **`urban_buildings{,_plate,_diffuse}.csv`** moved again when UTD's edges took their ends (up to
+  0.06 dB), and when the plane-wave tables took the roofs, which keeps a corner's end wave the
+  foot prefilter had dropped (0.001 dB; 0.005 for the diffuse one, with the roofs scattering).
+  The moves are in [HISTORY](../HISTORY.md#changes-that-affect-results).
+- **`buildings_scattering.csv`** was made by the build that added `--facade_scattering` under
+  `--buildings`: the test district's seven microphones in a trajectory run, every wall scattering
+  0.3, on the CPU (`--no-gpu`). It pins the run's own diffuse field, which no table carries, and
+  the point model's rays under it: it was regenerated with each deliberate change to those rays
+  (reflections at a twice-diffracted ray's ends and between its edges, three roof edges, a floor
+  bounce between two edges, UTD's edge ends, a shared face's aperture at its limit, a flat face's
+  twice-diffracted ray through its plane). Beside it, `buildings_scattering_states_sampled` holds
+  the sampled states within 0.01 dB of every state, and
+  `buildings_scattering_out_of_reach_is_specular` holds a district out of every microphone's
+  `--diffuse_radius` to the specular run.
 
 ## `self_test`
 
@@ -243,13 +258,13 @@ CTests are defined in `CMakeLists.txt`.
 | `rays that leave together deviate together` | `test_source_coherence.cpp` | the interval's groups never linked (every pair alone); the rotor's delay with its sense reversed on the rays; the one-turn shift of a pair whose azimuth difference wraps left out |
 | `rays leaving apart lose their coherence as frequency times angle grows` | `test_source_coherence.cpp` | every pair's mean coherency 1 (the coherent sum) under `--ray_coherence measured` |
 | `within the cone rays add with their phases and beyond it in energy` | `test_source_coherence.cpp` | the pair sum not told it is the cone (every pair coherent) |
-| `a roof under a reflected leg is found whatever stands far off` | `test_point_paths.cpp` | a reflected leg's roofs looked for in the plan box of its unfolded line rather than of its points and facades, which found or missed a real bounce by the plan grid's cell size, so by buildings a kilometre off |
+| `a roof under a reflected leg is found whatever stands far off` | `test_point_paths.cpp` | a reflected leg's roofs looked for in the plan box of its unfolded line rather than of its points and facades, which found or missed a real bounce by the plan grid's cell size, so by buildings a kilometer off |
 | `a bounce on two level roofs' join is one ray` | `test_point_paths.cpp` | the later building not ceding a level shared side (`ceded_`): both roofs took the bounce, 1.4 dB loud |
 | `the ray set is reciprocal at every edge order` | `test_point_paths.cpp` | the source's image tree at the specular order rather than the edges' (`tree_order`), which only `--max_edge_reflections 0` shows |
 | `the fade adds partners and nothing else` | `test_point_paths.cpp` | `leg_edges` skipping its own buildings without testing them for blocking (a leg back through an L's other wing); `push_faded` truncating to the three nearest screens before keeping the ones across |
 | `the edge source is the same with the district turned` | `test_edge_source.cpp` | `onto_air` left out of `angle_about` or `edge_frame_ends`, so a corner's sample lands at 0 or 2π by rounding (up to 1 dB, rotation by rotation) |
 | `a partner's part reaches a shared vertex` | `test_edge_source.cpp` | the part's end not snapped to the edge's end, 1e-20 short of the vertex: the partner's whole field added, 10-16 dB |
-| `a wall against part of another's stands against it there`; `a courtyard closed at T-junctions is reached over its roofs alone` | `test_buildings.cpp`; `test_point_paths.cpp` | `split_at_junctions` removed (rays along the seam into the courtyard); a side split where a neighbour only touches it at a vertex |
+| `a wall against part of another's stands against it there`; `a courtyard closed at T-junctions is reached over its roofs alone` | `test_buildings.cpp`; `test_point_paths.cpp` | `split_at_junctions` removed (rays along the seam into the courtyard); a side split where a neighbor only touches it at a vertex |
 | `the tabulated transition function is the Faddeeva form` | `test_wedge.cpp` | `utd_transition(NaN)` indexing the table, which reads out of bounds on x86 |
 | `over a rigid floor the FDTD's field is the two rays'` | `test_fdtd.cpp` | the transfer divided by -i omega (fourth order 0.0023 dB low at 1250 Hz, the tolerance 0.0015) or by the continuous -i omega + a c; Q left unweighted by the air (0.013 dB, the tolerance 0.003) |
 | `the GPU's cone and energy sums are the CPU's`; `the GPU's cone sum is not below zero` | `test_gpu.cpp` | a cone set packed as coherent; `band_pair_sum` without its clamp at zero (three rays whose cone sum is 3 - 2 - 2) |

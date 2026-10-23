@@ -16,8 +16,9 @@ it reaches, and no validated scene moved by more than 0.03 dB with it. It remove
 
 The jump split across a step's line stopped where the microphone's foot left the edges or went
 under the floor, and the level stepped there instead: by 1.0-2.1 dB across the line just past the
-blocks' ends, and 1.8 dB where the line meets the floor. It now goes on as far as the pair's rays
-reach, and its foot slides back along the line to the floor; against boundary elements by the
+blocks' ends, and 1.8 dB where the line meets the floor. It now goes on (under `--tilted_step_split`,
+since the split was made opt-in) as far as the pair's rays reach, and its foot slides back along
+the line to the floor; against boundary elements by the
 floor the error went from 2.0-2.4 dB to 0.3 at 125 Hz and from 1.1-1.4 to 0.65-0.78 at 250. Runs
 summed in energy took the split's twin rays as added energy, up to 3.8 dB too loud near the line;
 they take no split now. A dip whose low roof is two touching footprints of one height (10/8/8/10)
@@ -27,7 +28,7 @@ verify cases do not move.
 
 ## A dip takes its row's profile (October 2026)
 
-A row of touching blocks with a roof lower than both its neighbours (a dip) was left to the
+A row of touching blocks with a roof lower than both its neighbors (a dip) was left to the
 cascades of its roof edges, which stepped by up to 22 dB where a microphone crossed the roofs'
 plane and spiked at roof height. Such a row now takes its profile field, as a row with a street
 did already (THEORY §6.5, "Over a row of roofs"). Against boundary elements over a 10/8/10 m dip
@@ -36,14 +37,14 @@ plane to the exact field's own, 0.4 dB at most. Touching steps up or down keep t
 Streets, the stored tests and DigiCity do not move; of the EDGE scenes only UE05's LoD1 stand-in
 does (FIDELITY). `--no_profile_pe` gives the old field.
 
-## A step's line no longer steps the level (October 2026)
+## The level split across a step's line (October 2026)
 
 Where a microphone crossed the line through a step's two edges (a ridge or a taller roof's edge
 and the edge of the lower roof it steps down to) the point-source model's level stepped by up to
 6.4 dB: below the line the pair was the receiver's aperture, above it the first edge's ray and the
 cascade. The field's jump at the line is now split between its sides (THEORY §6.5, "The jump across
-a step's line"), so the level is continuous there. Against boundary elements near such a line the
-error went from 0.67 to 0.26 dB rms (352 cases) and from 1.21 to 0.47 (129 cases within a metre of
+a step's line"), so the level was continuous there. Against boundary elements near such a line the
+error went from 0.67 to 0.26 dB rms (352 cases) and from 1.21 to 0.47 (129 cases within a meter of
 it); the stored step cases from 0.53 to 0.48, EDGE's terrace from 0.32 to 0.27. Far above the line
 levels move by 0.04-0.08 dB rms. EDGE's LoD1 scenes and DigiCity do not move; EDGE's pitched
 scenes move by 0.21 dB at most. It was made opt-in the same day (above).
@@ -414,7 +415,7 @@ old and new results only with them in mind.
 - **Twice-diffracted rays whose stationary point does not converge are rejected.** The point
   was found by plain alternation, which stopped at 200 steps whether or not it had converged.
   Near a corner where a roof edge meets a vertical one it was still creeping toward the corner,
-  and those iterates were kept as rays a few centimetres long between the edges, strong for
+  and those iterates were kept as rays a few centimeters long between the edges, strong for
   their spreading: 0.1-0.2% of the point-source model's rays. Rejecting them moved DigiCity's
   four microphones by at most 0.063 dB, the 49-block district's levels by 0.07 dB at the 99th
   percentile and 0.37 dB at most, and 10 of DigiCity's 1427 grid points, in deep shadow west of
@@ -428,7 +429,7 @@ old and new results only with them in mind.
   reflection; the path tests keep a grazing ray there, so the two added, 1 + 1/2 where the field
   is 1/2, about 9 dB high. Only receivers exactly on a boundary moved, which round-numbered
   geometry puts many on: the 49-block district's 20 test microphones by 0.015 dB at the median and
-  4.0 dB at most (each now nearer the mean of its neighbours 1 cm away: 0.034 dB at the median,
+  4.0 dB at most (each now nearer the mean of its neighbors 1 cm away: 0.034 dB at the median,
   from 0.13), DigiCity's grid by 1e-8 dB, the urban tables (which step off exact boundaries) not
   at all.
 - **The point-source model absorbs the air**, ISO 9613-1 along each ray in each sub-band, and
@@ -535,6 +536,28 @@ old and new results only with them in mind.
 - **The cone's phase interval takes a database's recorded spread and tonal fractions**, as the
   measured model's did; it took the defaults whatever the record said. No shipped database has a
   record, so nothing moved.
+- **Twice-diffracted rays reflect twice at each end and once between their edges, and rays cross
+  three roof edges** (`--max_twice_reflections`, `--max_between_reflections`,
+  `--triple_diffraction`). A twice-diffracted ray took one reflection at each end and none between
+  its edges, and no ray crossed three edges. Against EDGE's FDTD runs UE13's receivers between the
+  rows went from −3.6 dB mean, 4.5 rms to −2.0, 3.2, its receiver behind the second row from 8.2 to
+  2.2 dB rms, UE06's floor source from 5.30 to 2.77, and all 13 runs from 2.80 to 1.95; against the
+  measurements (read swapped) from 4.01 to 3.82 dB rms by UTD. DigiCity's microphone 7 went from
+  −4.4 / 5.5 to −3.9 / 5.0 dB. The demo `--buildings` SELs moved by under 0.001 dB;
+  `golden/buildings_scattering.csv` was regenerated (0.0005 dB at most).
+- **A twice-diffracted ray may bounce on the floor between its edges.** DigiCity's continuity
+  sweep (20 lines) went from 25 steps over 1 dB to 23, both steps at a wall's foot gone, and its
+  microphone 7 from −3.9 / 5.0 to −4.1 / 5.2 dB; the demo SELs moved by under 0.001 dB and EDGE's
+  rays against the FDTD not at all. `golden/buildings_scattering.csv` was regenerated.
+- **Under `--edge_source` a ray reflecting between two edges takes the integral**, unfolded about
+  the facade, where it took UTD. Against the FDTD, UE06's floor source went from 2.63 to 1.01 dB rms
+  (its R1 from +4.7 to −0.1 dB), UE07's from 3.26 to 2.52, and all 13 runs from 1.63 to 1.35.
+  Defaults and goldens did not move.
+- **Sources and microphones may lie on a wall or a level roof**, taking the surface's reflection as
+  an end on the floor takes the floor's. A microphone on a roof or a wall had lost the surface's
+  6 dB, and one on a roof behind its edge heard nothing (FIDELITY, "Microphones on roofs and
+  walls"). In a run each microphone's floor is at its observer's z unless the observer stands on
+  z = 0 or on a surface of the district.
 - **Buildings sharing a side are judged along it**, where one or both roofs are pitched: the
   shared wall stands, and the edge diffracts, only where one roof is above the other, cut wherever
   either roof breaks or the two cross. They had been compared by their highest points, so a gable
@@ -542,7 +565,7 @@ old and new results only with them in mind.
   its edge on that side. A mansard's level deck now reflects and scatters, and a ridge is an edge
   only where its two planes are the roof on either side. The facade prefilter samples a wall
   between its bottom and its top; it had sampled up to half its top, so a wall raised more than
-  half way by a neighbour never reflected, flat roofs too. UE06's drone against the FDTD went
+  half way by a neighbor never reflected, flat roofs too. UE06's drone against the FDTD went
   from 2.12 to 2.03 dB rms by UTD and from 1.47 to 1.20 by the edge source, and UE05's floor
   source against the measurements from −0.71 to −0.47 dB mean (3.09 to 3.14 rms).
 - **The hybrid relief's grating rays reach the microphone straight from the relief**, or off the
@@ -569,14 +592,14 @@ old and new results only with them in mind.
   the run; the ratios held the other edge's stationary point fixed, 1-3 dB off on coupled edges
   with one end near; and a ray with both edges' ends near, or near a partner's boundary, now takes
   the integral. DigiCity moved by up to 0.09 dB in a band (now within 0.001 of the slow integral)
-  and the demo district by up to 0.7 (now 0.06); DigiCity's run takes 17 s where it took 10.5.
+  and the demo district by up to 0.75 (now 0.06); DigiCity's run takes 17 s where it took 10.5.
 - **`niceops_urban_table` takes a microphone flush on a wall**: the wall's reflection at the
   microphone, `1 + sqrt(rho)`, on every ray and the first-order reflections the run would have
   evaluated, which the table now holds for it. One on or over a roof is refused by name. Before,
   such a microphone was refused as inside the building or took no doubling, by which side of the
   wall's line it rounded to.
 - **`niceops_point_field --flow_resistance`'s diffuse floor** takes each band's absorption at its
-  middle sub-band, as the run does; it took it at the band's centre (a few thousandths of a dB).
+  middle sub-band, as the run does; it took it at the band's center (a few thousandths of a dB).
 - **`--export_sphere` carries `rotor_rpm`**, as it carried the coherence record: a run on an
   exported sphere took the rotor's rate from the vehicle file instead, which also moved the band
   up to which the measured model's rotor delay holds.
@@ -597,7 +620,7 @@ old and new results only with them in mind.
   Each wedge term now loses each end's Fresnel tail, and a ray past an end is kept within 30
   radians of the run's lowest band. With it, an end that is not one stopped being one: an edge cut
   in two at a T-junction's seam goes on as the next piece, and an eave running square into a
-  taller neighbour's wall that covers it goes on as its image (`Edge::beyond`); a low roof against
+  taller neighbor's wall that covers it goes on as its image (`Edge::beyond`); a low roof against
   such a wall had missed image theory by 1.3 dB as an end, and by 1.4 under `--edge_source`, whose
   floor-only continuation had the same false end. The goldens moved: `urban_buildings` and
   `urban_buildings_plate` by up to 0.041 dB, `urban_buildings_diffuse` 0.061,
