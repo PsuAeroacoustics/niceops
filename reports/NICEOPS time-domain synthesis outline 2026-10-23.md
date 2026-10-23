@@ -32,11 +32,13 @@
 - Metrics that need a waveform: loudness, sharpness, tonality, roughness, fluctuation strength, and impulsiveness (crest factor, kurtosis, pulse peak-to-RMS, `bvi_harmonic_ratio` in `panam/acoustics/impulsiveness.py`).
 - Spectrogram and modulation comparisons against the 2017 records.
 - Listening tests.
-- A path-list export for external auralizers.
+- Binaural signals for listening tests, later: each path already carries its arrival direction, so convolving it with a published HRTF set is a small addition to the renderer.
 
 **Offline first.** Real-time limits such as low filter orders and wavefront clustering do not apply. The artefact lessons from real-time work still do.
 
-**Out of scope:** binaural or loudspeaker reproduction (a later consumer of the path list) and nonlinear propagation.
+**All in NICE-OPS.** The renderer is ours, not an external auralizer's. The milestones' main check is that the synthesized signal, analysed back to bands, reproduces NICE-OPS's own levels model by model, and a third-party renderer would put a second implementation of delays, filters and interpolation in the way of it. Real-time engines also take shortcuts this work does not need, such as low-order filters, which fail at the rotor harmonics (§4.2(d)). The code added is modest: delay lines, short per-path filters, an oscillator bank and filtered noise.
+
+**Out of scope:** interactive, head-tracked or loudspeaker-array playback, which would need a real-time engine (revisit only if that becomes a goal), and nonlinear propagation.
 
 ---
 
@@ -59,9 +61,8 @@ This is the NASA Auralization Framework GTF pattern (Rizzi & Sahai review §5.3)
 | Paths: delay, launch and arrival direction, spreading, interaction transfers | NICE-OPS | Path tracks (§2.3) |
 | Rendering: variable delay lines, time-varying filters, correlated noise fields | NICE-OPS (new) | p(t) netCDF and WAV |
 | Comparison with measurement | niceops-validation harness | Derived tables only (§7.4) |
-| External auralization | VA, NAF or similar | Reads the exported path tracks |
 
-### 2.3 Path tracks as the intermediate product
+### 2.3 Path tracks as the renderer's internal product
 A record per (state, receiver, path) does not scale. Urban would be 6551 states × 96 microphones × about 10³ rays, roughly 6×10⁸ records (estimate). So the unit is a **path track**, one per path key per receiver:
 
 - **Key:** the interaction sequence (facades, edges, floor bounces, profile, kind), or the stratified family and bounce count.
@@ -74,10 +75,10 @@ A record per (state, receiver, path) does not scale. Urban would be 6551 states 
   - arrival direction.
 - **Transfer:** the complex interaction transfer on a sparse log-k grid, with the bulk delay removed (§4.2).
 - **Coherence:** the model's own coherence assumption for this path (§3.5).
-- **Format:** netCDF-4, versioned in the style of `band_frames_version`.
+- **Format:** netCDF-4 when written.
 - **Specular and edge paths:** once a key is known, the path length can be recomputed analytically at every state without re-tracing. That fixes the delay-sampling problem caused by the urban model's 32-state stride (§5).
 
-The external target is VA's `VAOutdoorNoiseAudioRenderer` path format.
+Path tracks are internal to the renderer. They are written to a file only for debugging and the closure tests, so their format can change freely.
 
 ---
 
@@ -461,8 +462,7 @@ The external target is VA's `VAOutdoorNoiseAudioRenderer` path format.
 11. **Turbulence.** Recommendation: per-path sequences with cross-path structure (M8). Until then, close with turbulence off. Leaving turbulence out is not neutral for annoyance (Lincke et al. 2025).
 12. **Urban time variation.** Recommendation: measure birth and death rates first (§5), then choose.
 13. **IRB** for listening tests.
-14. **The external consumer.** "PELICAN" was not found as an RWTH ITA tool. Recommendation: target VA's outdoor renderer format until the intended tool is named.
-15. **Phase modulation (BVI jitter).** No time-extensible model exists in the literature. Recommendation: flag it as a known gap and measure the statistics in M3 as research.
+14. **Phase modulation (BVI jitter).** No time-extensible model exists in the literature. Recommendation: flag it as a known gap and measure the statistics in M3 as research.
 
 ---
 
