@@ -796,6 +796,13 @@ std::complex<double> point_ray_amplitude(const PointRay& ray, const std::vector<
         double floor_reflection, double k);
 double reflected_amplitude(const PointRay& ray, const std::vector<double>& reflection, double floor_reflection);
 std::complex<double> point_ray_amplitude(const PointRay& ray, double reflected, double k);
+// The same at `count` wavenumbers k at once, for a ray neither shared nor a
+// profile's: out[j] holds the ray's reflected amplitude at k[j] on the way in
+// and its amplitude on the way out, bit for bit point_ray_amplitude's.  Each
+// wedge's coefficients are taken across every wavenumber in one go
+// (ended_wedge_coefficients); `scratch` holds them.
+void point_ray_amplitudes(const PointRay& ray, const double* k, std::size_t count, std::complex<double>* out,
+        std::vector<std::complex<double>>& scratch);
 // Where a shared face's integral is taken when it is sampled
 // (PointPathOptions::sample_shared_faces) over the wavenumbers k: `probes`,
 // the indices of those it is taken at, in ascending k, and `free`, the index

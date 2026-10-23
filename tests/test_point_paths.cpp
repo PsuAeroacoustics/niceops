@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <cstring>
+#include <limits>
 #include <map>
 #include <stdexcept>
 #include <vector>
@@ -690,6 +692,62 @@ TEST_CASE("the fade adds partners and nothing else", "[point_paths]")
     }
     // The second scene's partners exist: the fade did something.
     REQUIRE(made > 0);
+}
+
+// A ray's amplitudes across the wavenumbers at once are point_ray_amplitude's
+// bits at each: a made edge's partner, an end on either side or both, past
+// an end, a grazing wedge, and a reflected amplitude other than 1.
+TEST_CASE("a ray's amplitudes across the wavenumbers are its amplitude at each", "[point_paths]")
+{
+    std::vector<Footprint> screened {box(100.0, -50.0, 102.0, 50.0, 50.0), box(50.0, 20.0, 52.0, 29.7, 10.0)};
+    for (double x : {20.0, 40.0, 60.0})
+        screened.push_back(box(x - 2.0, 0.2 * x + 0.001, x, 0.2 * x + 2.001, 10.0));
+    const Buildings city(screened);
+    PointPathOptions options;
+    options.fade_reach = 0.5;
+    const PointSourceField field(city, Vec3(0.0, 0.0, 2.0), Vec3(0.0, 40.0, 2.0), options);
+    std::vector<double> k;
+    for (int j = 0; j < 51; j++)
+        k.push_back(2.0 * pi * 100.0 * std::pow(2.0, j / 9.0) / 343.2);
+    std::vector<PointRay> rays;
+    for (const PointRay& ray : field.rays())
+    {
+        if (ray.shared || ray.profile)
+            continue;
+        rays.push_back(ray);
+        if (ray.wedges == 0)
+            continue;
+        // Its first wedge's ends made each other way.
+        const EdgeEnds as_traced = ray.wedge[0].ends;
+        for (int variant = 0; variant < 5; variant++)
+        {
+            PointRay v = ray;
+            EdgeEnds& e = v.wedge[0].ends;
+            e = as_traced;
+            e.lo = variant == 1 ? std::numeric_limits<double>::infinity() : 0.3 + 0.1 * variant;
+            e.hi = variant == 2 ? std::numeric_limits<double>::infinity() : 0.8;
+            e.past = variant == 3 ? -1 : variant == 4 ? 1 : 0;
+            e.scale = variant >= 3 ? 0.7 : 1.0;
+            v.wedge[0].grazing = variant % 2 == 0;
+            rays.push_back(v);
+        }
+    }
+    std::size_t made = 0, compared = 0;
+    std::vector<std::complex<double>> out(k.size()), scratch;
+    for (const PointRay& ray : rays)
+    {
+        made += !ray.made_edges.empty();
+        std::fill(out.begin(), out.end(), std::complex<double>(0.7));
+        point_ray_amplitudes(ray, k.data(), k.size(), out.data(), scratch);
+        for (std::size_t j = 0; j < k.size(); j++)
+        {
+            const std::complex<double> one = point_ray_amplitude(ray, 0.7, k[j]);
+            REQUIRE(std::memcmp(&one, &out[j], sizeof one) == 0);
+            compared++;
+        }
+    }
+    REQUIRE(made > 0);
+    REQUIRE(compared > 51 * 20);
 }
 
 TEST_CASE("a roof reflects as the floor does", "[point_paths]")

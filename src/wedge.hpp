@@ -34,6 +34,7 @@
 // 40 (tests/test_wedge.cpp).
 
 #include <complex>
+#include <cstddef>
 #include <limits>
 
 namespace niceops {
@@ -121,6 +122,10 @@ struct EdgeEnds
 // faded out between end_fade_lo and end_fade_hi radians.
 std::complex<double> ended_wedge_coefficient(const WedgeAngles& angles, double k_plane, double r, const EdgeEnds& ends,
         double k);
+// The same at each of `count` wavenumbers k, the plane's being k sin(beta),
+// into out: bit for bit what the scalar form gives at each.
+void ended_wedge_coefficients(const WedgeAngles& angles, double sin_beta, double r, const EdgeEnds& ends,
+        const double* k, std::size_t count, std::complex<double>* out);
 constexpr double end_fade_lo = 15.0, end_fade_hi = 30.0;
 
 // The total field, geometrical optics and diffraction, of a unit plane wave

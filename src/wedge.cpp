@@ -180,13 +180,15 @@ double end_fade(double x)
 
 } // namespace
 
-std::complex<double> ended_wedge_coefficient(const WedgeAngles& a, double k_plane, double r, const EdgeEnds& e,
-        double k)
+namespace {
+
+// ended_wedge_coefficient with at least one end finite (`lo`, `hi`).  Both
+// forms take it, the scalar and the one across wavenumbers, so their bits
+// are the same.
+inline std::complex<double> ended_coefficient(const WedgeAngles& a, double k_plane, double r, const EdgeEnds& e,
+        double k, bool lo, bool hi)
 {
     using complex = std::complex<double>;
-    const bool lo = std::isfinite(e.lo), hi = std::isfinite(e.hi);
-    if (!lo && !hi)
-        return hard_wedge_coefficient(a, k_plane, r);
     const double klo = lo ? k * std::max(e.lo, 0.0) : 0.0, khi = hi ? k * std::max(e.hi, 0.0) : 0.0;
     const complex tail_lo = lo ? fresnel_tail(klo) : complex(0.0, 0.0);
     const complex tail_hi = hi ? fresnel_tail(khi) : complex(0.0, 0.0);
@@ -208,6 +210,29 @@ std::complex<double> ended_wedge_coefficient(const WedgeAngles& a, double k_plan
         sum += a.cot[i] * utd_transition(x) * share;
     }
     return -std::polar(1.0, pi / 4.0) / (2.0 * a.n * std::sqrt(2.0 * pi * k_plane)) * sum;
+}
+
+} // namespace
+
+std::complex<double> ended_wedge_coefficient(const WedgeAngles& a, double k_plane, double r, const EdgeEnds& e,
+        double k)
+{
+    const bool lo = std::isfinite(e.lo), hi = std::isfinite(e.hi);
+    if (!lo && !hi)
+        return hard_wedge_coefficient(a, k_plane, r);
+    return ended_coefficient(a, k_plane, r, e, k, lo, hi);
+}
+
+void ended_wedge_coefficients(const WedgeAngles& a, double sin_beta, double r, const EdgeEnds& e, const double* k,
+        std::size_t count, std::complex<double>* out)
+{
+    const bool lo = std::isfinite(e.lo), hi = std::isfinite(e.hi);
+    if (!lo && !hi)
+        for (std::size_t j = 0; j < count; j++)
+            out[j] = hard_wedge_coefficient(a, k[j] * sin_beta, r);
+    else
+        for (std::size_t j = 0; j < count; j++)
+            out[j] = ended_coefficient(a, k[j] * sin_beta, r, e, k[j], lo, hi);
 }
 
 

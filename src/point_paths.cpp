@@ -3729,6 +3729,26 @@ std::complex<double> point_ray_amplitude(const PointRay& ray, double reflected, 
     return amplitude;
 }
 
+void point_ray_amplitudes(const PointRay& ray, const double* k, std::size_t count, std::complex<double>* out,
+        std::vector<std::complex<double>>& scratch)
+{
+    if (ray.profile || ray.shared)
+        throw std::invalid_argument("point_ray_amplitudes: a shared or profile ray takes its own spectrum");
+    // point_ray_amplitude's products in its order, the reflected amplitude
+    // first and then each wedge in turn, so each wavenumber's bits are its.
+    scratch.resize(count);
+    for (int w = 0; w < ray.wedges; w++)
+    {
+        const WedgeTerm& t = wedge_term(ray, w);
+        ended_wedge_coefficients(t.angles, t.sin_beta, t.distance, t.ends, k, count, scratch.data());
+        for (std::size_t j = 0; j < count; j++)
+            out[j] *= scratch[j] / std::sqrt(t.sin_beta) * (t.grazing ? 0.5 : 1.0);
+    }
+    for (const MadeEdge& s : ray.made_edges)
+        for (std::size_t j = 0; j < count; j++)
+            out[j] *= made_edge_factor(s, k[j]);
+}
+
 std::complex<double> shared_face_amplitude(const PointRay& ray, double reflected, double k, std::complex<double> field)
 {
     // The 2-D field at k sin(beta), its phase along the in-plane length taken
@@ -4220,7 +4240,7 @@ void PointSourceField::sub_band_problems(const std::vector<double>& reflection, 
     for (std::size_t i = 0; i < order.size(); i++)
         length[i] = rays_[order[i]].length;
     std::vector<std::complex<double>> amplitude(order.size());
-    std::vector<double> band_reflection(facade_count_), reflected(order.size());
+    std::vector<double> band_reflection(facade_count_);
     // The edge-source integral's factors, every sub-band at once.
     std::vector<std::vector<std::complex<double>>> factors(order.size());
     std::vector<double> wavenumbers;
@@ -4287,14 +4307,32 @@ void PointSourceField::sub_band_problems(const std::vector<double>& reflection, 
             in_plane[j] = wavenumbers[j] * t.sin_beta;
         shared[i] = shared_face_spectrum(t.face, t.sx, t.sz, t.rx, t.rz, in_plane);
     }
+    // What the reflections leave of each ray is the same at every
+    // wavenumber of a band, [band * rays + i].
+    const std::size_t problems = wavenumbers.size();
+    std::vector<double> reflected(bands.size() * order.size());
     for (std::size_t band = 0; band < bands.size(); band++)
     {
         for (std::size_t f = 0; f < facade_count_; f++)
             band_reflection[f] = reflection[f * bands.size() + band];
-        // What the reflections leave of each ray is the same at every
-        // wavenumber of the band.
         for (std::size_t i = 0; i < order.size(); i++)
-            reflected[i] = reflected_amplitude(rays_[order[i]], band_reflection, floor_reflection);
+            reflected[band * order.size() + i] = reflected_amplitude(rays_[order[i]], band_reflection, floor_reflection);
+    }
+    // Every other ray's amplitude at every sub-band, a ray at a time: its
+    // wedges' coefficients across the wavenumbers at once, [i * problems + j].
+    std::vector<std::complex<double>> plain(order.size() * problems), scratch;
+    for (std::size_t i = 0; i < order.size(); i++)
+    {
+        if (!factors[i].empty() || !shared[i].empty())
+            continue;
+        std::complex<double>* out = &plain[i * problems];
+        for (std::size_t j = 0; j < problems; j++)
+            out[j] = reflected[j / 3 * order.size() + i];
+        point_ray_amplitudes(rays_[order[i]], wavenumbers.data(), problems, out, scratch);
+    }
+    for (std::size_t band = 0; band < bands.size(); band++)
+    {
+        const double* band_reflected = &reflected[band * order.size()];
         const std::array<SubBand, 3> parts = sub_bands(bands[band], sound_speed);
         for (int part = 0; part < 3; part++)
         {
@@ -4303,11 +4341,11 @@ void PointSourceField::sub_band_problems(const std::vector<double>& reflection, 
             {
                 const PointRay& ray = rays_[order[i]];
                 if (!factors[i].empty())
-                    amplitude[i] = reflected[i] * factors[i][3 * band + part];
+                    amplitude[i] = band_reflected[i] * factors[i][3 * band + part];
                 else if (!shared[i].empty())
-                    amplitude[i] = shared_face_amplitude(ray, reflected[i], kc, shared[i][3 * band + part]);
+                    amplitude[i] = shared_face_amplitude(ray, band_reflected[i], kc, shared[i][3 * band + part]);
                 else
-                    amplitude[i] = point_ray_amplitude(ray, reflected[i], kc);
+                    amplitude[i] = plain[i * problems + 3 * band + part];
                 amplitude[i] *= row_profile_factor(ray, kc);
             }
             for (std::size_t i = 0; i < floor_factor.size(); i++)

@@ -1010,6 +1010,18 @@ it bought:
   roots of its facades' and the floor's reflection, which no sub-band changes; the coefficient
   is the only per-wavenumber part. `ray_amplitude` and `point_ray_amplitude` compose the two,
   so the table builder and the point-source model share one spelling of each.
+- **`sub_band_problems` forms a plain ray's amplitudes at every sub-band at once**
+  (`point_ray_amplitudes`, `ended_wedge_coefficients`): a ray at a time, each wedge's
+  coefficients across all the wavenumbers, before the band loop, where it took each problem's
+  rays one wavenumber at a time. It is exact by construction: the per-wavenumber body is one
+  inline function both forms call, and each wavenumber's product starts from its band's
+  reflected amplitude and takes the wedges, then the made edges, in `point_ray_amplitude`'s
+  order (multiplying the wedges together first and the reflection in last reassociates, and
+  moves bits). `a ray's amplitudes across the wavenumbers are its amplitude at each` memcmps
+  the two, ends and made edges included. Coherent band evaluation, thread CPU, best of 3
+  alternating with the previous build: DigiCity 4.07 -> 3.94 s (40 microphones), at 12 m
+  0.632 -> 0.602, the terraces near 2.06 -> 2.01 and far 7.69 -> 7.65 (the profile PE's). CPU
+  only; the GPU forms amplitudes in its kernels and its packing does not call this.
 - With the first two (and `folded_path_open`'s scratch kept per thread, and single
   diffraction's edges matched by one pass along both sorted lists) a pair's path search fell by
   about a third and the whole pair by 11%. The bands are now two thirds of a pair, the shared
