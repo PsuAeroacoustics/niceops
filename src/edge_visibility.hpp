@@ -30,6 +30,7 @@
 // leg's line, and each leg's buildings are the real ones cut to that slab, so
 // the intervals are found the same way.
 
+#include <array>
 #include <cstddef>
 #include <vector>
 
@@ -37,6 +38,13 @@
 #include "vec3.hpp"
 
 namespace niceops {
+
+// The planes n . x <= c, (nx, ny, nz, c), of a convex footprint's prism from
+// z_low to its top, each moved in by the proof's margin; false for a footprint
+// not convex or with holes.  `mirror`, when set, reflects it in that facade's
+// vertical plane first.  Buildings::prism keeps the unmirrored ones.
+bool prism_planes(const Footprint& f, double z_low, const Buildings::FacadeFrame* mirror,
+        std::vector<std::array<double, 4>>& planes);
 
 bool visible_stretch(const Buildings& buildings, const Edge& edge, const Vec3& end,
         const std::vector<std::size_t>& facades, bool below_floor, double& from, double& to);

@@ -774,80 +774,6 @@ private:
     unsigned shift_ = 54;
 };
 
-// Which facades each edge has an end in front of, more than `contact`, a bit
-// per facade: what a facade between a twice-diffracted pair's edges needs of
-// both (twice_pair).  Formed for an edge the first time it is asked for, with
-// facade_side's arithmetic on a normal formed once per facade, and kept for
-// the district; past a budget it starts again.
-class FrontFacades
-{
-public:
-    // The bits of e1 and e2, which last until the next call.
-    void pair(const Buildings& buildings, std::size_t e1, std::size_t e2, const std::uint64_t*& b1,
-            const std::uint64_t*& b2)
-    {
-        if (district_ != buildings.id())
-        {
-            district_ = buildings.id();
-            const std::vector<Facade>& facades = buildings.facades();
-            normals_.resize(facades.size());
-            for (std::size_t f = 0; f < facades.size(); f++)
-            {
-                const double dx = facades[f].x1 - facades[f].x0, dy = facades[f].y1 - facades[f].y0;
-                const double length = std::hypot(dx, dy);
-                normals_[f] = {-dy / length, dx / length};
-            }
-            words_ = (facades.size() + 63) / 64;
-            slot_.clear();
-        }
-        if (slot_.empty() || bits_.size() + 2 * words_ > budget)
-        {
-            slot_.assign(buildings.edges().size(), none);
-            bits_.clear();
-        }
-        const std::size_t s1 = slot(buildings, e1), s2 = slot(buildings, e2);
-        b1 = bits_.data() + s1 * words_;
-        b2 = bits_.data() + s2 * words_;
-    }
-
-    std::size_t words() const
-    {
-        return words_;
-    }
-
-private:
-    static constexpr std::uint32_t none = std::numeric_limits<std::uint32_t>::max();
-    // 64 MB.
-    static constexpr std::size_t budget = std::size_t(1) << 23;
-
-    std::size_t slot(const Buildings& buildings, std::size_t e)
-    {
-        if (slot_[e] != none)
-            return slot_[e];
-        const std::size_t s = bits_.size() / std::max<std::size_t>(words_, 1);
-        slot_[e] = static_cast<std::uint32_t>(s);
-        bits_.resize(bits_.size() + words_, 0);
-        const Edge& g = buildings.edges()[e];
-        const Vec3 a = g.start, b = g.start + g.length * g.direction;
-        const std::vector<Facade>& facades = buildings.facades();
-        for (std::size_t f = 0; f < facades.size(); f++)
-        {
-            const Facade& facade = facades[f];
-            const auto [nx, ny] = normals_[f];
-            if ((a.x - facade.x0) * nx + (a.y - facade.y0) * ny > Buildings::contact
-                    || (b.x - facade.x0) * nx + (b.y - facade.y0) * ny > Buildings::contact)
-                bits_[s * words_ + f / 64] |= std::uint64_t(1) << (f % 64);
-        }
-        return s;
-    }
-
-    std::uint64_t district_ = 0;
-    std::vector<std::pair<double, double>> normals_;
-    std::size_t words_ = 0;
-    std::vector<std::uint32_t> slot_;
-    std::vector<std::uint64_t> bits_;
-};
-
 // Whether keller's point between p and q can fall within the stretch of the
 // line's edge p sees, give or take `slack`, for some q on the segment whose
 // Side about the line is `side`: the stationary point lies along the line
@@ -2530,15 +2456,14 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
     };
     thread_local std::vector<Via> vias;
     thread_local std::vector<Between> betweens;
-    thread_local FrontFacades front;
     thread_local std::vector<std::uint32_t> nearby;
     vias.clear();
     betweens.clear();
     // The candidates are those facades_in_box finds, ascending.  Where its
     // box covers much of the district, they are walked instead as the
-    // facades both edges have an end in front of (FrontFacades), those in the
-    // box's cells: the same facades, met in the same order, without listing
-    // the cells' entries, deduplicating and sorting them.
+    // facades both edges have an end in front of (Buildings::front_facades),
+    // those in the box's cells: the same facades, met in the same order,
+    // without listing the cells' entries, deduplicating and sorting them.
     const auto between_of = [&](PairTable::Met& met, std::size_t e1, std::size_t e2) -> Via* {
         if (met.between != PairTable::Met::no_list)
             return vias.data() + met.between;
@@ -2609,9 +2534,8 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
         }
         else if (in_box != Buildings::FacadesInBox::none)
         {
-            const std::uint64_t *front1, *front2;
-            front.pair(buildings, e1, e2, front1, front2);
-            for (std::size_t w = 0; w < front.words(); w++)
+            const std::uint64_t *front1 = buildings.front_facades(e1), *front2 = buildings.front_facades(e2);
+            for (std::size_t w = 0; w < buildings.front_words(); w++)
                 for (std::uint64_t m = front1[w] & front2[w]; m != 0; m &= m - 1)
                 {
                     const std::uint32_t f = static_cast<std::uint32_t>(64 * w + __builtin_ctzll(m));

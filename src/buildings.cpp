@@ -8,11 +8,13 @@
 #include <cstdint>
 #include <map>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <tuple>
 #include <unordered_map>
 
+#include "edge_visibility.hpp"
 #include "util/constants.hpp"
 
 namespace niceops {
@@ -510,6 +512,19 @@ double roof_top(const Footprint& f)
     return top;
 }
 
+struct Buildings::FrontTable
+{
+    FrontTable(std::size_t edges, std::size_t words)
+        : formed(new std::once_flag[edges]), bits(new std::uint64_t[edges * words]), words(words)
+    {
+    }
+    // Per edge, whether its row is formed; the rows are left unwritten
+    // until they are, so that a district's untouched edges cost no memory.
+    std::unique_ptr<std::once_flag[]> formed;
+    std::unique_ptr<std::uint64_t[]> bits;
+    std::size_t words;
+};
+
 Buildings::Buildings(std::vector<Footprint> footprints, double orientation_tolerance)
     : footprints_(std::move(footprints))
     , orientation_tolerance_(orientation_tolerance)
@@ -995,6 +1010,38 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
     convex_pieces_.reserve(footprints_.size());
     for (const Footprint& f : footprints_)
         convex_pieces_.push_back(convex_pieces_of(f));
+    prism_begin_.reserve(footprints_.size());
+    for (std::size_t b = 0; b < footprints_.size(); b++)
+    {
+        prism_begin_.push_back(prisms_.size() / 2);
+        const std::vector<Footprint>& pieces = convex_pieces_[b];
+        const Footprint* first = pieces.empty() ? &footprints_[b] : pieces.data();
+        for (const Footprint* f = first; f != first + std::max<std::size_t>(pieces.size(), 1); f++)
+            for (const bool below_floor : {false, true})
+            {
+                prisms_.emplace_back();
+                if (!prism_planes(*f, below_floor ? -f->top : 0.0, nullptr, prisms_.back()))
+                    prisms_.back().clear();
+            }
+    }
+    front_ = std::make_shared<FrontTable>(edges_.size(), front_words());
+}
+
+const std::uint64_t* Buildings::front_facades(std::size_t edge) const
+{
+    FrontTable& table = *front_;
+    std::uint64_t* row = table.bits.get() + edge * table.words;
+    // call_once's completion happens before its later callers return, so
+    // every thread reads the row whole.
+    std::call_once(table.formed[edge], [&] {
+        std::fill(row, row + table.words, 0);
+        const Edge& g = edges_[edge];
+        const Vec3 a = g.start, b = g.start + g.length * g.direction;
+        for (std::size_t f = 0; f < frames_.size(); f++)
+            if (frames_[f].side(a) > contact || frames_[f].side(b) > contact)
+                row[f / 64] |= std::uint64_t(1) << (f % 64);
+    });
+    return row;
 }
 
 void Buildings::continue_edges()
@@ -1183,13 +1230,18 @@ std::size_t Buildings::inside(double x, double y) const
     return footprints_.size();
 }
 
+bool Buildings::buried_in(std::size_t building, const Vec3& p) const
+{
+    return p.z > contact && p.z < roof_height(footprints_[building], p.x, p.y) - contact
+            && strictly_inside(building, p.x, p.y);
+}
+
 bool Buildings::buried(const Vec3& p) const
 {
     bool found = false;
     building_grid_.walk(p.x, p.y, 0.0, 0.0, 0.0, [&](const std::uint32_t* first, const std::uint32_t* last, double) {
         for (const std::uint32_t* i = first; i != last && !found; i++)
-            found = p.z > contact && p.z < roof_height(footprints_[*i], p.x, p.y) - contact
-                    && strictly_inside(*i, p.x, p.y);
+            found = buried_in(*i, p);
         return false;
     });
     return found;
@@ -1198,7 +1250,7 @@ bool Buildings::buried(const Vec3& p) const
 bool Buildings::buried_on(std::size_t edge, const Vec3& p) const
 {
     for (const std::uint32_t b : edge_buriers_[edge])
-        if (p.z > contact && p.z < roof_height(footprints_[b], p.x, p.y) - contact && strictly_inside(b, p.x, p.y))
+        if (buried_in(b, p))
             return true;
     return false;
 }
@@ -1508,7 +1560,7 @@ std::size_t Buildings::first_hit(const Vec3& pos, const Vec3& dir, bool below_fl
                     if (!seen.first(i))
                         continue;
                     const FacadeFrame& fr = frames_[i];
-                    const double side = (pos.x - fr.x0) * fr.nx + (pos.y - fr.y0) * fr.ny;
+                    const double side = fr.side(pos);
                     const double approach = dir.x * fr.nx + dir.y * fr.ny;
                     if (side <= contact || approach >= 0.0)
                         continue;

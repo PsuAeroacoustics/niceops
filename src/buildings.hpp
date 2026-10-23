@@ -21,6 +21,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <tuple>
 #include <vector>
 
@@ -233,12 +234,50 @@ public:
         return convex_pieces_[building];
     }
 
+    // The planes n . x <= c, (nx, ny, nz, c), of a convex piece's prism
+    // (convex_pieces, or the footprint itself where it has none), above the
+    // floor or with its floor image below it, as prism_planes
+    // (edge_visibility.hpp) forms them unmirrored; empty for one not convex or
+    // with holes.
+    const std::vector<std::array<double, 4>>& prism(std::size_t building, std::size_t piece, bool below_floor) const
+    {
+        return prisms_[2 * (prism_begin_[building] + piece) + below_floor];
+    }
+
     // Every side of every footprint as a facade standing from the floor to the
     // roof, its base direction clockwise around the building so that the
     // outside is on its left (facade_side > 0).
     const std::vector<Facade>& facades() const
     {
         return facades_;
+    }
+
+    // A facade's base point, unit base direction and length, and the unit
+    // normal to its outside.
+    struct FacadeFrame
+    {
+        double x0, y0, ax, ay, length, nx, ny;
+
+        // facade_side, mirror_in and mirror_direction (urban.hpp) on the
+        // frame formed once.
+        double side(const Vec3& p) const
+        {
+            return (p.x - x0) * nx + (p.y - y0) * ny;
+        }
+        Vec3 mirror(const Vec3& p) const
+        {
+            const double s = side(p);
+            return Vec3(p.x - 2.0 * s * nx, p.y - 2.0 * s * ny, p.z);
+        }
+        Vec3 mirror_direction(const Vec3& v) const
+        {
+            const double d = v.x * nx + v.y * ny;
+            return Vec3(v.x - 2.0 * d * nx, v.y - 2.0 * d * ny, v.z);
+        }
+    };
+    const FacadeFrame& frame(std::size_t facade) const
+    {
+        return frames_[facade];
     }
 
     // The building each facade belongs to.
@@ -370,6 +409,17 @@ public:
     };
     Support support(const Vec3& p) const;
 
+    // Which facades an edge has an end in front of, more than `contact`, a
+    // bit per facade in front_words() words: what a facade between a
+    // twice-diffracted pair's edges needs of both (twice_pair).  Formed the
+    // first time the edge is asked for, once whatever the threads asking, and
+    // kept for the district (a copy shares its original's).
+    const std::uint64_t* front_facades(std::size_t edge) const;
+    std::size_t front_words() const
+    {
+        return (facades_.size() + 63) / 64;
+    }
+
     // The sides found shared exactly with another building.
     std::size_t shared_sides() const
     {
@@ -394,9 +444,7 @@ public:
     // it as it would up the canyon it nearly is.
     Vec3 reflect(std::size_t facade, const Vec3& v) const
     {
-        const FacadeFrame& fr = frames_[orientation_of_[facade]];
-        const double d = v.x * fr.nx + v.y * fr.ny;
-        return {v.x - 2.0 * d * fr.nx, v.y - 2.0 * d * fr.ny, v.z};
+        return frames_[orientation_of_[facade]].mirror_direction(v);
     }
 
     // One facade per orientation.
@@ -413,15 +461,12 @@ public:
 
 private:
     bool strictly_inside(std::size_t building, double x, double y) const;
+    // buried(p) for one building.
+    bool buried_in(std::size_t building, const Vec3& p) const;
     // Sets each edge's beyond.
     void continue_edges();
 
-    // A facade's base point, unit base direction and length, and the unit
-    // normal to its outside.
-    struct FacadeFrame
-    {
-        double x0, y0, ax, ay, length, nx, ny;
-    };
+    struct FrontTable;
 
     std::vector<Footprint> footprints_;
     std::vector<std::vector<Footprint>> convex_pieces_;
@@ -437,6 +482,10 @@ private:
     std::vector<std::size_t> roof_facade_;
     // Per edge, the other buildings whose boxes reach its box (buried_on).
     std::vector<std::vector<std::uint32_t>> edge_buriers_;
+    // prism()'s planes, two per piece, a building's from 2 prism_begin_[b].
+    std::vector<std::vector<std::array<double, 4>>> prisms_;
+    std::vector<std::size_t> prism_begin_;
+    std::shared_ptr<FrontTable> front_;
     std::vector<Edge> edges_;
     std::vector<std::size_t> edge_begin_;
     // Per building: x min, x max, y min, y max.
