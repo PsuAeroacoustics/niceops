@@ -827,6 +827,16 @@ it bought:
   off, and `pruning the diffracted paths loses no ray` holds the rays the same to the bit with
   and without (a slack of -0.5 m in the reach test fails it, as does the stretch pulled in by
   0.5 m); the ray dumps of DigiCity's grid and the district were byte-identical too.
+- **The once-diffracted slope search walks only the edges a plain image sees.** When every floor
+  of the plain end's image sees an edge as invisible, each slope and floor ends at
+  `!vb.visible`, and only pure tests run before it. So `trace` lists each image's other edges
+  once per side, with their plan boxes, and the slopes loop over that list in the same order.
+  The slope's view of the edge is formed once rather than per floor. On the pitched suburb, once
+  chains were proved, 86% of the 63M (slope, image, edge) iterations a microphone had were such
+  edges. Tracing went from 1.15/1.47/1.00 to 0.97/1.16/0.90 s (microphones 1, 300 and 5; thread
+  CPU, best of 4, alternated). Flat-roofed cases have no slopes and do not change. The rays are
+  the same to the bit. Memoizing the box test and the slope's view per (slope image, edge) on
+  top of this bought under 1%, within noise, and was left out.
 - **The fixed point is found by Steffensen's method**, in closed form for parallel edges
   (`parallel_stationary`; the map is affine there), and a pair that does not converge in 100
   steps is no ray. The plain alternation it replaced took 16 steps on average and stopped at

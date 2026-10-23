@@ -2106,6 +2106,16 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
         const std::vector<SlopeImage> microphone_slope_images = slope_images(mic);
         std::vector<Vec3> to_source, to_microphone;
         std::vector<std::size_t> reversed_chain;
+        // A plain image's edges some floor of it sees, with their plan boxes:
+        // an edge no floor sees ends every slope's search at its views, so
+        // the slopes walk only these (image j's are seen[seen_begin[j]...]).
+        struct SeenEdge
+        {
+            std::size_t k;
+            double x0, x1, y0, y1;
+        };
+        std::vector<SeenEdge> seen;
+        std::vector<std::size_t> seen_begin;
         for (int side = 0; side < 2; side++)
         {
             const bool slope_at_source = side == 0;
@@ -2118,6 +2128,25 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
             const Vec3& slope_point = slope_at_source ? source : microphone;
             const Vec3& plain_point = slope_at_source ? microphone : source;
             const int plain_floors = slope_at_source ? 2 : source_floors;
+            seen.clear();
+            seen_begin.assign(1, 0);
+            if (!slopes.empty())
+                for (std::size_t j = 0; j < plain.images.size(); j++)
+                {
+                    for (std::size_t k = 0; k < plain.edges[j].size(); k++)
+                    {
+                        bool any = false;
+                        for (int fo = 0; fo < plain_floors && !any; fo++)
+                            any = plain.view(j, k, fo).visible;
+                        if (!any)
+                            continue;
+                        const Edge& edge = edges[plain.edges[j][k]];
+                        const Vec3 end_point = edge.start + edge.length * edge.direction;
+                        seen.push_back({k, std::min(edge.start.x, end_point.x), std::max(edge.start.x, end_point.x),
+                                std::min(edge.start.y, end_point.y), std::max(edge.start.y, end_point.y)});
+                    }
+                    seen_begin.push_back(seen.size());
+                }
             for (const SlopeImage& sl : slopes)
             {
                 const std::vector<std::size_t>& chain_a = slope_end.images[sl.image].facades;
@@ -2128,24 +2157,24 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                     const std::vector<std::size_t>& chain_b = plain.images[j].facades;
                     if ((chain_a.empty() && chain_b.empty()) || chain_b.size() > options.max_edge_reflections)
                         continue;
-                    for (std::size_t k = 0; k < plain.edges[j].size(); k++)
+                    for (std::size_t s = seen_begin[j]; s < seen_begin[j + 1]; s++)
                     {
-                        const std::size_t e = plain.edges[j][k];
+                        const std::size_t k = seen[s].k, e = plain.edges[j][k];
                         const Edge& edge = edges[e];
-                        const Vec3 end_point = edge.start + edge.length * edge.direction;
                         // The slope's box against the edge's and its image's.
-                        if (std::max({edge.start.x, end_point.x, sl.mirrored.x}) < box[0]
-                                || std::min({edge.start.x, end_point.x, sl.mirrored.x}) > box[1]
-                                || std::max({edge.start.y, end_point.y, sl.mirrored.y}) < box[2]
-                                || std::min({edge.start.y, end_point.y, sl.mirrored.y}) > box[3]
-                                || !(std::max(plane.above(edge.start), plane.above(end_point)) > Buildings::contact))
+                        if (std::max(seen[s].x1, sl.mirrored.x) < box[0] || std::min(seen[s].x0, sl.mirrored.x) > box[1]
+                                || std::max(seen[s].y1, sl.mirrored.y) < box[2]
+                                || std::min(seen[s].y0, sl.mirrored.y) > box[3])
                             continue;
+                        const Vec3 end_point = edge.start + edge.length * edge.direction;
+                        if (!(std::max(plane.above(edge.start), plane.above(end_point)) > Buildings::contact))
+                            continue;
+                        const PathEnd::View vs = view_from(edge, sl.mirrored, true, 0.0, edge.length);
                         for (int fo = 0; fo < plain_floors; fo++)
                         {
                             const Vec3 plain_image = fo ? below(plain.images[j].point) : plain.images[j].point;
                             const Vec3 pa = slope_at_source ? sl.mirrored : plain_image;
                             const Vec3 pb = slope_at_source ? plain_image : sl.mirrored;
-                            const PathEnd::View vs = view_from(edge, sl.mirrored, true, 0.0, edge.length);
                             const PathEnd::View& vp = plain.view(j, k, fo);
                             const PathEnd::View& va = slope_at_source ? vs : vp;
                             const PathEnd::View& vb = slope_at_source ? vp : vs;
