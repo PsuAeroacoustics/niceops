@@ -703,10 +703,18 @@ exactly. What to keep:
     -0.20. A fixed 2-4 kHz cap was cheaper on this district (0.77 s) but wrong for scale models,
     whose rows sit at kilohertz (EDGE's), and the cost is the row's size in wavelengths, not its
     frequency; k D from 6000 kept the effect whole for 1.87 s. The rays the profile stands for
-    are now always kept (they were dropped at w = 1), for above the fade. Still open: the march's
-    column reaches the source's height (11.8 s one way for a source 122 m up, uncapped), though
-    the start needs only the incident wave's angles. `niceops --buildings --no_profile_pe`
-    switches it off. Measure such things by sampling pairs (`PointSourceField` and `band_levels` on
+    are now always kept (they were dropped at w = 1), for above the fade.
+  - **The march's column stops at what its end needs, not at the source** (`profile_parts`: the
+    roofs, the receiver and the source-receiver line's height at the Huygens line, then the
+    source's ray to the top of that, where it crosses the first front face). It reached the
+    source's height, 11.8 s one way for a source 122 m up over the terrace. Against the full
+    column, 384 cases (one and two streets and the terrace; sources 30-600 m out at 2-40 degrees;
+    receivers 3 and 15 m behind, low and over the roofs; 250 Hz-2 kHz): 0.024 dB rms, 0.28 at
+    worst, every case over 0.1 dB at 40 degrees, where the profile's weight is nil; 30-35 degrees
+    within 0.094. Dropping the source's height outright (the column to the roofs and the receiver
+    alone) bounded the saving at 1.01 -> 0.35 s a pair; this rule gets 0.48 s. Together with the
+    fade, 3.18 -> 0.48 s a pair (37x -> 5.6x the cascades), a terraced run about 9x -> 2x.
+    `niceops --buildings --no_profile_pe` switches it off. Measure such things by sampling pairs (`PointSourceField` and `band_levels` on
     a few dozen), not a full run.
   - **Sampling the parts in frequency was built and dropped.** Each part with its path's phase
     taken out looked smooth on a plain street (0.01 rad over a third of an octave at 8 kHz), so it

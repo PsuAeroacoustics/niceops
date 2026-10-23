@@ -1248,12 +1248,14 @@ one core, 25 Hz to 10 kHz:
 | --- | --- | --- |
 | Taken at every band | 3.18 s (37x) | −0.20, −2.13 dB |
 | To $kD$ = 6000-12000 | 1.87 s (22x) | −0.20, −2.05 |
-| To $kD$ = 3000-6000 (the model) | 0.98 s (12x) | −0.19, −1.79 |
+| To $kD$ = 3000-6000 | 0.98 s (12x) | −0.19, −1.79 |
+| The same, the column to what its end needs (the model) | 0.48 s (5.6x) | −0.19, −1.79 |
 
 The A-weighting is with a flat source spectrum (median −0.01 dB in every case). By band, the
 profile less the cascades is −0.1 to −0.5 dB on average, −5.7 at worst (200 Hz), up to 1.6 kHz,
-and nothing from 3.15 kHz in the model. With the profile a run there costs about 3.3 times one
-without (`--no_profile_pe`).
+and nothing from 3.15 kHz in the model. With the profile a run there costs about 2 times one
+without (`--no_profile_pe`). The column's cut (THEORY §6.5) moves the field by 0.024 dB rms against
+a column up to the source, 0.1 dB at most where the profile has weight.
 
 - **Convergence.** Against the same march in a domain 250 wavelengths high, a street's parts are
   within 0.09 dB at 1, 3.15 and 8 kHz, from a source 100 m off and from a microphone 4 m before the

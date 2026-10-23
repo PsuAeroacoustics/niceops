@@ -1789,9 +1789,15 @@ fits and each shorter at most once, and what is left, under an eighth, by one Cr
 $(1 + \tfrac{1 - ik\Delta u}{4}q)\,\psi(u + \Delta u) = (1 + \tfrac{1 + ik\Delta u}{4}q)\,\psi(u)$,
 so that every face is met exactly and the propagators are fitted once. The grid has twenty points a
 wavelength in height, shortened by up to a tenth so that the roofs fall on nodes, with rigid
-ground (a ghost node) at the roof or the street's floor beneath. Above the highest roof or end the
-physical domain reaches a margin $h$ further, and an absorbing layer as thick lies on it, $a$
-rising as the square of the depth into it, with
+ground (a ghost node) at the roof or the street's floor beneath. The column holds what the line at
+the march's end needs -- the roofs, the receiver, and where the straight line from the source to the
+receiver crosses it -- and, at the start, the source's wave that comes down to that within the march:
+up to where the source's ray to the top of it crosses the first front face. The source's own height
+is not needed, only its wave's angles; against a column up to the source the field moved by 0.024 dB
+rms over 384 rows, sources and receivers (one and two streets, a terrace of eight rows; 250 Hz to
+2 kHz), 0.1 dB at most wherever the profile has weight. Above that the physical domain reaches a
+margin $h$ further, and an absorbing layer as thick lies on it, $a$ rising as the square of the
+depth into it, with
 
 $$
 h = \max\bigl(15\lambda,\ \sqrt{8\lambda L}\bigr),

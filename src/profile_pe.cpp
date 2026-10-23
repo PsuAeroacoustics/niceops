@@ -483,13 +483,20 @@ ProfileParts profile_parts(const ProfileProblem& p, double k)
     const double lambda = 2.0 * pi / k;
     const double dz = aligned_spacing(p.blocks, lambda / points_per_wavelength);
     const double c = 1.0 / ((k * dz) * (k * dz));
-    double top = std::max(p.sz, p.rz);
-    for (const ProfileBlock& b : p.blocks)
-        top = std::max(top, b.h);
     const ProfileBlock& last = p.blocks.back();
     const double u_start = p.blocks.front().u0;
     const double huygens = std::min(huygens_wavelengths * lambda, 0.5 * (last.u1 - last.u0));
     const double u_stop = last.u1 - huygens;
+    // The column holds what the Huygens line needs -- the roofs, the receiver
+    // and where the line from the source to it crosses -- and, at the start,
+    // the source's wave that comes down to that within the march: below its
+    // ray to the top of it, where that crosses the first front face.  Not the
+    // source's own height, which the start does not need: a source 122 m up
+    // took a march over a terrace 160 m across to 11.8 s one way.
+    double end = std::max(p.rz, p.sz + (p.rz - p.sz) * (u_stop - p.su) / (p.ru - p.su));
+    for (const ProfileBlock& b : p.blocks)
+        end = std::max(end, b.h);
+    const double top = std::max(end, p.sz + (end - p.sz) * (u_start - p.su) / (u_stop - p.su));
     // The physical domain's top on a node and the layer a whole number of
     // nodes over it (factor_from_top's rows).
     const double margin

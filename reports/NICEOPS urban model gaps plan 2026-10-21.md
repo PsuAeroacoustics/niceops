@@ -146,7 +146,10 @@ flag to switch it off (`--no_profile_pe` is point_field's only).
   cheaper here (0.77 s a pair) but would strip EDGE's scale-model rows, which sit at kilohertz. On
   the same 30 pairs: 3.18 -> 0.98 s a pair (37x -> 12x the cascades, the run about 9x -> 3.3x), the
   A-weighted effect -0.20 -> -0.19 dB mean, worst -2.13 -> -1.79. The rays it stands for are kept
-  for above the fade. Lever 2 (the column's height) is still open if a run needs more.
+  for above the fade. Lever 2 (the column's height) built too: the column stops at what the march's
+  end needs (0.024 dB rms against the full column over 384 cases, 0.1 dB at most where the profile has
+  weight): 0.98 -> 0.48 s a pair, together 37x -> 5.6x the cascades, a terraced run about 9x -> 2x.
+  Item 4 is closed.
 
 **5. Deferred, with the evidence for deferring.**
 - *Step 1, part 2 (the double transition).* A strip under 0.5 m wide where a face's plane passes
