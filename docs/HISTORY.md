@@ -4,6 +4,17 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## A row's profile up to a size in wavelengths (October 2026)
+
+A row's profile field, the parabolic equation over a row of flat-roofed blocks, used to be taken at
+every band, at a cost that grows as the row's size in wavelengths squared: over a terrace of eight
+rows under a low approach it cost 37 times the rays it stands for, a run there about nine times.
+It now gives way to those rays between k D = 3000 and 6000 (D the row across), 1-2 kHz over that
+terrace and above 5.5 kHz over a single street, and is not marched beyond: 12 times the rays, a
+run about 3.3 times. Against the rays the profile moved the terrace's A-weighted levels by -0.20 dB
+on average and now by -0.19; its worst pair moves from -2.1 to -1.8 dB. `niceops --buildings` also
+takes `--no_profile_pe`. No golden moves: none crosses a row.
+
 ## Through a roof's plane with both ends above it (October 2026)
 
 With the source and the microphone both above a flat roof's plane, the ray diffracted over the

@@ -141,6 +141,12 @@ flag to switch it off (`--no_profile_pe` is point_field's only).
   source's height (11.8 s one way with the source 122 m up), where the start needs only the wave's
   angles. Decision for the user: which lever, if any (a frequency cap with a fade to the cascades;
   the column's height; profile off by default in the run).
+- *Lever 1 built (2026-10-22, the user's choice).* The profile fades out by the row's size in
+  wavelengths, k D from 3000 to 6000 (D the row across), not by frequency: a fixed 2-4 kHz cap was
+  cheaper here (0.77 s a pair) but would strip EDGE's scale-model rows, which sit at kilohertz. On
+  the same 30 pairs: 3.18 -> 0.98 s a pair (37x -> 12x the cascades, the run about 9x -> 3.3x), the
+  A-weighted effect -0.20 -> -0.19 dB mean, worst -2.13 -> -1.79. The rays it stands for are kept
+  for above the fade. Lever 2 (the column's height) is still open if a run needs more.
 
 **5. Deferred, with the evidence for deferring.**
 - *Step 1, part 2 (the double transition).* A strip under 0.5 m wide where a face's plane passes

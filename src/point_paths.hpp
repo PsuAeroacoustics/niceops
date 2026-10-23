@@ -341,6 +341,10 @@ struct ProfileTerm
     double march_sin_beta = 1.0;
     double sin_beta = 1.0;
     double in_plane = 0.0;
+    // The row across, its first front face to its last back face, in the
+    // plane, times march_sin_beta: k times it is the row's size in the
+    // march's radians (row_profile_fade).
+    double extent = 0.0;
     std::shared_ptr<ProfileSolutions> solutions;
 };
 
@@ -370,8 +374,14 @@ struct PointRay
     bool profile = false;
     ProfileTerm profile_term;
     // The part of its amplitude the ray keeps: where a row's profile field
-    // is blended in, w for that ray and 1 - w for those it stands for.
+    // is blended in, w for that ray, whose factors (profile_factors) fade out
+    // with frequency (row_profile_fade).
     double share = 1.0;
+    // For a ray that a row's profile stands for, that profile's share w and
+    // its extent (ProfileTerm::extent): the ray keeps 1 - w
+    // row_profile_fade(k, extent) of itself (row_profile_factor).
+    double row_share = 0.0;
+    double row_extent = 0.0;
     // Over a shared face, the cascade's spreading, which `spreading` then
     // replaces: the cascade of its two wedge terms (`wedge`, kept) is what
     // the face's field is taken relative to where it is sampled.
@@ -804,9 +814,28 @@ SharedFaceSamples shared_face_samples(const SharedFaceTerm& face, const std::vec
 // k sin(beta) (shared_face_field, or shared_face_spectrum for many k at once).
 std::complex<double> shared_face_amplitude(const PointRay& ray, double reflected, double k, std::complex<double> field);
 
+// A row's profile field is taken only up to a size: as k times the row's
+// extent (ProfileTerm::extent) goes from 6000 to 12000 radians it gives way,
+// a smoothstep in log k, to the rays it stands for, and beyond it is not
+// marched.  The march costs as the row's size in wavelengths squared: over a
+// terrace's 8 rows (160 m across, the fade 2-4 kHz) the bands above 4 kHz
+// were 78% of it, where it cost 37 times the rays it stands for (FIDELITY,
+// "Over a row of roofs").  One street's row (30 m) keeps it to 11 kHz, and a
+// scale model's to far beyond.  1 below the fade, 0 above.
+double row_profile_fade(double k, double extent);
+// What a ray that a row's profile stands for keeps of itself at wavenumber
+// k: 1 - row_share row_profile_fade(k, row_extent), 1 for any other ray.  The
+// band paths and point_ray_amplitude's facade overload take it; the overload
+// on a reflected amplitude leaves it out.
+inline double row_profile_factor(const PointRay& ray, double k)
+{
+    return ray.row_share > 0.0 ? 1.0 - ray.row_share * row_profile_fade(k, ray.row_extent) : 1.0;
+}
+
 // A row's profile ray's factor at each wavenumber, what point_ray_amplitude
 // gives it at reflected = 1: sin(beta) times its part of the profile's 2-D
-// field at k sin(beta), the phase of its in-plane length taken out.
+// field at k sin(beta), the phase of its in-plane length taken out, times
+// row_profile_fade(k, extent) (0, and no march, above the fade).
 std::vector<std::complex<double>> profile_factors(const PointRay& ray, const std::vector<double>& wavenumbers);
 
 } // namespace niceops

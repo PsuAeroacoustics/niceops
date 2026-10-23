@@ -691,13 +691,23 @@ exactly. What to keep:
     twelve of second order 0.15). Twenty points of second order are within 0.022 dB.
   - Together: a street's row to 10 kHz in 0.29 s of one core, from 6.7 s, more accurate than it
     was. What is left is the march itself at the top bands (it grows as f^2).
-  - **In a run it is the dominant cost where rows are crossed.** Sampled over a terraced district
-    (8 rows, 40 ft streets) under the demo approach: 22% of (observer, state) pairs take a
-    profile, at 3.18 s each on one core against 0.086 s for the cascades (37x), which makes the run
-    about 9x. A march over 8 rows is about 160 m, and pairs within 5 degrees march both ways. The
-    bands above 4 kHz take 78% of a march, and its column reaches the source's height (11.8 s one
-    way for a source 122 m up). `niceops --buildings --no_profile_pe` switches it off. Measure such
-    things by sampling pairs (`PointSourceField` and `band_levels` on a few dozen), not a full run.
+  - **In a run it was the dominant cost where rows are crossed, so it fades out by size.**
+    Sampled over a terraced district (8 rows, 40 ft streets) under the demo approach: 22% of
+    (observer, state) pairs take a profile, at 3.18 s each on one core against 0.086 s for the
+    cascades (37x), about 9x for the run. A march over 8 rows is about 160 m, pairs within 5
+    degrees march both ways, and the bands above 4 kHz took 78% of it. The profile's weight now
+    falls from k D = 3000 to 6000 (`row_profile_fade`; D the row across, k the march's), the rays it
+    stands for keeping 1 - w fade (`PointRay::row_share`, `row_profile_factor`, in the band path,
+    the GPU's packing and the facade overload of `point_ray_amplitude`), and nothing past it is
+    marched: 0.98 s a pair (12x, the run about 3.3x), the A-weighted effect -0.19 dB mean against
+    -0.20. A fixed 2-4 kHz cap was cheaper on this district (0.77 s) but wrong for scale models,
+    whose rows sit at kilohertz (EDGE's), and the cost is the row's size in wavelengths, not its
+    frequency; k D from 6000 kept the effect whole for 1.87 s. The rays the profile stands for
+    are now always kept (they were dropped at w = 1), for above the fade. Still open: the march's
+    column reaches the source's height (11.8 s one way for a source 122 m up, uncapped), though
+    the start needs only the incident wave's angles. `niceops --buildings --no_profile_pe`
+    switches it off. Measure such things by sampling pairs (`PointSourceField` and `band_levels` on
+    a few dozen), not a full run.
   - **Sampling the parts in frequency was built and dropped.** Each part with its path's phase
     taken out looked smooth on a plain street (0.01 rad over a third of an octave at 8 kHz), so it
     was solved at probes and taken between in log k, as the shared faces are. A fixed spacing of

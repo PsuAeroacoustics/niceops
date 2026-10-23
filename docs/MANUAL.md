@@ -1992,7 +1992,9 @@ ray. A twice-diffracted ray may reflect in a level roof or a slope between eithe
 Over a row of two or more flat-roofed blocks with a street between, crossed near grazing, where
 the cascades over three and four roof edges do not settle, the rays over the row give way to its
 two-dimensional field from a parabolic equation over its cross-section ([THEORY §6.5](THEORY.md),
-"Over a row of roofs"), its floor bounces at the ends taking the floor as any ray's do.
+"Over a row of roofs"), its floor bounces at the ends taking the floor as any ray's do. It is taken
+up to a size in wavelengths, k times the row's width across from 3000, gone by 6000: 1-2 kHz over a
+terrace 160 m across, above 5.5 kHz over one street.
 `--no_slope_facades` omits paths combining slopes and walls for comparison,
 `--no_twice_roofs` the twice-diffracted rays off a roof, `--no_roof_lighting` the scattering
 patches' lighting off a roof, and `--no_profile_pe` the row's profile field;

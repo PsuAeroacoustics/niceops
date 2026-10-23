@@ -1766,6 +1766,13 @@ between the ends all lie on its roof edges, its roofs, its crossed walls or the 
 reflect only in those roofs and walls: the direct and floor rays, the roofs' reflections, the
 diffracted rays and chains over it, and the walls' rays in its streets.
 
+The march costs as the row's size in wavelengths squared, so it is taken only so far: with $D$ the
+row across, its first front face to its last back face in the plane, and $k$ the march's
+wavenumber, the profile's weight falls from whole at $kD = 3000$ to nothing at $6000$, a smoothstep
+in $\log k$, the rays it stands for taking the rest, and beyond it is not marched. That is 1-2 kHz
+over a terrace of eight rows 160 m across, 5.5-11 kHz over one street 30 m across, and beyond any
+band for a scale model's row.
+
 In the plane normal to the edges, $u$ across the blocks from the source and $z$ up, the field
 $p = \psi\,e^{iku}$ is marched on the wide-angle equation by Collins' split-step Padé method [56], in the
 propagators of the parabolic equation (§9.1),

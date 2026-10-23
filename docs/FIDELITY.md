@@ -1240,10 +1240,20 @@ rms for the block, 0.62 and 1.99 for the steps, which the profile field does not
 
 In a run, over a terraced district (8 flat-roofed rows 30 ft deep and high, 600 ft long, 40 ft
 streets, observers 4 ft up in the streets and behind) under the demo approach, 22% of the
-(observer, state) pairs take a row's profile. On 30 of them, sampled, the profile less the cascades
-(`--no_profile_pe`) is −0.20 dB A-weighted on average with a flat source spectrum (median −0.01,
-−2.1 at worst), −0.1 to −0.5 dB a band on average and −5.7 at worst (200 Hz), for 37 times the
-cascades' cost on those pairs (internals).
+(observer, state) pairs take a row's profile. The profile gives way to the rays it stands for as
+the row grows in wavelengths (THEORY §6.5, $kD$ from 3000 to 6000). On 30 of those pairs, sampled,
+one core, 25 Hz to 10 kHz:
+
+| Profile | Cost a pair (the cascades 0.085 s) | A-weighted, profile less cascades: mean, worst |
+| --- | --- | --- |
+| Taken at every band | 3.18 s (37x) | −0.20, −2.13 dB |
+| To $kD$ = 6000-12000 | 1.87 s (22x) | −0.20, −2.05 |
+| To $kD$ = 3000-6000 (the model) | 0.98 s (12x) | −0.19, −1.79 |
+
+The A-weighting is with a flat source spectrum (median −0.01 dB in every case). By band, the
+profile less the cascades is −0.1 to −0.5 dB on average, −5.7 at worst (200 Hz), up to 1.6 kHz,
+and nothing from 3.15 kHz in the model. With the profile a run there costs about 3.3 times one
+without (`--no_profile_pe`).
 
 - **Convergence.** Against the same march in a domain 250 wavelengths high, a street's parts are
   within 0.09 dB at 1, 3.15 and 8 kHz, from a source 100 m off and from a microphone 4 m before the

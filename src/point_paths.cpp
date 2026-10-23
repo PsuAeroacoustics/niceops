@@ -3337,7 +3337,7 @@ void relief_factors(const PointRay& ray, const std::vector<const FacadeRelief*>&
 std::complex<double> point_ray_amplitude(const PointRay& ray, const std::vector<double>& reflection,
         double floor_reflection, double k)
 {
-    return point_ray_amplitude(ray, reflected_amplitude(ray, reflection, floor_reflection), k);
+    return row_profile_factor(ray, k) * point_ray_amplitude(ray, reflected_amplitude(ray, reflection, floor_reflection), k);
 }
 
 std::complex<double> point_ray_amplitude(const PointRay& ray, double reflected, double k)
@@ -3944,6 +3944,7 @@ void PointSourceField::sub_band_problems(const std::vector<double>& reflection, 
                     amplitude[i] = shared_face_amplitude(ray, reflected[i], kc, shared[i][3 * band + part]);
                 else
                     amplitude[i] = point_ray_amplitude(ray, reflected[i], kc);
+                amplitude[i] *= row_profile_factor(ray, kc);
             }
             for (std::size_t i = 0; i < floor_factor.size(); i++)
                 if (!floor_factor[i].empty())
@@ -3976,12 +3977,26 @@ void PointSourceField::band_levels(const std::vector<double>& reflection, const 
 }
 
 
+double row_profile_fade(double k, double extent)
+{
+    constexpr double from = 3000.0, to = 6000.0;
+    const double size = k * extent;
+    if (!(size > from))
+        return 1.0;
+    if (!(size < to))
+        return 0.0;
+    const double x = std::log(to / size) / std::log(to / from);
+    return x * x * (3.0 - 2.0 * x);
+}
+
 std::vector<std::complex<double>> profile_factors(const PointRay& ray, const std::vector<double>& wavenumbers)
 {
     const ProfileTerm& t = ray.profile_term;
-    std::vector<double> in_plane(wavenumbers.size());
+    // Above the fade the row's rays stand alone, and nothing is marched.
+    std::vector<double> in_plane;
     for (std::size_t j = 0; j < wavenumbers.size(); j++)
-        in_plane[j] = wavenumbers[j] * t.march_sin_beta;
+        if (row_profile_fade(wavenumbers[j], t.extent) > 0.0)
+            in_plane.push_back(wavenumbers[j] * t.march_sin_beta);
     std::vector<std::complex<double>> out(wavenumbers.size(), 0.0);
     for (int way = 0; way < 2; way++)
     {
@@ -4003,13 +4018,16 @@ std::vector<std::complex<double>> profile_factors(const PointRay& ray, const std
         const bool from = way == 0 ? t.source_image : t.microphone_image;
         const bool to = way == 0 ? t.microphone_image : t.source_image;
         for (std::size_t j = 0; j < out.size(); j++)
-            out[j] += t.weight[way] * t.solutions->parts[way].at(in_plane[j]).part[from][to];
+            if (row_profile_fade(wavenumbers[j], t.extent) > 0.0)
+                out[j] += t.weight[way]
+                        * t.solutions->parts[way].at(wavenumbers[j] * t.march_sin_beta).part[from][to];
     }
     // As shared_face_amplitude: the 2-D field, its in-plane phase taken out,
     // spread along the edges by sin(beta) / sqrt(l_t) (the spreading has the
-    // root).
+    // root); faded out with frequency.
     for (std::size_t j = 0; j < out.size(); j++)
-        out[j] *= t.sin_beta * std::polar(1.0, -in_plane[j] * t.in_plane);
+        out[j] *= row_profile_fade(wavenumbers[j], t.extent) * t.sin_beta
+                * std::polar(1.0, -wavenumbers[j] * t.march_sin_beta * t.in_plane);
     return out;
 }
 
@@ -4266,30 +4284,19 @@ void PointSourceField::apply_profile(const Buildings& buildings, const Vec3& sou
         ray.profile_term.march_sin_beta = march_sin_beta;
         ray.profile_term.sin_beta = std::clamp(in_plane / ray.length, 1e-6, 1.0);
         ray.profile_term.in_plane = in_plane;
+        ray.profile_term.extent = (blocks.back().u1 - blocks.front().u0) * march_sin_beta;
         ray.profile_term.solutions = solutions;
         ray.spreading = 1.0 / std::sqrt(in_plane);
         ray.share = w;
         parts.push_back(std::move(ray));
     }
-    if (w >= 1.0)
+    // The rays it stands for stay, for the frequencies above its fade
+    // (row_profile_factor).
+    for (std::size_t i : family)
     {
-        std::vector<PointRay> kept;
-        kept.reserve(rays_.size() - family.size() + parts.size());
-        std::size_t next = 0;
-        for (std::size_t i = 0; i < rays_.size(); i++)
-        {
-            if (next < family.size() && family[next] == i)
-            {
-                next++;
-                continue;
-            }
-            kept.push_back(std::move(rays_[i]));
-        }
-        rays_ = std::move(kept);
+        rays_[i].row_share = w;
+        rays_[i].row_extent = (blocks.back().u1 - blocks.front().u0) * march_sin_beta;
     }
-    else
-        for (std::size_t i : family)
-            rays_[i].share *= 1.0 - w;
     for (PointRay& ray : parts)
         rays_.push_back(std::move(ray));
 }

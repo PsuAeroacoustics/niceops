@@ -269,6 +269,9 @@ struct PointLevel
     double level = 0.0;
     std::complex<double> field;
     std::size_t profiles = 0, rays = 0;
+    // The rays it stands for wholly, which keep nothing below its fade
+    // (row_profile_factor).
+    std::size_t replaced = 0;
     double share = 0.0; // the profile ray's
 };
 
@@ -286,6 +289,7 @@ PointLevel point_level(const Buildings& city, const Vec3& s, const Vec3& m, doub
         out.field += point_ray_amplitude(ray, reflection, 1.0, k) * std::polar(1.0, k * ray.length)
                 * (line ? std::sqrt(ray.length) : 1.0);
         out.profiles += ray.profile;
+        out.replaced += ray.row_share >= 1.0;
         out.rays++;
         if (ray.profile)
             out.share = ray.share;
@@ -317,9 +321,9 @@ TEST_CASE("over a street the point-source field takes the profile field", "[prof
             if (profile == 1)
             {
                 // The row's rays, the street's walls' among them, all went
-                // into its four parts'.
+                // into its four parts' below its fade.
                 REQUIRE(l.profiles == 4);
-                REQUIRE(l.rays == 4);
+                REQUIRE(l.rays == 4 + l.replaced);
                 REQUIRE(std::abs(error) < 2.6);
             }
         }
@@ -447,7 +451,10 @@ TEST_CASE("a row's band levels average its parts' interference", "[profile_pe][p
             sum += point_ray_amplitude(ray, rigid, 1.0, k) * std::polar(1.0, k * ray.length);
         return sum;
     };
-    REQUIRE(field.rays().size() == 4);
+    // Its four parts, and the rays they stand for wholly, which take over
+    // from 2 kHz (row_profile_fade).
+    for (const PointRay& ray : field.rays())
+        REQUIRE((ray.profile || ray.row_share >= 1.0));
     for (std::size_t b = 0; b < bands.size(); b++)
     {
         const auto parts = sub_bands(bands[b], c);
@@ -466,6 +473,40 @@ TEST_CASE("a row's band levels average its parts' interference", "[profile_pe][p
         if (bands[b] == 2000.0)
             REQUIRE(frozen - exact > 2.0);
     }
+}
+
+// A row's profile gives way to the rays it stands for as the row grows in
+// wavelengths (row_profile_fade): whole up to k D = 3000 (D its extent across
+// in the plane), gone from 6000, smoothly between.  One street's row, 30 m
+// across: at 1 kHz the profile, at 16 kHz the rays alone, to the bit, as
+// they are without it.
+TEST_CASE("a row's profile gives way to its rays as the row grows in wavelengths", "[profile_pe][point_paths]")
+{
+    REQUIRE(row_profile_fade(1.0, 3000.0) == 1.0);
+    REQUIRE(row_profile_fade(1.0, 6000.0) == 0.0);
+    double previous = 1.0;
+    for (double kd = 3000.0; kd <= 6000.0; kd += 10.0)
+    {
+        const double fade = row_profile_fade(1.0, kd);
+        REQUIRE(fade <= previous);
+        REQUIRE(previous - fade < 0.01);
+        previous = fade;
+    }
+    const Buildings city({box(0, -4000, 10, 4000, 10), box(20, -4000, 30, 4000, 10)});
+    const std::vector<double> bands {1000.0, 16000.0};
+    const double c = 343.2;
+    const std::vector<double> reflection(city.facades().size() * bands.size(), 1.0);
+    std::vector<double> with(bands.size()), without(bands.size());
+    PointPathOptions off;
+    off.profile_pe = false;
+    const PointSourceField profiled(city, Vec3(-100, 0, 12), Vec3(34, 0, 1.2));
+    const PointSourceField cascades(city, Vec3(-100, 0, 12), Vec3(34, 0, 1.2), off);
+    REQUIRE(std::any_of(profiled.rays().begin(), profiled.rays().end(), [](const PointRay& r) { return r.profile; }));
+    profiled.band_levels(reflection, 1.0, bands, c, with.data());
+    cascades.band_levels(reflection, 1.0, bands, c, without.data());
+    INFO("1 kHz: profile " << with[0] << ", cascades " << without[0] << "; 16 kHz: " << with[1] << ", " << without[1]);
+    REQUIRE(std::abs(with[0] - without[0]) > 1.0);
+    REQUIRE(with[1] == Catch::Approx(without[1]).margin(1e-9));
 }
 
 // The parts' bounces off the floor at the ends are a ray's: a floor of
@@ -488,6 +529,8 @@ TEST_CASE("a row's profile rays take the floor's model at their bounces", "[prof
     int bounces = 0;
     for (const PointRay& ray : field.rays())
     {
+        if (!ray.profile)
+            continue;
         REQUIRE(ray.floor == ray.profile_term.source_image + ray.profile_term.microphone_image);
         for (int b = 0; b < ray.floor; b++)
         {
