@@ -13,6 +13,11 @@ such images used to take the whole edge. `niceops --buildings` now takes `--path
 reach of each end's buildings, fixed at 150 m until now; below it is a fast mode, at a measured
 cost (FIDELITY), and `--diffuse_radius` follows it by default.
 
+The source-coherence pair search now switches from its z-sorted sweep to direct enumeration once
+the sweep finds 20% of all pairs. Dense launch clusters made sorting and retaining candidates
+slower than forming the full pair list; sparse sets still use the sweep. The threshold and its
+microbenchmark are recorded in [performance notes](internals/performance.md#urban-source-coherence-pairs).
+
 ## A row's profile up to a size in wavelengths (October 2026)
 
 A row's profile field, the parabolic equation over a row of flat-roofed blocks, used to be taken at

@@ -197,10 +197,10 @@ void partially_coherent_energies(const PointSourceField& field, const std::vecto
         // Without the variance, a pair beyond a fixed angle is dropped at the
         // first band and never comes back: the cone's outer edge, or where
         // the measured decay reaches `negligible` at the first band (it grows
-        // with the band).  Then only the pairs within it are formed, found by
-        // a sweep over the launches sorted by z and taken in the all-pairs
-        // loop's (i, j) order, so every band sums the same live pairs in the
-        // same order.  The chord's margin covers its rounding; a pair inside
+        // with the band). A z sweep finds the nearby pairs in sparse sets;
+        // dense sets fall back to the all-pairs loop. Both take pairs in the
+        // same (i, j) order, so every band sums the same live pairs in the
+        // same order. The chord's margin covers its rounding; a pair inside
         // it but beyond the angle is dropped at the first band as before.
         // The variance takes every pair.
         double reach = std::numeric_limits<double>::infinity();
@@ -216,29 +216,7 @@ void partially_coherent_energies(const PointSourceField& field, const std::vecto
         // launch has no place in the sort, and the old loop drops its pairs.
         const bool sweep = reach < 60.0 && n > 32
                 && std::all_of(launch.begin(), launch.end(), [](const Vec3& v) { return std::isfinite(v.norm()); });
-        if (sweep)
-        {
-            const double chord = reach * pi / 180.0 * (1.0 + 1e-6) + 1e-12;
-            auto& by_z = scratch.by_z;
-            auto& candidates = scratch.candidates;
-            by_z.resize(n);
-            std::iota(by_z.begin(), by_z.end(), 0);
-            std::sort(by_z.begin(), by_z.end(),
-                    [&](std::uint32_t a, std::uint32_t b) { return launch[a].z < launch[b].z; });
-            candidates.clear();
-            for (std::size_t a = 0; a < n; a++)
-                for (std::size_t b = a + 1; b < n && launch[by_z[b]].z - launch[by_z[a]].z <= chord; b++)
-                {
-                    const std::uint64_t i = std::min(by_z[a], by_z[b]), j = std::max(by_z[a], by_z[b]);
-                    if ((launch[i] - launch[j]).norm() <= chord)
-                        candidates.push_back(i << 32 | j);
-                }
-            std::sort(candidates.begin(), candidates.end());
-            for (std::uint64_t c : candidates)
-                add(static_cast<std::size_t>(c >> 32), static_cast<std::size_t>(c & 0xffffffffu));
-        }
-        else
-        {
+        auto enumerate_all = [&] {
             const std::size_t count = n * (n - 1) / 2;
             first.reserve(count);
             second.reserve(count);
@@ -250,7 +228,55 @@ void partially_coherent_energies(const PointSourceField& field, const std::vecto
             for (std::size_t i = 0; i < n; i++)
                 for (std::size_t j = i + 1; j < n; j++)
                     add(i, j);
+        };
+        if (sweep)
+        {
+            const double chord = reach * pi / 180.0 * (1.0 + 1e-6) + 1e-12;
+            auto& by_z = scratch.by_z;
+            auto& candidates = scratch.candidates;
+            const std::size_t count = n * (n - 1) / 2;
+            // On the measured launch sets, sorting and filtering stop paying
+            // once the sweep keeps about a fifth of all pairs. Bound both its
+            // work and its retained candidate buffer there; dense sets take
+            // the direct loop, whose pair order is already the reduction order.
+            const std::size_t max_candidates = count / 5;
+            by_z.resize(n);
+            std::iota(by_z.begin(), by_z.end(), 0);
+            std::sort(by_z.begin(), by_z.end(),
+                    [&](std::uint32_t a, std::uint32_t b) { return launch[a].z < launch[b].z; });
+            candidates.clear();
+            bool dense = false;
+            for (std::size_t a = 0; a < n; a++)
+            {
+                for (std::size_t b = a + 1; b < n && launch[by_z[b]].z - launch[by_z[a]].z <= chord; b++)
+                {
+                    const std::uint64_t i = std::min(by_z[a], by_z[b]), j = std::max(by_z[a], by_z[b]);
+                    if ((launch[i] - launch[j]).norm() <= chord)
+                    {
+                        if (candidates.size() == max_candidates)
+                        {
+                            dense = true;
+                            break;
+                        }
+                        candidates.push_back(i << 32 | j);
+                    }
+                }
+                if (dense)
+                    break;
+            }
+            if (dense)
+                candidates.clear();
+            else
+            {
+                std::sort(candidates.begin(), candidates.end());
+                for (std::uint64_t c : candidates)
+                    add(static_cast<std::size_t>(c >> 32), static_cast<std::size_t>(c & 0xffffffffu));
+            }
+            if (dense)
+                enumerate_all();
         }
+        else
+            enumerate_all();
     }
     const std::size_t pairs = first.size();
     const double half_band = std::pow(2.0, 1.0 / 6.0);

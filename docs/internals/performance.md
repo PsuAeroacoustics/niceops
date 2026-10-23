@@ -37,6 +37,23 @@ The real fix is in the database builder (panam): the same data in one group with
 `(condition, channel)` arrays would load in a fraction of the time. Do not go looking for it in
 `sphere_database.cpp`.
 
+## Urban source-coherence pairs
+
+When no phase-interval variance is requested, the CPU can omit pairs beyond the coherence reach.
+It finds nearby launches with a z-sorted sweep, then sorts the candidate IDs back into `(i, j)`
+order so the band sums keep their original rounding. A tight reach usually makes that much cheaper
+than forming every pair. A dense cluster can put most pairs inside the reach, where the sweep's
+sorting and candidate buffer cost more than the direct loop. The sweep therefore stops once it has
+found 20% of all pairs and forms every pair directly. This also caps its retained candidate list at
+that point.
+
+The 20% cutoff comes from an Apple Clang `-O3` microbenchmark of the pair builder, including the
+candidate sort and per-pair metadata. For 512–4096 random launches in a spherical cap, a 6° reach
+kept about 13% of pairs and the sweep took 0.63–0.79 times direct enumeration; when it kept about
+27%, the sweep took 1.12–1.34 times as long. At 100% density it took 2.8–3.1 times as long. The
+cutoff is a conservative crossover for these synthetic distributions; it does not affect which
+pairs contribute or their summation order.
+
 ## Several databases in one run
 
 `run()` holds its databases in a `std::map<std::string, Database>` keyed by `database_key`, the
