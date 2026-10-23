@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "pade_propagator.hpp"
+#include "util/complex_fma.hpp"
 #include "util/constants.hpp"
 #include "util/lanes.hpp"
 #include "util/parallel.hpp"
@@ -20,6 +21,8 @@ namespace niceops {
 namespace {
 
 using complex = std::complex<double>;
+using complex_fma::minus_mul;
+using complex_fma::mul;
 
 double speed_at(const PeSetup& s, double z)
 {
@@ -253,25 +256,6 @@ March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
 
     std::vector<complex> w(m);
     return [=](std::vector<complex>& psi) mutable {
-        // Complex arithmetic written out: std::complex's multiply carries a branch
-        // for NaN and infinity that cannot arise here, and it sits in the chain.
-        auto mul = [](complex x, complex y) {
-            return complex(x.real() * y.real() - x.imag() * y.imag(), x.real() * y.imag() + x.imag() * y.real());
-        };
-        // e - c x, as two dependent fused multiply-adds per part: the recurrences
-        // run at their latency, and the compiler otherwise leaves a subtract at the
-        // end of each.  Where the target has no fused multiply-add (x86-64 without
-        // -mfma, CI's GCC build) std::fma is a library call on that chain, so
-        // there it is the plain products.
-        auto minus_mul = [](complex e, complex c, complex x) {
-#if defined(__FMA__) || defined(__aarch64__) || defined(__ARM_FEATURE_FMA)
-            return complex(std::fma(c.imag(), x.imag(), std::fma(-c.real(), x.real(), e.real())),
-                    std::fma(-c.imag(), x.real(), std::fma(-c.real(), x.imag(), e.imag())));
-#else
-            return complex(e.real() - c.real() * x.real() + c.imag() * x.imag(),
-                    e.imag() - c.real() * x.imag() - c.imag() * x.real());
-#endif
-        };
         // Right side [1 + alpha_rhs Q] psi at a row, psi_0 from the ground
         // condition and psi_n = 0.
         auto rhs = [&](std::size_t row) {

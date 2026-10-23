@@ -8,6 +8,7 @@
 
 #include "exact_solutions.hpp"
 #include "pade_propagator.hpp"
+#include "util/complex_fma.hpp"
 #include "util/constants.hpp"
 #include "wedge.hpp"
 
@@ -16,6 +17,10 @@ namespace niceops {
 namespace {
 
 using complex = std::complex<double>;
+using complex_fma::divide;
+using complex_fma::minus_mul;
+using complex_fma::mul;
+using complex_fma::reciprocal;
 
 // The grid: twenty points a wavelength in height, the spacing shortened by up
 // to a tenth where that puts the roofs on nodes (aligned_spacing).
@@ -111,51 +116,6 @@ struct CornerGreen
         return out;
     }
 };
-
-// Complex arithmetic written out: std::complex's multiply carries a branch for
-// NaN and infinity that cannot arise here, and it sits in the recurrences.
-inline complex mul(complex x, complex y)
-{
-    return complex(x.real() * y.real() - x.imag() * y.imag(), x.real() * y.imag() + x.imag() * y.real());
-}
-
-// e - c x, as two dependent fused multiply-adds per part (pe.cpp's
-// minus_mul): the recurrences run at their latency.  Without a fused
-// multiply-add in the target std::fma is a library call, so there it is the
-// plain products.
-inline complex minus_mul(complex e, complex c, complex x)
-{
-#if defined(__FMA__) || defined(__aarch64__) || defined(__ARM_FEATURE_FMA)
-    return complex(std::fma(c.imag(), x.imag(), std::fma(-c.real(), x.real(), e.real())),
-            std::fma(-c.imag(), x.real(), std::fma(-c.real(), x.imag(), e.imag())));
-#else
-    return complex(e.real() - c.real() * x.real() + c.imag() * x.imag(),
-            e.imag() - c.real() * x.imag() - c.imag() * x.real());
-#endif
-}
-
-// w / z written out.  std::complex's divide is a call to __divdc3, which
-// scales the operands by a power of two (exact in range) and recovers NaN and
-// infinity, neither of which can arise here: the denominators are O(1) to
-// O(1e6).  This is compiler-rt's arithmetic with the contraction its build
-// applies, so on Apple arm64 the result is __divdc3's to the bit (checked on
-// 4e7 samples; the operand order matters, fma(d, d, c c) differing in a sixth
-// of them).  libgcc's __divdc3 is Smith's method, a ULP or so away.
-inline complex divide(complex w, complex z)
-{
-#if defined(__FMA__) || defined(__aarch64__) || defined(__ARM_FEATURE_FMA)
-    const double a = w.real(), b = w.imag(), c = z.real(), d = z.imag();
-    const double den = std::fma(c, c, d * d);
-    return complex(std::fma(a, c, b * d) / den, std::fma(b, c, -(a * d)) / den);
-#else
-    return w / z;
-#endif
-}
-
-inline complex reciprocal(complex z)
-{
-    return divide(complex(1.0, 0.0), z);
-}
 
 // The propagators for step_wavelengths, fitted once.  c, the second
 // difference's weight 1 / (k dz)^2, sets the grid's most negative eigenvalue,
