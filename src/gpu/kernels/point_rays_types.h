@@ -29,8 +29,8 @@ struct GpuWedge
     float end_scale;
 };
 
-// One ray, in length order: its kind (0 specular, 1 to 3 its wedge terms,
-// NK_KIND_FACE over a shared face), its first wedge term or its face, where its
+// One ray, in length order: its kind (0 specular, 1 to NK_KIND_FACE - 1 its
+// wedge terms, NK_KIND_FACE over a shared face), its first wedge term or its face, where its
 // amplitude after reflections starts (reflected_amplitude, real per band, or
 // times the floor's factor complex per problem: BandProblem::slot), and
 // its length, m, for the air's absorption.

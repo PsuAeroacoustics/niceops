@@ -4482,7 +4482,7 @@ void PointSourceField::apply_profile(const Buildings& buildings, const Vec3& sou
     // being a dip to height 0.  There the cascade's collinear edges sit on
     // each other's shadow boundaries at the roofs' plane, and only the 2-D
     // field carries the grazing wave.  Touching steps up or down keep the
-    // cascades (internals/ground.md, "Over a row of roofs").  A run of
+    // cascades (internals/urban.md, "Over a row of roofs").  A run of
     // touching blocks with one top is one roof, so a dip whose floor is split
     // between footprints (10/8/8/10) is still a dip.
     bool takes_profile = false;

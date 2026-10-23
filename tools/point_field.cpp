@@ -164,7 +164,7 @@ int main(int argc, char** argv)
             "incidence each lighting path meets the wall at.")
             ->check(CLI::IsMember({"orders", "lambert", "hybrid"}));
     app.add_option("--grating_reflections", grating_reflections,
-            "With --relief_scattering orders: facade reflections on a grating ray besides its order (default 2).");
+            "With a relief, unless --relief_scattering lambert: facade reflections on a grating ray besides its order (default 2).");
     app.add_option("--patch_size", patch_size, "With scattering walls, the diffuse field's patches' size at most, in "
                                                "--units (default 4 m).");
     app.add_option("--diffuse_radius", diffuse_radius, "With scattering walls, a building with a wall within this "

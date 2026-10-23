@@ -5136,7 +5136,7 @@ int run(int argc, char* argv[])
             "(<stem>_band_frames.nc). Needs the spectral path; refused with -a.");
     app.add_option("-m,--metricfile", metric_file,
             "File to append overall noise metrics: the case name, the energy mean and maximum "
-            "level, and the fraction of observers at or above 65 dB.");
+            "level, the fraction of observers at or above 65 dB, and on a grid the area within its 65 dB contour.");
     app.add_option("-b,--observer", observer_file, "Observer file name.");
     app.add_flag("-q,--qsam,!--no-qsam", qsam, "Q-SAM flight path angle: the velocity's angle to the tip-path plane, not to the "
             "horizontal (default on; --no-qsam disables)");
@@ -5155,8 +5155,8 @@ int run(int argc, char* argv[])
             "and the -S state file stays metric.")
             ->check(CLI::IsMember({"ft", "m"}));
     auto* grid_option = app.add_option("--grid", grid_bounds,
-            "Observer grid bounds, in --units: xmin xmax ymin ymax. Default +/-1500 m "
-            "(+/-4921.26 ft).")
+            "Observer grid bounds, in --units: xmin xmax ymin ymax; the grid stops short of each "
+            "maximum. Default +/-1500 m (+/-4921.26 ft).")
             ->expected(4);
     auto* gridstep_option = app.add_option("--gridstep", grid_step,
             "Observer grid spacing, in --units (default 25 m, = 82.021 ft).");
