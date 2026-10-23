@@ -9,8 +9,10 @@ and run the whole suite with no `-E` exclusion:
 ctest --test-dir build --output-on-failure -j8
 ```
 
-CI runs it in parallel (`-j$(nproc)`); the fixtures below are what make that safe, so a new
-comparison must name the fixture of every run it reads.
+CI runs it in parallel (`-j$(nproc)`), split by test family (the name up to its first underscore)
+across three runners: `buildings_`, the families listed in `FAMILIES` in `.github/workflows/ci.yml`,
+and the rest. The fixtures below are what make both safe, so a new comparison must name the fixture
+of every run it reads; CTest then adds those runs to whichever shard selects the comparison.
 
 `ctest -N` lists the tests; this file gives no count, because it goes stale. Every CTest runs
 with the **source root** as its working directory. Most of them run `niceops` and compare its

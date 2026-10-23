@@ -23,6 +23,11 @@ env:
   BUILD_TYPE: Release
   CCACHE_DIR: ${{ github.workspace }}/.ccache
   CCACHE_MAXSIZE: 500M
+  # The test families (a test's name up to its first underscore) the "families" shard runs; the
+  # "rest" shard runs every other family but buildings_, so a new family lands there by itself.
+  # Chosen to balance the two by measured time.  A family must stay whole, or the fixture setups
+  # its comparisons read run in both shards (ctest adds a selected test's setups by itself).
+  FAMILIES: air|build|config|contour|dnl|export|fdtd|humidity|lafmax|lden|load|manifest|mask|metrics|missing|mixed|negative|nose|observer|plotting|point|pressure|propagation|provenance|raster|scattering|screen|self|shadow|speed|state|static|stratified|track|unit|version|wind
 
 jobs:
   build:
@@ -35,7 +40,15 @@ jobs:
     # One configuration, with plotting.  A second job without plotting used to run the whole suite
     # again for the sake of plotting_disabled.cpp, which nothing else compiles; the plotting build
     # now compiles it too and plotting_stub_is_complete holds it to plotting.cpp's entry points.
-    name: build and test
+    #
+    # The suite is split three ways, each shard on its own runner: the --buildings runs (each
+    # multithreaded, so they fight over one runner's cores), and the other families in two halves.
+    # Each shard builds for itself; the compiler cache makes that a minute once warm.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [buildings, families, rest]
+    name: test (${{ matrix.shard }})
 
     steps:
     - uses: actions/checkout@v4
@@ -54,9 +67,9 @@ jobs:
         sudo apt-get install -y libnetcdf-dev python3-dev python3-venv ccache
 
     - name: Restore the compiler cache
-      # Keyed by commit, restored from the newest: a push that touches a few
-      # sources recompiles those and takes the rest from the cache.
-      uses: actions/cache@v4
+      # Restored from the newest: a push that touches a few sources recompiles
+      # those and takes the rest from the cache.
+      uses: actions/cache/restore@v4
       with:
         path: .ccache
         key: ccache-${{ runner.os }}-${{ github.sha }}
@@ -68,9 +81,19 @@ jobs:
         -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache
 
     - name: Build
+      id: build
       run: |
         cmake --build build --config $BUILD_TYPE -j$(nproc)
         ccache --show-stats
+
+    - name: Save the compiler cache
+      # Saved even when the tests fail (actions/cache saves on success only), and
+      # by one shard: the three builds are the same.
+      if: always() && matrix.shard == 'rest' && steps.build.outcome == 'success'
+      uses: actions/cache/save@v4
+      with:
+        path: .ccache
+        key: ccache-${{ runner.os }}-${{ github.sha }}
 
     - name: Check the plotting environment
       # CMake only warns when the venv or the matplotlib install fails, so that
@@ -85,9 +108,16 @@ jobs:
       # assertions and 1.8M self-test samples, and the passing ones are noise.
       # In parallel: every comparison is tied to the runs it reads by a fixture
       # (docs/internals/testing.md), and the serial suite took over half an hour.
-      run: ctest --test-dir build -C $BUILD_TYPE --output-on-failure -j$(nproc)
+      run: |
+        case "${{ matrix.shard }}" in
+          buildings) select=(-R '^buildings_') ;;
+          families)  select=(-R "^($FAMILIES)_") ;;
+          rest)      select=(-E "^(buildings|$FAMILIES)_") ;;
+        esac
+        ctest --test-dir build -C $BUILD_TYPE --output-on-failure -j$(nproc) "${select[@]}"
 
     - name: Draw the figures
+      if: matrix.shard == 'rest'
       # No CTest case passes -p/-f/-F, so the plotting path is compiled but
       # never executed.  That is how plotting.cpp shipped missing a pybind11
       # include: it built clean and threw cast_error on every call.  Run the
@@ -118,6 +148,6 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: log
+        name: log-${{ matrix.shard }}
         path: log/
         if-no-files-found: ignore
