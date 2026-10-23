@@ -739,14 +739,7 @@ TEST_CASE("the GPU takes a row's profile rays as the CPU does", "[gpu][profile_p
 TEST_CASE("the GPU takes a tilted step's split as the CPU does", "[gpu]")
 {
     gpu::Device& device = device_or_skip();
-    auto long_block = [](double y0, double y1, double top) {
-        Footprint b;
-        b.x = {-4000.0, 4000.0, 4000.0, -4000.0};
-        b.y = {y0, y0, y1, y1};
-        b.top = top;
-        return b;
-    };
-    const Buildings step({long_block(0.0, 10.0, 10.0), long_block(10.0, 20.0, 7.0)});
+    const Buildings step({block(-4000.0, 0.0, 4000.0, 10.0, 10.0), block(-4000.0, 10.0, 4000.0, 20.0, 7.0)});
     PointPathOptions split_on;
     split_on.tilted_step_split = true;
     const std::vector<double> bands {125, 250, 500, 1000};

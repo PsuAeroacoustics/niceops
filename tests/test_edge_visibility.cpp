@@ -22,6 +22,27 @@ Footprint box(double x0, double y0, double x1, double y1, double top)
     return f;
 }
 
+Footprint ring(std::vector<double> x, std::vector<double> y, double top)
+{
+    Footprint f;
+    f.x = std::move(x);
+    f.y = std::move(y);
+    f.top = top;
+    return f;
+}
+
+// The footprint's signed area, counterclockwise positive.
+double area(const Footprint& f)
+{
+    double a = 0.0;
+    for (std::size_t i = 0; i < f.x.size(); i++)
+    {
+        const std::size_t j = (i + 1) % f.x.size();
+        a += f.x[i] * f.y[j] - f.x[j] * f.y[i];
+    }
+    return 0.5 * a;
+}
+
 } // namespace
 
 // visible_stretch may only say a point of an edge is hidden when it is:
@@ -57,13 +78,6 @@ TEST_CASE("a point of an edge proved hidden is hidden", "[point_paths]")
     const Buildings street({gabled(0.0, 0.0, 10.0, 12.0, 6.0, 9.0), gabled(12.0, 0.0, 22.0, 12.0, 6.0, 10.5),
             gabled(25.0, 0.0, 33.0, 12.0, 6.0, 9.0), gabled(0.0, 22.0, 12.0, 34.0, 6.0, 10.5),
             gabled(14.0, 22.0, 22.0, 34.0, 6.0, 9.0), gabled(24.0, 22.0, 34.0, 34.0, 6.0, 10.5)});
-    auto ring = [](std::vector<double> x, std::vector<double> y, double top) {
-        Footprint f;
-        f.x = std::move(x);
-        f.y = std::move(y);
-        f.top = top;
-        return f;
-    };
     // An L gabled along x, ridge 12 m over y = 80, hipped at its west end.
     Footprint pitched = ring({200.0, 240.0, 240.0, 215.0, 215.0, 200.0}, {60.0, 60.0, 75.0, 75.0, 100.0, 100.0}, 12.0);
     pitched.roof = {{0.0, 0.3, 6.0 - 0.3 * 60.0}, {0.0, -0.3, 6.0 + 0.3 * 100.0}, {0.3, 0.0, 6.0 - 0.3 * 200.0}};
@@ -161,29 +175,12 @@ TEST_CASE("a point of an edge proved hidden is hidden", "[point_paths]")
 // that is convex, or has a courtyard, is not cut.
 TEST_CASE("a footprint that is not convex is cut into convex pieces", "[buildings]")
 {
-    auto ring = [](std::vector<double> x, std::vector<double> y) {
-        Footprint f;
-        f.x = std::move(x);
-        f.y = std::move(y);
-        f.top = 10.0;
-        return f;
-    };
-    auto area = [](const Footprint& f) {
-        double a = 0.0;
-        for (std::size_t i = 0; i < f.x.size(); i++)
-        {
-            const std::size_t j = (i + 1) % f.x.size();
-            a += f.x[i] * f.y[j] - f.x[j] * f.y[i];
-        }
-        return 0.5 * a;
-    };
     Footprint court = box(100.0, 100.0, 140.0, 140.0, 10.0);
     court.holes.push_back({{110.0, 110.0, 130.0, 130.0}, {110.0, 130.0, 130.0, 110.0}});
-    Footprint ell = ring({0.0, 40.0, 40.0, 15.0, 15.0, 0.0}, {0.0, 0.0, 15.0, 15.0, 40.0, 40.0});
-    ell.top = 20.0;
+    Footprint ell = ring({0.0, 40.0, 40.0, 15.0, 15.0, 0.0}, {0.0, 0.0, 15.0, 15.0, 40.0, 40.0}, 20.0);
     ell.roof = {{0.0, 0.3, 6.0}, {0.3, 0.0, 6.0}};
-    const Buildings city({ell, ring({50.0, 90.0, 90.0, 80.0, 80.0, 60.0, 60.0, 50.0}, {0.0, 0.0, 40.0, 40.0, 10.0, 10.0, 40.0, 40.0}),
-            ring({0.0, 40.0, 40.0, 20.0, 20.0, 10.0, 0.0}, {60.0, 60.0, 75.0, 75.0, 100.0, 100.0, 100.0}),
+    const Buildings city({ell, ring({50.0, 90.0, 90.0, 80.0, 80.0, 60.0, 60.0, 50.0}, {0.0, 0.0, 40.0, 40.0, 10.0, 10.0, 40.0, 40.0}, 10.0),
+            ring({0.0, 40.0, 40.0, 20.0, 20.0, 10.0, 0.0}, {60.0, 60.0, 75.0, 75.0, 100.0, 100.0, 100.0}, 10.0),
             box(60.0, 60.0, 80.0, 80.0, 10.0), court});
     for (std::size_t b = 0; b < city.size(); b++)
     {

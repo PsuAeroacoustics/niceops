@@ -256,11 +256,7 @@ TEST_CASE("the facades in a box are those whose cells meet the box's", "[buildin
     {
         const double cx = 300.0 * unit(rng), cy = 300.0 * unit(rng), a = 4.0 + 20.0 * unit(rng);
         const double b = 4.0 + 20.0 * unit(rng);
-        Footprint f;
-        f.x = {cx - a, cx + a, cx + a, cx - a};
-        f.y = {cy - b, cy - b, cy + b, cy + b};
-        f.top = 10.0;
-        footprints.push_back(f);
+        footprints.push_back(box(cx - a, cy - b, cx + a, cy + b, 10.0));
     }
     const Buildings city(footprints);
     std::vector<std::uint32_t> listed;
