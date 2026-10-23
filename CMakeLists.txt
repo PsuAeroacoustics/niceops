@@ -1309,10 +1309,16 @@ add_test(NAME buildings_no_ground_effect_run COMMAND ${URBAN_RUN} --buildings te
 set_tests_properties(buildings_no_ground_effect_run PROPERTIES FIXTURES_SETUP buildings_receiver_runs)
 add_test(NAME buildings_no_ground_effect_is_the_default COMMAND golden_compare integrated/buildings_no_ground.csv integrated/buildings_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_no_ground_effect_is_the_default PROPERTIES FIXTURES_REQUIRED "buildings_receiver_runs;buildings_sampling_runs")
+# --no_profile_pe moves nothing here: no line from the track to these microphones crosses a row of
+# flat-roofed blocks with a street near grazing (the row's profile, src/profile_pe).
+add_test(NAME buildings_no_profile_pe_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --no_profile_pe --no-gpu -o integrated/buildings_no_profile_pe.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_no_profile_pe_run PROPERTIES FIXTURES_SETUP buildings_no_profile_runs)
+add_test(NAME buildings_no_profile_pe_reaches_no_row COMMAND golden_compare integrated/buildings_no_profile_pe.csv integrated/buildings_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_no_profile_pe_reaches_no_row PROPERTIES FIXTURES_REQUIRED "buildings_no_profile_runs;buildings_sampling_runs")
 add_test(NAME buildings_refuses_no_spectra COMMAND niceops -d databases/S-76D_M3.nod -v databases/S-76D.json -t tracks/S-76D/197421AC.csv --frame_bearing 210 -b tests/data/urban_observers.csv -L warn --buildings tests/data/urban_buildings.csv -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_no_spectra PROPERTIES PASS_REGULAR_EXPRESSION "--buildings needs a database carrying per-band spectra")
 add_test(NAME buildings_refuses_lone_state_tolerance COMMAND ${URBAN_RUN} --state_tolerance 0.1 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(buildings_refuses_lone_state_tolerance PROPERTIES PASS_REGULAR_EXPRESSION "--exact_shared_faces, --edge_source, --state_tolerance, --gpu and --no-gpu go with --buildings")
+set_tests_properties(buildings_refuses_lone_state_tolerance PROPERTIES PASS_REGULAR_EXPRESSION "--exact_shared_faces, --no_profile_pe, --edge_source, --state_tolerance, --gpu and --no-gpu go with --buildings")
 add_test(NAME buildings_refuses_lone_gpu COMMAND ${URBAN_RUN} --no-gpu -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_lone_gpu PROPERTIES PASS_REGULAR_EXPRESSION "--gpu and --no-gpu go with --buildings")
 # Each microphone's floor at its observer's z where it stands on no roof or wall: observers 5 ft up

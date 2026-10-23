@@ -691,6 +691,13 @@ exactly. What to keep:
     twelve of second order 0.15). Twenty points of second order are within 0.022 dB.
   - Together: a street's row to 10 kHz in 0.29 s of one core, from 6.7 s, more accurate than it
     was. What is left is the march itself at the top bands (it grows as f^2).
+  - **In a run it is the dominant cost where rows are crossed.** Sampled over a terraced district
+    (8 rows, 40 ft streets) under the demo approach: 22% of (observer, state) pairs take a
+    profile, at 3.18 s each on one core against 0.086 s for the cascades (37x), which makes the run
+    about 9x. A march over 8 rows is about 160 m, and pairs within 5 degrees march both ways. The
+    bands above 4 kHz take 78% of a march, and its column reaches the source's height (11.8 s one
+    way for a source 122 m up). `niceops --buildings --no_profile_pe` switches it off. Measure such
+    things by sampling pairs (`PointSourceField` and `band_levels` on a few dozen), not a full run.
   - **Sampling the parts in frequency was built and dropped.** Each part with its path's phase
     taken out looked smooth on a plain street (0.01 rad over a third of an octave at 8 kHz), so it
     was solved at probes and taken between in log k, as the shared faces are. A fixed spacing of

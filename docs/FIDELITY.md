@@ -1238,6 +1238,13 @@ block alone, and two touching (a step up or down, no street), are left to the ca
 rms for the block, 0.62 and 1.99 for the steps, which the profile field does not better (0.65 and
 2.03 in two dimensions).
 
+In a run, over a terraced district (8 flat-roofed rows 30 ft deep and high, 600 ft long, 40 ft
+streets, observers 4 ft up in the streets and behind) under the demo approach, 22% of the
+(observer, state) pairs take a row's profile. On 30 of them, sampled, the profile less the cascades
+(`--no_profile_pe`) is −0.20 dB A-weighted on average with a flat source spectrum (median −0.01,
+−2.1 at worst), −0.1 to −0.5 dB a band on average and −5.7 at worst (200 Hz), for 37 times the
+cascades' cost on those pairs (internals).
+
 - **Convergence.** Against the same march in a domain 250 wavelengths high, a street's parts are
   within 0.09 dB at 1, 3.15 and 8 kHz, from a source 100 m off and from a microphone 4 m before the
   row; a domain 15 wavelengths high, which reflected the waves meeting its absorbing layer near

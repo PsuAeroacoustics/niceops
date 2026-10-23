@@ -137,6 +137,10 @@ public:
         // A shared face's aperture at every wavenumber, not sampled
         // (PointPathOptions::sample_shared_faces).
         bool exact_shared_faces = false;
+        // Over a row of flat-roofed blocks with a street, the cascades' rays
+        // rather than the row's profile (PointPathOptions::profile_pe), for
+        // comparison.
+        bool no_profile_pe = false;
         // Diffraction by the edge-source integral (edge_source.hpp), on the
         // CPU.
         bool edge_source = false;

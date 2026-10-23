@@ -5008,6 +5008,7 @@ int run(int argc, char* argv[])
     double patch_size = 4.0;      // m
     double diffuse_radius = 0.0;  // m; 0 for the rays' reach
     bool exact_shared_faces = false;
+    bool no_profile_pe = false;
     bool buildings_edge_source = false;
     double state_tolerance = 0.02;
     bool use_gpu = true;
@@ -5541,6 +5542,9 @@ int run(int argc, char* argv[])
             "With --buildings: take the integral over a flat roof between its two edges at every wavenumber, not "
             "only where the cascade of the two edges' coefficients cannot stand in for it; the reference, about "
             "four times as slow.");
+    app.add_flag("--no_profile_pe", no_profile_pe,
+            "With --buildings: over a row of flat-roofed blocks with a street, crossed near grazing, the cascades' "
+            "rays rather than the row's profile marched by a parabolic equation, for comparison.");
     app.add_flag("--gpu,!--no-gpu", use_gpu,
             "With --buildings: form and sum each pair's rays on the GPU (on by default wherever there is one and the "
             "run's sum is 'cone', 'coherent' or 'energy' without --phase_interval). --gpu asks for it, and is "
@@ -6384,9 +6388,10 @@ int run(int argc, char* argv[])
             || app.count("--relief_scattering") > 0 || app.count("--grating_reflections") > 0)
         input_error("--facade_scattering, --facade_scattering_spectrum, --facade_relief, --relief_scattering, "
                     "--grating_reflections, --patch_size and --diffuse_radius go with --buildings.");
-    else if (exact_shared_faces || buildings_edge_source || app.count("--state_tolerance") > 0
+    else if (exact_shared_faces || no_profile_pe || buildings_edge_source || app.count("--state_tolerance") > 0
             || app.count("--gpu") > 0 || app.count("--no-gpu") > 0)
-        input_error("--exact_shared_faces, --edge_source, --state_tolerance, --gpu and --no-gpu go with --buildings.");
+        input_error("--exact_shared_faces, --no_profile_pe, --edge_source, --state_tolerance, --gpu and --no-gpu go "
+                    "with --buildings.");
     else if (app.count("--ray_coherence") > 0 || app.count("--coherence_angle") > 0
             || app.count("--phase_interval") > 0)
         input_error("--ray_coherence, --coherence_angle and --phase_interval go with --buildings.");
@@ -6712,6 +6717,7 @@ int run(int argc, char* argv[])
         input.diffuse_radius = diffuse_radius;
         input.turbulence = scattering;
         input.exact_shared_faces = exact_shared_faces;
+        input.no_profile_pe = no_profile_pe;
         input.edge_source = buildings_edge_source;
         if (buildings_edge_source && use_gpu && app.count("--gpu") > 0)
             input_error("--edge_source is the CPU's; --gpu does not take it.");

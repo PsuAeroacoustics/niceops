@@ -463,6 +463,7 @@ std::shared_ptr<const UrbanDistrict> UrbanDistrict::read(const std::string& file
         d.reflection[f] = 1.0 - d.input.absorption[d.city.facade_building(f)];
     d.floor_reflection = 1.0 - input.floor_absorption;
     d.paths.sample_shared_faces = !input.exact_shared_faces;
+    d.paths.profile_pe = !input.no_profile_pe;
     d.paths.edge_source = input.edge_source;
     if (!input.scattering_file.empty())
         d.scattering_spectrum = read_scattering_spectrum(input.scattering_file, input.units);

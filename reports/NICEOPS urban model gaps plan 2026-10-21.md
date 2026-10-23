@@ -128,6 +128,19 @@ EDGE barely reach it. A row costs 0.29 s to 10 kHz for each microphone and state
 the GPU path the profile factors are still formed on the CPU. A terraced district with a low approach,
 run with the profile and without, would say whether a run can afford it and what it moves. Needs a run
 flag to switch it off (`--no_profile_pe` is point_field's only).
+- *Measured (2026-10-22), by sampling, not a full run* (a full one ran over two hours on this laptop,
+  which sleeps). `niceops --buildings` now takes `--no_profile_pe`; the shipped test district reaches no
+  row (byte-identical, a CTest). A synthetic terraced district under the demo approach: 8 flat-roofed
+  rows 30 ft deep and high, 600 ft long, 40 ft streets, 264 observers 4 ft up in the streets and
+  behind. 22% of (observer, state) pairs take a profile. Per such pair, one core, 25 Hz-10 kHz: 3.18 s
+  with the profile, 0.086 s with the cascades (37x) -- the march spans 8 rows, about 160 m, and
+  often both ways -- so a run there costs about 9x. What it moves (30 pairs): A-weighted with a flat
+  source spectrum, profile less cascades -0.20 dB mean, -0.01 median, -2.1 at worst; by band -0.1
+  to -0.5 dB mean, -5.7 at worst (200 Hz). The march's cost goes as f^2: on one 8-row cross-section
+  the bands to 1 kHz took 3.6% of it, to 2 kHz 8.2%, to 4 kHz 21.6%. Its column also reaches the
+  source's height (11.8 s one way with the source 122 m up), where the start needs only the wave's
+  angles. Decision for the user: which lever, if any (a frequency cap with a fade to the cascades;
+  the column's height; profile off by default in the run).
 
 **5. Deferred, with the evidence for deferring.**
 - *Step 1, part 2 (the double transition).* A strip under 0.5 m wide where a face's plane passes
