@@ -6,8 +6,11 @@ Test with the asserts live, as CI does (`-DNICEOPS_ASSERTS=ON`; see [build.md](b
 and run the whole suite with no `-E` exclusion:
 
 ```sh
-ctest --test-dir build --output-on-failure
+ctest --test-dir build --output-on-failure -j8
 ```
+
+CI runs it in parallel (`-j$(nproc)`); the fixtures below are what make that safe, so a new
+comparison must name the fixture of every run it reads.
 
 `ctest -N` lists the tests; this file gives no count, because it goes stale. Every CTest runs
 with the **source root** as its working directory. Most of them run `niceops` and compare its
@@ -37,7 +40,9 @@ output with a file in `golden/` or with another run, through `golden_compare`:
   fixture (`FIXTURES_SETUP`/`FIXTURES_REQUIRED`); `ctest -j` and `ctest -R` then run the
   producer first.
 
-The Catch2 binary is `unit_test` under CTest; run it directly by tag for speed
+The Catch2 binary runs under CTest in four shards (`unit_test_0` to `unit_test_3`, Catch2's
+`--shard-count`), so that `ctest -j` runs them side by side; each is its own process, so no case
+may rely on another's leftovers. Run it directly by tag for speed
 (`build/niceops_unit_tests "[sphere_database]"`). Hidden Catch cases (tags starting with `.`,
 such as `[.bump_table]` and `[.terrain_files]`) write input files for CTests and run only when
 a CTest names them.
@@ -177,7 +182,9 @@ Notes on each:
   The moves are in [HISTORY](../HISTORY.md#changes-that-affect-results).
 - **`buildings_scattering.csv`** was made by the build that added `--facade_scattering` under
   `--buildings`: the test district's seven microphones in a trajectory run, every wall scattering
-  0.3, on the CPU (`--no-gpu`). It pins the run's own diffuse field, which no table carries, and
+  0.3, on the CPU (`--no-gpu`). Like every run over the test district, it takes the demo track at
+  every 4th state (`tests/data/urban_track_every4.csv`, a quarter of the cost; the golden moved
+  0.023 dB when it left the full track). It pins the run's own diffuse field, which no table carries, and
   the point model's rays under it: it was regenerated with each deliberate change to those rays
   (reflections at a twice-diffracted ray's ends and between its edges, three roof edges, a floor
   bounce between two edges, UTD's edge ends, a shared face's aperture at its limit, a flat face's

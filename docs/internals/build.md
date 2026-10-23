@@ -115,8 +115,12 @@ facade in namespace `plt` (`figure`, `contourf`, `tricontourf`, `plot`, labels, 
   from the build and compiles `src/plotting_disabled.cpp` instead: every entry point exists and
   only warns, and `available()` returns false. `run()` refuses `-p`, `-f` and `-F` up front in
   such a build, before anything runs, so the stubs are never reached; they exist so that a
-  future caller that forgets the check degrades quietly instead of failing to link. CI's
-  "without plotting" job is the only build of that file, so it does not rot unseen.
+  future caller that forgets the check degrades quietly instead of failing to link. CI builds
+  with plotting only, so the plotting build compiles that file as well, into an object library
+  linked nowhere, and `plotting_stub_is_complete` (`tests/check_plotting_stub.cmake`) compares the
+  two objects' `plt::` symbols with `nm`: an entry point added to `plotting.cpp` alone fails it
+  rather than the minimal build's link. That a build without Python compiles at all is the GCC
+  recipe's to show (it is `-DNICEOPS_PLOTTING=OFF`).
 - **Figure names.** The `-F` state figures are written as `base + "_" + name + "_" + ext`, so
   the separator lands before the extension (`state_CT_.png`, `state_mu_.png`,
   `state_gamma_.png`, `state_z_.png`). That is the D original's naming, which the reference

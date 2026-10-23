@@ -51,7 +51,9 @@ Commands and options are in `README.md`; rationale is in
   Build and test a GPU change on a Mac; the GCC check above covers the disabled backend.
 - **Keep the C++ sources in one static library.** A separate target that calls back into
   `niceops_core` makes a cycle, which breaks Linux only. `-DNICEOPS_PLOTTING=OFF` is the only
-  build that compiles `src/plotting_disabled.cpp`.
+  build that links `src/plotting_disabled.cpp`; CI builds with plotting only, and compiles the stub
+  there for `plotting_stub_is_complete`, which holds it to every `plt::` function `plotting.cpp`
+  defines.
 - **`state/`, `integrated/`, `log/` and `figures/` are not tracked.** Every writer must create
   its own parent directory (`ensure_parent_directory`, `src/util/paths.hpp`). A working tree is
   therefore not a faithful test of a checkout: verify in a clone (`git clone --no-hardlinks .
@@ -61,7 +63,8 @@ Commands and options are in `README.md`; rationale is in
 
 ## Tests
 
-- Run the whole suite as CI does: `ctest --test-dir build --output-on-failure`, with no `-E`.
+- Run the whole suite as CI does: `ctest --test-dir build --output-on-failure -j8`, with no `-E`.
+  CI runs in parallel, so a comparison must name the fixture of every run it reads.
   CTests run with the **source root** as working directory. For speed, run Catch2 directly
   (`build/niceops_unit_tests "[sphere_database]"`, by tag or name). Never write a test count
   into a doc; `ctest -N` gives it. `regression_default` runs the demo case and feeds

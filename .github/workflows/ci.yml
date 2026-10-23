@@ -21,6 +21,8 @@ concurrency:
 
 env:
   BUILD_TYPE: Release
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_MAXSIZE: 500M
 
 jobs:
   build:
@@ -30,28 +32,10 @@ jobs:
       || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
 
-    strategy:
-      # Report both configurations even when one fails; which one broke is the
-      # useful part.
-      fail-fast: false
-      matrix:
-        include:
-          # The default build.  Plotting embeds Python, and the first configure
-          # creates a virtual environment and pip-installs matplotlib into it.
-          # python3-venv provides both `python3 -m venv` and the ensurepip that
-          # populates it; on Debian and Ubuntu it is packaged separately from
-          # python3 itself, so without it the venv step fails.
-          - name: with plotting
-            packages: libnetcdf-dev python3-dev python3-venv
-            options: ""
-          # The minimal build: netCDF and nothing else.  Nothing else compiles
-          # plotting_disabled.cpp, so without this job it rots silently the
-          # first time a plt:: entry point is added.
-          - name: without plotting
-            packages: libnetcdf-dev
-            options: -DNICEOPS_PLOTTING=OFF
-
-    name: ${{ matrix.name }}
+    # One configuration, with plotting.  A second job without plotting used to run the whole suite
+    # again for the sake of plotting_disabled.cpp, which nothing else compiles; the plotting build
+    # now compiles it too and plotting_stub_is_complete holds it to plotting.cpp's entry points.
+    name: build and test
 
     steps:
     - uses: actions/checkout@v4
@@ -59,15 +43,34 @@ jobs:
     - name: Install dependencies
       # apt-get update first: a runner image's package lists go stale between
       # rebuilds often enough that a bare install 404s.
+      #
+      # Plotting embeds Python, and the first configure creates a virtual
+      # environment and pip-installs matplotlib into it.  python3-venv provides
+      # both `python3 -m venv` and the ensurepip that populates it; on Debian and
+      # Ubuntu it is packaged separately from python3 itself, so without it the
+      # venv step fails.
       run: |
         sudo apt-get update
-        sudo apt-get install -y ${{ matrix.packages }}
+        sudo apt-get install -y libnetcdf-dev python3-dev python3-venv ccache
+
+    - name: Restore the compiler cache
+      # Keyed by commit, restored from the newest: a push that touches a few
+      # sources recompiles those and takes the rest from the cache.
+      uses: actions/cache@v4
+      with:
+        path: .ccache
+        key: ccache-${{ runner.os }}-${{ github.sha }}
+        restore-keys: ccache-${{ runner.os }}-
 
     - name: Configure
-      run: cmake -S . -B build -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DNICEOPS_ASSERTS=ON ${{ matrix.options }}
+      run: >-
+        cmake -S . -B build -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DNICEOPS_ASSERTS=ON
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache
 
     - name: Build
-      run: cmake --build build --config $BUILD_TYPE -j$(nproc)
+      run: |
+        cmake --build build --config $BUILD_TYPE -j$(nproc)
+        ccache --show-stats
 
     - name: Check the plotting environment
       # CMake only warns when the venv or the matplotlib install fails, so that
@@ -75,13 +78,14 @@ jobs:
       # place that should be strict about it: without this, the job stays green
       # while quietly falling back to the system interpreter, and the bundled
       # environment is never actually tested.
-      if: matrix.options == ''
       run: build/pyenv/bin/python -c "import matplotlib; print(matplotlib.__version__)"
 
     - name: Test
       # --output-on-failure rather than -V: the suite runs tens of thousands of
       # assertions and 1.8M self-test samples, and the passing ones are noise.
-      run: ctest --test-dir build -C $BUILD_TYPE --output-on-failure
+      # In parallel: every comparison is tied to the runs it reads by a fixture
+      # (docs/internals/testing.md), and the serial suite took over half an hour.
+      run: ctest --test-dir build -C $BUILD_TYPE --output-on-failure -j$(nproc)
 
     - name: Draw the figures
       # No CTest case passes -p/-f/-F, so the plotting path is compiled but
@@ -91,7 +95,6 @@ jobs:
       #
       # After the tests, not before: this rewrites integrated/197421_LAE.csv,
       # which regression_golden compares.
-      if: matrix.options == ''
       run: |
         mkdir -p ci-figures
         build/niceops -f ci-figures/footprint.png -F ci-figures/state.png
@@ -102,7 +105,8 @@ jobs:
       # fatal() writes its reason to log/niceops.log and calls abort(), so a
       # failed run prints nothing at all to stdout or stderr -- ctest reports
       # only "Subprocess aborted" and an empty output block. Surface the log
-      # inline so a red build says why without downloading the artifact.
+      # inline so a red build says why without downloading the artifact.  The
+      # tests run in parallel, so their lines interleave; grep for the reason.
       if: failure()
       run: |
         echo "--- last 40 lines of log/niceops.log ---"
@@ -111,10 +115,9 @@ jobs:
         grep -E '\[(fatal|error)\]' log/niceops.log || echo "(none)"
 
     - name: Upload log
-      # Named per job: upload-artifact v4 refuses two uploads under one name.
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: log-${{ matrix.options == '' && 'plotting' || 'minimal' }}
+        name: log
         path: log/
         if-no-files-found: ignore
