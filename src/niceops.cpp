@@ -6042,13 +6042,11 @@ int run(int argc, char* argv[])
                     "or use a geodetic trajectory, which carries one.");
     }
 
-    // Start stopwatch
-    auto watch_start = std::chrono::steady_clock::now();
     // Each distinct database is loaded once, on first use, and held until the
-    // last trajectory that names it; the front one is loaded here, for the
-    // standalone jobs below as well, and held to the end, where the provenance
-    // reads it.  Each Database owns its own triangulation, so several can be
-    // live at once.  Keyed by database_key().
+    // last trajectory that names it; the front one is loaded by load_front(),
+    // for the standalone jobs below or before the trajectory loop, and held to
+    // the end, where the provenance reads it.  Each Database owns its own
+    // triangulation, so several can be live at once.  Keyed by database_key().
     std::map<std::string, Database> databases;
     std::map<std::string, std::size_t> last_use;
     for (std::size_t i = 0; i < path_count; i++)
@@ -6068,71 +6066,82 @@ int run(int argc, char* argv[])
     if (self_test && mask_suspect_option->count() > 0)
         input_error("--self_test checks the database as the file holds it; it does not combine "
                 "with --mask_suspect_cells.");
-    Database& database = databases.try_emplace(front_key, front_database, database_load).first->second;
-    auto t1 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()
-            - watch_start)
-                        .count();
-    log("Database loaded in ", t1 / 1000.0, " seconds.");
-
-    if (!sphere_file.empty() || !aam_file.empty())
+    // Loaded where it is first needed: after every check of the command line
+    // and of the inputs that do not come from the database, so a refusal does
+    // not pay for opening it first.
+    const auto load_front = [&]() -> Database& {
+        const auto watch_start = std::chrono::steady_clock::now();
+        Database& loaded = databases.try_emplace(front_key, front_database, database_load).first->second;
+        const auto t1 = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - watch_start).count();
+        log("Database loaded in ", t1 / 1000.0, " seconds.");
+        return loaded;
+    };
+    // The standalone jobs read the database alone: they stop before the
+    // run's checks, as they always have.
+    if (!sphere_file.empty() || !aam_file.empty() || self_test)
     {
-        // The writers create with NC_CLOBBER.  `-d X --export_sphere X` replaced a
-        // database built over hours in panam with a one-sphere file, and exited 0.
-        for (const auto* output : {&sphere_file, &aam_file})
+        Database& database = load_front();
+        if (!sphere_file.empty() || !aam_file.empty())
         {
-            std::error_code ignored;
-            if (output->empty() || !std::filesystem::exists(*output, ignored))
-                continue;
-            for (const auto& source : database_files)
+            // The writers create with NC_CLOBBER.  `-d X --export_sphere X` replaced a
+            // database built over hours in panam with a one-sphere file, and exited 0.
+            for (const auto* output : {&sphere_file, &aam_file})
             {
-                if (std::filesystem::equivalent(*output, source, ignored))
-                    input_error("--export_sphere/--export_aam would overwrite the database it reads, ", source,
-                                ". Give another file name.");
+                std::error_code ignored;
+                if (output->empty() || !std::filesystem::exists(*output, ignored))
+                    continue;
+                for (const auto& source : database_files)
+                {
+                    if (std::filesystem::equivalent(*output, source, ignored))
+                        input_error("--export_sphere/--export_aam would overwrite the database it reads, ", source,
+                                    ". Give another file name.");
+                }
             }
+            // A standalone job: interpolate the database down to one operating
+            // condition and write that sphere out.  No trajectory is involved.
+            // --blend and --load_factor_correction apply here as in a run: an
+            // exported sphere is what a state at this condition would hear.
+            auto export_blend = blend_options;
+            if (export_blend.policy == BlendPolicy::aam && std::isnan(database.tip_speed()))
+                export_blend.tip_speed = configure_vehicle(vehicle_files.front()).tip_speed;
+            if (export_blend.load_factor_correction == LoadFactorCorrection::two_sided
+                    && !database.fixed_load_factor())
+            {
+                input_error("--load_factor_correction two_sided applies a fixed_load_factor database's "
+                        "law, and ", front_database, " is not one: its load factors are spheres.");
+            }
+            const auto sphere = database.interpolate_sphere(
+                    sphere_condition[0], sphere_condition[1], sphere_condition[2], export_blend);
+            if (!sphere_file.empty())
+                write_sphere(sphere, sphere_file);
+            if (!aam_file.empty())
+            {
+                // The tip speed turns the non-dimensional advance ratio back into
+                // the airspeed the AAM format records.  Prefer the one the database
+                // itself records, so an exported sphere cannot pick up the tip speed
+                // of whatever unrelated vehicle file happened to be on the command
+                // line; fall back to the vehicle file for older databases.
+                const double tip_speed = !std::isnan(database.tip_speed())
+                        ? database.tip_speed()
+                        : configure_vehicle(vehicle_files.front()).tip_speed;
+                write_aam_sphere(sphere, aam_file, tip_speed);
+            }
+            return 0;
         }
-        // A standalone job: interpolate the database down to one operating
-        // condition and write that sphere out.  No trajectory is involved.
-        // --blend and --load_factor_correction apply here as in a run: an
-        // exported sphere is what a state at this condition would hear.
-        auto export_blend = blend_options;
-        if (export_blend.policy == BlendPolicy::aam && std::isnan(database.tip_speed()))
-            export_blend.tip_speed = configure_vehicle(vehicle_files.front()).tip_speed;
-        if (export_blend.load_factor_correction == LoadFactorCorrection::two_sided
-                && !database.fixed_load_factor())
-        {
-            input_error("--load_factor_correction two_sided applies a fixed_load_factor database's "
-                    "law, and ", front_database, " is not one: its load factors are spheres.");
-        }
-        const auto sphere = database.interpolate_sphere(
-                sphere_condition[0], sphere_condition[1], sphere_condition[2], export_blend);
-        if (!sphere_file.empty())
-            write_sphere(sphere, sphere_file);
-        if (!aam_file.empty())
-        {
-            // The tip speed turns the non-dimensional advance ratio back into
-            // the airspeed the AAM format records.  Prefer the one the database
-            // itself records, so an exported sphere cannot pick up the tip speed
-            // of whatever unrelated vehicle file happened to be on the command
-            // line; fall back to the vehicle file for older databases.
-            const double tip_speed = !std::isnan(database.tip_speed())
-                    ? database.tip_speed()
-                    : configure_vehicle(vehicle_files.front()).tip_speed;
-            write_aam_sphere(sphere, aam_file, tip_speed);
-        }
-        return 0;
-    }
 
-    if (self_test)
-    {
-        // Historical note: this used to fail, and a D-era comment here recorded
-        // one sample disagreeing by ~1.7 dB.  The cause was legacy hover
-        // directivity (see repair_legacy_hover_directivity); with that repaired
-        // the self test passes on every shipped database.
-        database.self_test(front_database);
-        // And stop: the rest of main is the demo case, whose output file the
-        // golden tests read, so a self test that ran it too rewrote that file
-        // under any test running beside it.
-        return 0;
+        if (self_test)
+        {
+            // Historical note: this used to fail, and a D-era comment here recorded
+            // one sample disagreeing by ~1.7 dB.  The cause was legacy hover
+            // directivity (see repair_legacy_hover_directivity); with that repaired
+            // the self test passes on every shipped database.
+            database.self_test(front_database);
+            // And stop: the rest of main is the demo case, whose output file the
+            // golden tests read, so a self test that ran it too rewrote that file
+            // under any test running beside it.
+            return 0;
+        }
     }
 
     // The one place the user's units become meters.  Everything above is in
@@ -6978,6 +6987,8 @@ int run(int argc, char* argv[])
     // needs resampling; neither ever coarsens a track that is already finer.
     options.geodetic.resample_dt = dt;
     options.geodetic.path_smoothing = path_smoothing;
+
+    Database& database = load_front();
 
     std::size_t failed_paths = 0;
     // The operations the run totals stand for: each finished trajectory's
