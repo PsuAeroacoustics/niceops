@@ -242,6 +242,22 @@ from the D original. The blend in §2.3 is applied at each of the four grid corn
 corner with no data after the blend is dropped from the bilinear interpolation in the same way,
 and the other corners' weights are renormalized.
 
+**The frame.** In steady flight $\hat{\mathbf{n}}$ is vertical and the nose horizontal, so the
+sphere is level, as PANAM's spheres and NORAH2's hemispheres are. AAM's sphere is fixed to the
+body, whose pitch is the deck's angle of attack plus the flight path angle; with AOA 0 its
+nose is the velocity, the level frame pitched nose-up by $\gamma$. PANAM pitches such spheres to
+level as it builds, and a database whose root `sphere_frame` is anything but `level` is
+refused. `--export_aam` writes the other way: each cell of the exported grid is a direction in
+the flight-path frame at the exported $\gamma$, $(f, s, d)$ (forward, starboard, down), read at
+its level direction
+
+$$
+f_\ell = f\cos\gamma + d\sin\gamma, \qquad s_\ell = s, \qquad d_\ell = -f\sin\gamma + d\cos\gamma
+$$
+
+with the stencil above. AAM pitches it back by the track's $\gamma$, so a deck flown at AOA 0
+hears the levels NICEOPS hears. At $\gamma = 0$ the export is the sphere's own grid.
+
 ## 3. Trajectories
 
 **AC state tracks** (the 27-column NASA/FAA format) carry positions, velocities and

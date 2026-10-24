@@ -240,7 +240,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `-j`, `--threads` | Worker threads for the observer loop. 0 (default) uses one per hardware thread; 1 runs serially. The output is the same at any count. |
 | `--db_cutoff` | Skip evaluations that provably fall below this level, dB. Off by default; read [the caveat](#--db_cutoff). |
 | `--export_sphere` | Interpolate a whole noise sphere at `--sphere_condition` and write it as a one-group `.nod` database. |
-| `--export_aam` | The same sphere in AAM/RNM format. Needs a database with spectra. |
+| `--export_aam` | The same sphere in AAM/RNM format, in AAM's flight-path frame (fly the AAM deck at AOA 0). Needs a database with spectra. |
 | `--sphere_condition` | The condition to export at: advance ratio, flight path angle, C<sub>T</sub>. `--blend` and `--load_factor_correction` apply. |
 | `--self_test` | Check every channel of the database against what the run's evaluation returns for it, then exit. |
 | `-p`, `--plotting` | Plot the footprint with the flight track over it ([Plotting](#plotting)). |
@@ -506,7 +506,11 @@ A database may carry per-band spectra beside the overall A-weighted level: a `fr
 dimension and an `amplitude(PHI, THETA, frequency)` array per sphere. It then runs the spectral
 path by default, and serves every option that works on bands. `--export_aam` writes a sphere in
 the AAM/RNM hemisphere format, whose payload is `AMPLITUDE(PHI, THETA, FREQUENCY)`, so it needs
-spectra. Of the shipped databases, the six `_fixed_load_factor` files of the 2017 aircraft carry
+spectra. AAM fixes its sphere to the body, pitched by the deck's angle of attack plus the flight
+path angle, so the export is pitched nose-up by the condition's flight path angle from NICEOPS's
+level sphere, and records `sphere_frame = flight_path`: an AAM deck flown at AOA 0 then hears
+what NICEOPS hears. A database is level; one that records another `sphere_frame` is refused.
+Of the shipped databases, the six `_fixed_load_factor` files of the 2017 aircraft carry
 spectra; the S-76D demo database does not, so the demo case runs broadband.
 
 ### Screening a database
