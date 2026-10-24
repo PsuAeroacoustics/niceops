@@ -533,8 +533,11 @@ set_tests_properties(screen_database_refuses_two_databases PROPERTIES PASS_REGUL
 set(UNIT_TEST_SHARDS 12)
 math(EXPR last_shard "${UNIT_TEST_SHARDS} - 1")
 foreach(shard RANGE ${last_shard})
-  add_test(NAME unit_test_${shard} COMMAND niceops_unit_tests --shard-count ${UNIT_TEST_SHARDS} --shard-index ${shard} WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  add_test(NAME unit_test_${shard} COMMAND niceops_unit_tests "~[extended]" --shard-count ${UNIT_TEST_SHARDS} --shard-index ${shard} WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 endforeach()
+# The cases tagged [extended] (accuracy against reference solutions, wide sweeps) run as one test,
+# which CI leaves out with the other extended tests (tests/extended.cmake).
+add_test(NAME unit_test_extended COMMAND niceops_unit_tests "[extended]" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 # --manifest: the run's record.  The run is a plain test (exit status), the record is read back.
 add_test(NAME manifest_run COMMAND niceops --no-spectral --no-ground_effect --gridstep 2000 -L warn -o integrated/manifest_demo.csv --manifest integrated/manifest_demo.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(manifest_run PROPERTIES FIXTURES_SETUP manifest_demo_run)
@@ -2513,3 +2516,6 @@ add_test(NAME terrain_screening_needs_spectra COMMAND niceops -d databases/S-76D
 set_tests_properties(terrain_screening_needs_spectra PROPERTIES FIXTURES_REQUIRED terrain_file PASS_REGULAR_EXPRESSION "--terrain_screening is per band, and databases/S-76D_M3.nod carries no per-band spectra")
 add_test(NAME terrain_screening_table_needs_ground COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --no-ground_effect --propagation_table tables/ground_model_test.nc ${SCREENING} -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_screening_table_needs_ground PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" PASS_REGULAR_EXPRESSION "--terrain_screening cnossos with --propagation_table needs a ground model")
+
+# Which tests CI runs (label `extended` for the rest), checked against the fixtures.
+include(tests/extended.cmake)

@@ -112,7 +112,7 @@ TEST_CASE("over a rigid floor the FDTD's field is the two rays'", "[fdtd]")
     REQUIRE_THROWS_AS(solve_fdtd(s, {box}, source, {Vec3(0.203, 0.0, 0.1)}), std::invalid_argument);
 }
 
-TEST_CASE("by a rigid wedge the FDTD's field is the edge-source integral's", "[fdtd]")
+TEST_CASE("by a rigid wedge the FDTD's field is the edge-source integral's", "[extended][fdtd]")
 {
     // A right-angled wedge, its edge along y at x = 0, z = 1 m, solid below the
     // roof and beyond the wall; no floor.  The integral over the whole line is
@@ -168,7 +168,7 @@ TEST_CASE("by a rigid wedge the FDTD's field is the edge-source integral's", "[f
     CHECK(std::sqrt(square / count) < (order == 4 ? 0.03 : 0.12));
 }
 
-TEST_CASE("an absorbing FDTD wall reflects as its impedance says", "[fdtd]")
+TEST_CASE("an absorbing FDTD wall reflects as its impedance says", "[extended][fdtd]")
 {
     // A wall at x = 0.3 m across the whole domain, absorbing 0.36 at normal
     // incidence: zeta = 9, R = (zeta cos - 1) / (zeta cos + 1).  No floor; the
@@ -216,7 +216,7 @@ TEST_CASE("an absorbing FDTD wall reflects as its impedance says", "[fdtd]")
             std::invalid_argument);
 }
 
-TEST_CASE("in a concave corner the FDTD's field is the source and its three images", "[fdtd]")
+TEST_CASE("in a concave corner the FDTD's field is the source and its three images", "[extended][fdtd]")
 {
     // A floor at z = 0.3 m and a wall at y = 0.5 m, both through the whole
     // domain and on the grid's faces: the exact field is the source and its
@@ -259,7 +259,7 @@ TEST_CASE("in a concave corner the FDTD's field is the source and its three imag
         }
 }
 
-TEST_CASE("fourth order with the warp holds the phase over twenty wavelengths at eight cells a wavelength", "[fdtd]")
+TEST_CASE("fourth order with the warp holds the phase over twenty wavelengths at eight cells a wavelength", "[extended][fdtd]")
 {
     // Two rays over a floor out to 2.3 m, 1-2.5 kHz bands, 8 cells a
     // wavelength at the top band's upper edge.  Over that many wavelengths
@@ -316,7 +316,7 @@ TEST_CASE("the FDTD's fastest waves are the dispersion relation's", "[fdtd]")
     CHECK(std::abs(fdtd_fastest_group_speed(4, 0.3) - fdtd_fastest_group_speed(4, fourth)) > 0.05);
 }
 
-TEST_CASE("culling the march to its light cones leaves the recordings a full march's", "[fdtd]")
+TEST_CASE("culling the march to its light cones leaves the recordings a full march's", "[extended][fdtd]")
 {
     // Along a 1.8 m strip, past a block and beside a wall: the source's
     // cone reaches the far end late, and the receivers' cones shrink to

@@ -143,7 +143,7 @@ TEST_CASE("a screen scaled by a strength profile has each height's variance", "[
     }
 }
 
-TEST_CASE("a strength profile scales the march's screens by its square root", "[pe_turbulence]")
+TEST_CASE("a strength profile scales the march's screens by its square root", "[extended][pe_turbulence]")
 {
     // The mean-field decay of pe_turbulent_mean_field_decays with a uniform
     // profile at a quarter of the reference: the field must decay as gamma_t / 4
@@ -190,7 +190,7 @@ TEST_CASE("a strength profile scales the march's screens by its square root", "[
     }
 }
 
-TEST_CASE("deep in a shadow the scattered level is linear in gamma_t", "[pe_turbulence]")
+TEST_CASE("deep in a shadow the scattered level is linear in gamma_t", "[extended][pe_turbulence]")
 {
     // Single scattering puts energy into a shadow in proportion to gamma_t:
     // three times the strength is 4.77 dB more, where the still field is far

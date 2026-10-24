@@ -290,7 +290,7 @@ TEST_CASE("a path's own receiver height is the ground model's, past its table", 
     std::filesystem::remove(path);
 }
 
-TEST_CASE("spectral_direction_bounds really bounds the spectral level", "[spectral][bounds]")
+TEST_CASE("spectral_direction_bounds really bounds the spectral level", "[extended][spectral][bounds]")
 {
     // As "DirectionBounds really bounds the level" does for the broadband
     // path: the spectral peak search and --db_cutoff skip whatever this puts

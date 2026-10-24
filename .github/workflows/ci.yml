@@ -3,6 +3,13 @@ name: Build and Test
 on:
   push:
   pull_request:
+  # By hand, from the Actions tab: `full` runs the extended tests too.
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Run the whole suite, extended tests included
+        type: boolean
+        default: false
 
 # A branch in this repo with a PR open fires both events, so every commit built
 # twice -- four jobs with the matrix, and the pull_request pair was an exact
@@ -29,6 +36,7 @@ jobs:
     # Skip the duplicate: same-repo PRs are already covered by their push run.
     if: >-
       github.event_name == 'push'
+      || github.event_name == 'workflow_dispatch'
       || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
 
@@ -93,7 +101,19 @@ jobs:
       # assertions and 1.8M self-test samples, and the passing ones are noise.
       # In parallel: every comparison is tied to the runs it reads by a fixture
       # (docs/internals/testing.md), and the serial suite took over half an hour.
-      run: ctest --test-dir build -C $BUILD_TYPE --output-on-failure -j$(nproc)
+      # The extended tests (tests/extended.cmake) are left out: CI is for
+      # catching regressions, and a run by hand with `full` takes them all.
+      #
+      # glibc picks its exp, pow, sin and cos by CPU (FMA and AVX2 variants), and
+      # the variants round differently from each other and from the constants
+      # GCC folds at compile time.  The tests that hold a batch path to its
+      # scalar reference bit for bit then fail by an ULP on some runners' CPUs
+      # and not on others.  Baseline variants everywhere make CI's results the
+      # same on every runner.
+      env:
+        LABEL_FILTER: ${{ inputs.full && ' ' || '-LE extended' }}
+        GLIBC_TUNABLES: glibc.cpu.hwcaps=-AVX2,-FMA
+      run: ctest --test-dir build -C $BUILD_TYPE --output-on-failure -j$(nproc) $LABEL_FILTER
 
     - name: Draw the figures
       # No CTest case passes -p/-f/-F, so the plotting path is compiled but

@@ -262,7 +262,7 @@ TEST_CASE("rays that turn aloft reach into a near-ground shadow", "[stratified]"
     }
 }
 
-TEST_CASE("the layered spreading is the traced ray tube's", "[stratified]")
+TEST_CASE("the layered spreading is the traced ray tube's", "[extended][stratified]")
 {
     const std::vector<double> z = {0.0, 10.0, 60.0, 250.0, 900.0};
     const std::vector<double> c = {340.0, 343.0, 344.5, 343.5, 350.0};

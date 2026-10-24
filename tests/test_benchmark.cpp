@@ -177,7 +177,7 @@ TEST_CASE("the PE's absorption is the medium's", "[benchmark]")
     }
 }
 
-TEST_CASE("case 1: the PE is the direct and image rays over the benchmark ground", "[benchmark]")
+TEST_CASE("case 1: the PE is the direct and image rays over the benchmark ground", "[extended][benchmark]")
 {
     for (const double f : {10.0, 100.0, 1000.0})
     {
@@ -206,7 +206,7 @@ TEST_CASE("case 1: the PE is the direct and image rays over the benchmark ground
     }
 }
 
-TEST_CASE("case 2: the PE is the normal-mode series in downward refraction", "[benchmark]")
+TEST_CASE("case 2: the PE is the normal-mode series in downward refraction", "[extended][benchmark]")
 {
     // Their fig. 4 is 100 Hz to 200 m; this goes to 1 km.  The series is cut
     // at 75 degrees (exact_solutions.hpp).  Uncut, the near-vertical rays that

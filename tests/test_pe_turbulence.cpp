@@ -58,7 +58,7 @@ TEST_CASE("pe_phase_screen_variance", "[pe_turbulence]")
     CHECK(std::fabs(mean) < 0.05 * std::sqrt(variance));
 }
 
-TEST_CASE("pe_turbulent_mean_field_decays", "[pe_turbulence]")
+TEST_CASE("pe_turbulent_mean_field_decays", "[extended][pe_turbulence]")
 {
     // 100 Hz over rigid ground, source and receivers 40 m up; gamma_t chosen
     // so that sigma^2 = 1 at 300 m.

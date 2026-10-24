@@ -171,7 +171,7 @@ TEST_CASE("the profile field refuses a row it does not take", "[profile_pe]")
 // boundary, which its diffraction cancels; the field behind the row is
 // smooth as the receiver crosses them, every 5 cm up through the roof plane
 // and above.
-TEST_CASE("the profile field is smooth across the corner's shadow boundaries", "[profile_pe]")
+TEST_CASE("the profile field is smooth across the corner's shadow boundaries", "[extended][profile_pe]")
 {
     ProfileProblem p;
     p.blocks = {{0, 10, 10}, {20, 30, 10}};
@@ -532,7 +532,7 @@ TEST_CASE("the profile ray is reciprocal", "[profile_pe][point_paths]")
 // four edges over the row; a twice-diffracted ray over a roof keeps its level
 // through its plane, double_wedge.cpp).  Each sweep's largest second
 // difference against its largest field, as in the 2-D test, with and without.
-TEST_CASE("the profile ray comes in and out smoothly", "[profile_pe][point_paths]")
+TEST_CASE("the profile ray comes in and out smoothly", "[extended][profile_pe][point_paths]")
 {
     const double k = 2.0 * pi * 250.0 / 343.2;
     struct Sweep

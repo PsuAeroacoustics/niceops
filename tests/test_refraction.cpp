@@ -140,7 +140,7 @@ TEST_CASE("direct_eigenray matches a numerically traced ray", "[refraction]")
     }
 }
 
-TEST_CASE("the spreading is the traced ray tube's", "[refraction]")
+TEST_CASE("the spreading is the traced ray tube's", "[extended][refraction]")
 {
     // r_eq^2 = r |dr/dtheta| sin|arrival| / cos(launch), with dr/dtheta from
     // two neighboring traced rays and r where each crosses z_r.

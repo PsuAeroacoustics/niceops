@@ -112,7 +112,7 @@ TEST_CASE("the residue series runs on past |q| = 6", "[shadow]")
     CHECK(std::fabs(levels[1] - 0.5 * (levels[0] + levels[2])) < 0.3);
 }
 
-TEST_CASE("through the boundary the transition follows the exact field", "[shadow]")
+TEST_CASE("through the boundary the transition follows the exact field", "[extended][shadow]")
 {
     // Tabulated with the source 20 l up, applied to sources at 30 and 100 m:
     // within 1.5 dB of the residue series from xi = -1.5 to 2, where the ray

@@ -167,7 +167,7 @@ TEST_CASE("GridAxis::locate matches the bilinear cell it replaces", "[sphere_dat
     }
 }
 
-TEST_CASE("DirectionBounds really bounds the level", "[sphere_database]")
+TEST_CASE("DirectionBounds really bounds the level", "[extended][sphere_database]")
 {
     // The observer loop skips a state when this bound puts it below the best
     // level found so far, so the whole peak search is only correct if the bound
