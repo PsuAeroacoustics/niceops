@@ -1087,6 +1087,17 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
         vehicle_weight_newtons_ = root_value;
     speed_reference_ = read_speed_reference(file_ncid);
     azimuth_reference_ = read_azimuth_reference(file_ncid);
+    // NICEOPS's sphere is level: theta from the nose projected into the tip-path
+    // plane, which is horizontal in steady flight, as in PANAM and NORAH2.  AAM's
+    // spheres are pitched by the flight path angle, and panam rotates them to level
+    // as it builds; a database that says it holds anything else is refused, not read
+    // a flight path angle off.
+    if (const auto frame = read_root_text(file_ncid, "sphere_frame"); frame && *frame != "level")
+    {
+        input_error("Database ", datafile_path, " records sphere_frame '", *frame,
+                "'; NICEOPS reads level spheres only. Rebuild it with panam, which rotates "
+                "flight-path spheres to level.");
+    }
     // The atmosphere the broadband EAA was built in, when the builder recorded
     // all three of its values; the rotor speed the spheres were built at.
     const auto build_temperature = read_double_attribute(file_ncid, "build_temperature_K");
@@ -3148,6 +3159,78 @@ void write_coherence_record(int file, const CoherenceRecord& r)
     text("coherence_source", r.source);
 }
 
+// The band levels of a level sphere on its own (phi, theta) grid, but in AAM's
+// frame: AAM's sphere is fixed to the body, whose pitch is the angle of attack
+// plus the flight path angle, so with AOA 0 (the deck AAM's own spheres assume)
+// its nose is the velocity.  Each grid direction is taken from that frame,
+// pitched nose-up by the sphere's flight path angle, into the level one and read
+// with eval's stencil: bilinear in dB, empty corners dropping out.  AAM pitches
+// it back by the track's angle, so it hears what NICEOPS hears.  Laid out as
+// Sphere::amplitudes; a level condition comes back as it is, to the bit.
+std::vector<double> flight_path_frame_amplitudes(const Database::Sphere& sphere)
+{
+    const double gamma = sphere.flight_path_angle * (pi / 180.0);
+    if (gamma == 0.0)
+        return sphere.amplitudes;
+    GridAxis phi_axis, theta_axis;
+    phi_axis.reset(sphere.phis);
+    phi_axis.set_period(360.0);
+    theta_axis.reset(sphere.thetas);
+    // A database that stores no upper half reads its mirror image above the
+    // plane, as eval does.
+    const bool fold_upper = std::none_of(sphere.phis.begin(), sphere.phis.end(),
+            [](double phi) { return std::fabs(phi) > 90.0 + 1e-9; });
+    // The level frame in a z-up world: nose along x, starboard nose x normal.
+    const SphereFrame level {Vec3(0.0, 0.0, 1.0), Vec3(1.0, 0.0, 0.0), Vec3(0.0, -1.0, 0.0)};
+    const double cos_gamma = std::cos(gamma), sin_gamma = std::sin(gamma);
+    const std::size_t n_theta = sphere.thetas.size(), n_bands = sphere.frequencies.size();
+    std::vector<double> rotated(sphere.amplitudes.size());
+    for (std::size_t m = 0; m < sphere.phis.size(); m++)
+    {
+        for (std::size_t n = 0; n < n_theta; n++)
+        {
+            // The direction in the flight-path frame (forward, starboard, down),
+            // then in the level one: its forward axis is (cos, 0, -sin) gamma.
+            const double phi = sphere.phis[m] * (pi / 180.0), theta = sphere.thetas[n] * (pi / 180.0);
+            const double forward = std::cos(theta), starboard = std::sin(theta) * std::sin(phi),
+                         down = std::sin(theta) * std::cos(phi);
+            const double level_forward = cos_gamma * forward + sin_gamma * down;
+            const double level_down = -sin_gamma * forward + cos_gamma * down;
+            const auto angles = lookup_angles(level, Vec3(level_forward, -starboard, -level_down), fold_upper);
+            const auto p = phi_axis.locate(angles[0]);
+            const auto t = theta_axis.locate(angles[1]);
+            const std::size_t corner[4] = {p.lo * n_theta + t.lo, p.lo * n_theta + t.hi,
+                    p.hi * n_theta + t.lo, p.hi * n_theta + t.hi};
+            const double w[4] = {(1.0 - p.fraction) * (1.0 - t.fraction), (1.0 - p.fraction) * t.fraction,
+                    p.fraction * (1.0 - t.fraction), p.fraction * t.fraction};
+            for (std::size_t band = 0; band < n_bands; band++)
+            {
+                double v[4];
+                bool any_empty = false;
+                for (std::size_t k = 0; k < 4; k++)
+                {
+                    v[k] = sphere.amplitudes[corner[k] * n_bands + band];
+                    any_empty = any_empty || is_empty(v[k], w[k]);
+                }
+                double value = 0.0;
+                if (any_empty)
+                {
+                    value = blend_present(v, w);
+                    if (value <= empty_level_db)
+                        value = Database::no_energy_floor_db;
+                }
+                else
+                {
+                    for (std::size_t k = 0; k < 4; k++)
+                        value += w[k] * v[k];
+                }
+                rotated[(m * n_theta + n) * n_bands + band] = value;
+            }
+        }
+    }
+    return rotated;
+}
+
 } // namespace
 
 void write_sphere(const Database::Sphere& sphere, const std::string& path)
@@ -3198,6 +3281,9 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
                          azimuth.c_str()),
                 "writing azimuth_reference");
     }
+    const std::string frame = "level";
+    nc_check(nc_put_att_text(file, NC_GLOBAL, "sphere_frame", frame.size(), frame.c_str()),
+            "writing sphere_frame");
 
     write_coherence_record(file, sphere.coherence);
     write_root_number(file, "rotor_rpm", sphere.rotor_rpm);
@@ -3309,38 +3395,46 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
     const double m2ft = 1.0 / ft2m;
     const double mps2kt = 1.0 / knot;
 
+    // Classic netCDF, as AAM's own spheres and panam's are.
     int file = 0;
-    nc_check(nc_create(path.c_str(), NC_NETCDF4 | NC_CLOBBER, &file), "creating " + path);
+    nc_check(nc_create(path.c_str(), NC_CLOBBER, &file), "creating " + path);
     NcGuard guard(file);
 
     // The AAM/RNM hemisphere layout, as the source spheres themselves carry it:
-    // a handful of scalar descriptors, the three axes, and the spectrum.
+    // a handful of scalar descriptors, the three axes, and the spectrum.  AAM 3.1
+    // reads them by position ("Variable ID mismatch" otherwise), so they are
+    // declared in its order, each scalar with a dimension of its own name;
+    // MASTTILT, which AAM does not read, comes after AMPLITUDE.  Scalar units are
+    // blank-padded to 20 characters, the Fortran field AAM's spheres write.
     auto scalar_dim = [&](const char* name) {
         int dim = 0;
         nc_check(nc_def_dim(file, name, 1, &dim), std::string("defining ") + name);
         return dim;
     };
-    auto scalar_var = [&](const char* name, int dim, const char* unit) {
+    auto define_var = [&](const char* name, int dim, const std::string& unit) {
         int var = 0;
         nc_check(nc_def_var(file, name, NC_FLOAT, 1, &dim, &var), std::string("defining ") + name);
-        nc_check(nc_put_att_text(file, var, "unit", std::strlen(unit), unit),
+        nc_check(nc_put_att_text(file, var, "unit", unit.size(), unit.c_str()),
                 std::string("annotating ") + name);
         return var;
     };
+    auto scalar_var = [&](const char* name, const char* unit) {
+        std::string padded(unit);
+        padded.resize(20, ' ');
+        return define_var(name, scalar_dim(name), padded);
+    };
 
-    const int bb_var = scalar_var("BB", scalar_dim("BB"), "");
-    const int nb_var = scalar_var("NB", scalar_dim("NB"), "");
-    const int pt_var = scalar_var("PT", scalar_dim("PT"), "");
-    const int dsr_var = scalar_var(
-            "DOPPLER_SHIFT_REMOVED", scalar_dim("DOPPLER_SHIFT_REMOVED"), "");
-    const int empty_var = scalar_var("EMPTY_WEIGHT", scalar_dim("EMPTY_WEIGHT"), "POUNDS");
-    const int fuel_var = scalar_var("FUEL_WEIGHT", scalar_dim("FUEL_WEIGHT"), "POUNDS");
-    const int load_var = scalar_var("LOAD_WEIGHT", scalar_dim("LOAD_WEIGHT"), "POUNDS");
-    const int radius_var = scalar_var("RADIUS", scalar_dim("RADIUS"), "FEET");
-    const int fpa_var = scalar_var("FLIGHT_PATH_ANGLE", scalar_dim("FLIGHT_PATH_ANGLE"), "DEGREE");
-    const int pylon_var = scalar_var("PYLON_ANGLE", scalar_dim("PYLON_ANGLE"), "DEGREE");
-    const int speed_var = scalar_var("SPEED", scalar_dim("SPEED"), "KNOTS");
-    const int masttilt_var = scalar_var("MASTTILT", scalar_dim("MASTTILT"), "DEGREE");
+    const int bb_var = scalar_var("BB", "");
+    const int nb_var = scalar_var("NB", "");
+    const int pt_var = scalar_var("PT", "");
+    const int dsr_var = scalar_var("DOPPLER_SHIFT_REMOVED", "");
+    const int empty_var = scalar_var("EMPTY_WEIGHT", "POUNDS");
+    const int fuel_var = scalar_var("FUEL_WEIGHT", "POUNDS");
+    const int load_var = scalar_var("LOAD_WEIGHT", "POUNDS");
+    const int radius_var = scalar_var("RADIUS", "FEET");
+    const int fpa_var = scalar_var("FLIGHT_PATH_ANGLE", "DEGREE");
+    const int pylon_var = scalar_var("PYLON_ANGLE", "DEGREE");
+    const int speed_var = scalar_var("SPEED", "KNOTS");
 
     int xyz_dim = 0, phi_dim = 0, theta_dim = 0, freq_dim = 0;
     nc_check(nc_def_dim(file, "XYZ", 3, &xyz_dim), "defining XYZ dimension");
@@ -3349,21 +3443,30 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
             "defining THETA dimension");
     nc_check(nc_def_dim(file, "FREQUENCY", sphere.frequencies.size(), &freq_dim),
             "defining FREQUENCY dimension");
+    const int masttilt_dim = scalar_dim("MASTTILT");
 
-    const int xyz_var = scalar_var("XYZ", xyz_dim, "FEET");
-    const int phi_var = scalar_var("PHI", phi_dim, "DEGREE");
-    const int theta_var = scalar_var("THETA", theta_dim, "DEGREE");
-    const int freq_var = scalar_var("FREQUENCY", freq_dim, "HERTZ");
+    const int xyz_var = define_var("XYZ", xyz_dim, "FEET");
+    const int phi_var = define_var("PHI", phi_dim, "DEGREE");
+    const int theta_var = define_var("THETA", theta_dim, "DEGREE");
+    const int freq_var = define_var("FREQUENCY", freq_dim, "HERTZ");
 
     int amplitude_var = 0;
     const int amplitude_dims[3] = {phi_dim, theta_dim, freq_dim};
     nc_check(nc_def_var(file, "AMPLITUDE", NC_FLOAT, 3, amplitude_dims, &amplitude_var),
             "defining AMPLITUDE");
     nc_check(nc_put_att_text(file, amplitude_var, "unit", 7, "DECIBEL"), "annotating AMPLITUDE");
+    std::string masttilt_unit("DEGREE");
+    masttilt_unit.resize(20, ' ');
+    const int masttilt_var = define_var("MASTTILT", masttilt_dim, masttilt_unit);
 
     const std::string title = "NICEOPS interpolated sphere";
     nc_check(nc_put_att_text(file, NC_GLOBAL, "title", title.size(), title.c_str()),
             "writing title");
+    // The frame AMPLITUDE is in (flight_path_frame_amplitudes), which panam reads
+    // back to rotate the sphere to level again.
+    const std::string frame = "flight_path";
+    nc_check(nc_put_att_text(file, NC_GLOBAL, "sphere_frame", frame.size(), frame.c_str()),
+            "writing sphere_frame");
     nc_check(nc_enddef(file), "ending define mode");
 
     auto put_scalar = [&](int var, double value) {
@@ -3397,7 +3500,8 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
     put_axis(theta_var, sphere.thetas);
     put_axis(freq_var, sphere.frequencies);
 
-    std::vector<float> amplitude(sphere.amplitudes.begin(), sphere.amplitudes.end());
+    const auto flight_path = flight_path_frame_amplitudes(sphere);
+    std::vector<float> amplitude(flight_path.begin(), flight_path.end());
     nc_check(nc_put_var_float(file, amplitude_var, amplitude.data()), "writing AMPLITUDE");
 
     nc_check(guard.close(), "closing " + path);

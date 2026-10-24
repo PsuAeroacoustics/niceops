@@ -81,7 +81,8 @@ scattered (φ, θ) channels of dBA level and EAA excess-attenuation factor.
 - `interpolate_sphere` warns when the requested condition is outside the envelope (`blend_at`
   clamps it, and the file is labeled with what was asked for).
 - `an exported sphere reloads as the sphere it was, cell for cell` and the AAM readback test pin
-  the payload. They are mutation guards: swapped dBA/EAA, or a dropped load-factor correction,
+  the payload. `an AAM export is pitched by its flight path angle` pins the frame's sign (a
+  level export misses its nose by 10 sin 8° dB), and the readback test AAM's variable order. They are mutation guards: swapped dBA/EAA, or a dropped load-factor correction,
   passed the rest of the suite (see [testing.md](testing.md#mutation-guarded-tests)).
 
 ### `src/predicates.{hpp,cpp}`

@@ -933,6 +933,9 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path);
 // the source spheres themselves arrive in.  Requires spectra: the format's
 // payload is AMPLITUDE(PHI, THETA, FREQUENCY), and there is nothing meaningful
 // to put there when all the database holds is an overall A-weighted level.
+// AMPLITUDE is in AAM's frame, pitched nose-up by the flight path angle from
+// NICEOPS's level one (root attribute sphere_frame = "flight_path"), so a deck
+// flown with AOA 0 orients it as NICEOPS does.
 void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, double tip_speed);
 
 } // namespace niceops

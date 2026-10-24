@@ -484,6 +484,24 @@ TEST_CASE("azimuth_reference is read from the database root and survives export"
     REQUIRE(std::string(to_string(AzimuthReference::track)) == "track");
 }
 
+TEST_CASE("a database whose spheres are not level is refused", "[sphere_database]")
+{
+    // NICEOPS's sphere is level, as PANAM's and NORAH2's are; AAM's is pitched by the
+    // flight path angle.  An export says level and reloads; a database recording the
+    // flight-path frame would be read gamma off, so it is refused.
+    const auto sphere = test::demo_database().interpolate_sphere(0.15, -4.0, 0.006);
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_sphere_frame.nod").string();
+    write_sphere(sphere, path);
+    REQUIRE(Database(path).root_attributes().at("sphere_frame") == "level");
+    int ncid = 0;
+    REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+    REQUIRE(nc_redef(ncid) == NC_NOERR);
+    REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, "sphere_frame", 11, "flight_path") == NC_NOERR);
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+    REQUIRE_THROWS_WITH(Database(path), Catch::Matchers::ContainsSubstring("sphere_frame 'flight_path'"));
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("Spectra survive interpolation and re-export", "[sphere_database]")
 {
     // Spectra are optional, and none of the shipped databases has any.
@@ -1680,9 +1698,10 @@ TEST_CASE("an AAM export lays out its axes and amplitudes as the format says", "
 {
     // AMPLITUDE(PHI, THETA, FREQUENCY), the axes in degrees and hertz, RADIUS in feet
     // and SPEED in knots from the advance ratio and the tip speed.  Nothing read an
-    // AAM file back before this.
+    // AAM file back before this.  Level flight, where AAM's flight-path frame is
+    // the level one, so the payload is the sphere's own to the bit.
     const Database& source = test::demo_database();
-    auto sphere = source.interpolate_sphere(0.15, -4.0, 0.006);
+    auto sphere = source.interpolate_sphere(0.15, 0.0, 0.006);
     const std::size_t bands = 3;
     sphere.frequencies = {125.0, 250.0, 500.0};
     sphere.amplitudes.resize(sphere.cells.size() * bands);
@@ -1729,9 +1748,72 @@ TEST_CASE("an AAM export lays out its axes and amplitudes as the format says", "
                         == static_cast<float>(sphere.amplitudes[(m * theta.size() + n) * bands + f]));
     CHECK(read_floats("RADIUS", 1)[0] == Catch::Approx(sphere.radius / 0.3048).epsilon(1e-6));
     CHECK(read_floats("SPEED", 1)[0] == Catch::Approx(0.15 * tip_speed / knot).epsilon(1e-6));
-    CHECK(read_floats("FLIGHT_PATH_ANGLE", 1)[0] == Catch::Approx(-4.0).margin(1e-6));
+    CHECK(read_floats("FLIGHT_PATH_ANGLE", 1)[0] == Catch::Approx(0.0).margin(1e-6));
+    // AAM 3.1 reads the variables by position: classic netCDF, its order, and
+    // MASTTILT (which it does not read) after AMPLITUDE.
+    int format = 0;
+    REQUIRE(nc_inq_format(ncid, &format) == NC_NOERR);
+    CHECK(format == NC_FORMAT_CLASSIC);
+    const char* order[] = {"BB", "NB", "PT", "DOPPLER_SHIFT_REMOVED", "EMPTY_WEIGHT", "FUEL_WEIGHT",
+            "LOAD_WEIGHT", "RADIUS", "FLIGHT_PATH_ANGLE", "PYLON_ANGLE", "SPEED", "XYZ", "PHI", "THETA",
+            "FREQUENCY", "AMPLITUDE", "MASTTILT"};
+    for (int id = 0; id < static_cast<int>(std::size(order)); id++)
+    {
+        char name[NC_MAX_NAME + 1] = {};
+        REQUIRE(nc_inq_varname(ncid, id, name) == NC_NOERR);
+        CHECK(std::string(name) == order[id]);
+    }
+    std::size_t frame_length = 0;
+    REQUIRE(nc_inq_attlen(ncid, NC_GLOBAL, "sphere_frame", &frame_length) == NC_NOERR);
+    std::string frame(frame_length, ' ');
+    REQUIRE(nc_get_att_text(ncid, NC_GLOBAL, "sphere_frame", frame.data()) == NC_NOERR);
+    CHECK(frame == "flight_path");
     REQUIRE(nc_close(ncid) == NC_NOERR);
     std::filesystem::remove(path);
+}
+
+TEST_CASE("an AAM export is pitched by its flight path angle", "[sphere_database][export]")
+{
+    // AAM's sphere is fixed to the body, pitched by AOA + gamma; NICEOPS's is level.
+    // With levels that grow toward the level frame's straight down, every exported
+    // cell must hold the level of the direction AAM will pitch it to: in a climb the
+    // nose (theta 0) points up and is quieter, in a descent down and louder.  A
+    // sign error, or an export left level, misses by up to 10 sin(gamma) dB.
+    const Database& source = test::demo_database();
+    for (const double gamma : {8.0, -8.0})
+    {
+        auto sphere = source.interpolate_sphere(0.15, gamma, 0.006);
+        sphere.frequencies = {500.0};
+        sphere.amplitudes.resize(sphere.cells.size());
+        for (std::size_t m = 0; m < sphere.phis.size(); m++)
+            for (std::size_t n = 0; n < sphere.thetas.size(); n++)
+                sphere.amplitudes[m * sphere.thetas.size() + n] = 60.0
+                        + 10.0 * std::sin(sphere.thetas[n] * pi / 180.0) * std::cos(sphere.phis[m] * pi / 180.0);
+        const auto path = (std::filesystem::temp_directory_path() / "niceops_aam_pitched.nc").string();
+        write_aam_sphere(sphere, path, 213.0);
+        int ncid = 0, var = 0;
+        REQUIRE(nc_open(path.c_str(), NC_NOWRITE, &ncid) == NC_NOERR);
+        REQUIRE(nc_inq_varid(ncid, "AMPLITUDE", &var) == NC_NOERR);
+        std::vector<float> amplitude(sphere.cells.size());
+        REQUIRE(nc_get_var_float(ncid, var, amplitude.data()) == NC_NOERR);
+        REQUIRE(nc_close(ncid) == NC_NOERR);
+        std::filesystem::remove(path);
+        const double g = gamma * pi / 180.0;
+        double worst = 0.0;
+        for (std::size_t m = 0; m < sphere.phis.size(); m++)
+        {
+            for (std::size_t n = 0; n < sphere.thetas.size(); n++)
+            {
+                const double phi = sphere.phis[m] * pi / 180.0, theta = sphere.thetas[n] * pi / 180.0;
+                const double level_down = -std::sin(g) * std::cos(theta) + std::cos(g) * std::sin(theta) * std::cos(phi);
+                worst = std::max(worst, std::fabs(amplitude[m * sphere.thetas.size() + n] - (60.0 + 10.0 * level_down)));
+            }
+        }
+        INFO("gamma " << gamma);
+        CHECK(worst < 0.1);
+        // The nose itself, read off the sphere's theta 0 row.
+        CHECK(amplitude[0] == Catch::Approx(60.0 - 10.0 * std::sin(g)).margin(0.05));
+    }
 }
 
 TEST_CASE("a negative excess-attenuation factor turns the bounds off", "[sphere_database][bounds]")

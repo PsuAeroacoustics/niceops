@@ -405,6 +405,14 @@ old and new results only with them in mind.
   states, so no golden or validation result moved ([The sphere's nose](MANUAL.md#the-spheres-nose)).
 - **`--export_aam` writes SPEED with the exact knot** (October 2026). It converted m/s to knots
   with 1.94384, which wrote every sphere's speed 2.3e-6 (relative) low; no footprint moved.
+- **`--export_aam` writes AAM's flight-path frame** (October 2026). AAM pitches its sphere by the
+  deck's angle of attack plus the flight path angle, so an AAM deck flown at AOA 0 read the
+  level sphere NICEOPS used to export pitched by $\gamma$: 6-9° on an approach. The export is now
+  pitched to that frame (`sphere_frame = "flight_path"`); a level condition is unchanged. The
+  file is also classic netCDF, with its variables in the order AAM 3.1 reads by position and
+  `MASTTILT` after `AMPLITUDE`. NICEOPS's had `MASTTILT` before `XYZ`, out of that order; AAM
+  refused panam's spheres for their order in the 2026 cross-code runs ("Variable ID mismatch").
+  Runs and footprints are unchanged.
 - **A static operation with `--origin` and no `--frame_bearing`** reads its headings as compass
   bearings in the east/north frame. It used to orient the sphere by its zero velocity.
 - **The `azimuth_reference` attribute.** panam's builder writes it on every database: `track`
