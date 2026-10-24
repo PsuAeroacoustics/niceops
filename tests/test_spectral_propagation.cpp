@@ -22,6 +22,7 @@
 #include "propagation.hpp"
 #include "sphere_database.hpp"
 #include "weighting.hpp"
+#include "demo_database.hpp"
 
 using namespace niceops;
 
@@ -35,7 +36,7 @@ constexpr double kFlatLevel = 90.0;
 // spectrum, so anything the propagation does shows up undiluted by directivity.
 std::string write_flat_spectral_database(const std::string& name)
 {
-    Database plain("databases/S-76D_M3.nod");
+    const Database& plain = test::demo_database();
     auto sphere = plain.interpolate_sphere(0.15, -4.0, 0.006);
     sphere.frequencies = kBands;
     sphere.amplitudes.assign(sphere.cells.size() * kBands.size(), kFlatLevel);
@@ -289,7 +290,7 @@ TEST_CASE("a path's own receiver height is the ground model's, past its table", 
     std::filesystem::remove(path);
 }
 
-TEST_CASE("spectral_direction_bounds really bounds the spectral level", "[spectral][bounds]")
+TEST_CASE("spectral_direction_bounds really bounds the spectral level", "[extended][spectral][bounds]")
 {
     // As "DirectionBounds really bounds the level" does for the broadband
     // path: the spectral peak search and --db_cutoff skip whatever this puts

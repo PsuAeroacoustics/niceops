@@ -6,8 +6,31 @@ Test with the asserts live, as CI does (`-DNICEOPS_ASSERTS=ON`; see [build.md](b
 and run the whole suite with no `-E` exclusion:
 
 ```sh
-ctest --test-dir build --output-on-failure
+ctest --test-dir build --output-on-failure -j8
 ```
+
+CI runs a regression subset of it, `ctest -LE extended`, in parallel (`-j$(nproc)`), and the
+whole suite only when run by hand with `full` (the Actions tab). `tests/extended.cmake` lists the
+tests left out and says why: CI is for catching regressions, so it keeps the goldens of the default
+path and one pin per model, one windowed-versus-marched pair per gain kind, one degenerate case per
+model, the refusals and warnings, and the mutation-guarded tests, and leaves out checks against
+reference solutions, second variants of one check, and convergence and resolution checks. Catch2
+cases of that kind are tagged `[extended]`. CTest runs every setup of a fixture a selected test
+requires, whatever its label, so the file splits a shared fixture: its extended setups set up
+`<fixture>_extended` instead. A new test is on CI unless listed there; a new comparison must still
+name the fixture of every run it reads.
+
+CI also runs only what a change can affect. A push that changes only documentation, reports,
+research notes, Python tools or batch scripts starts no run (`paths-ignore` in
+`.github/workflows/ci.yml`). Otherwise `.github/ci_select.py` reads what changed since the
+branch's last run: a change to the library, the build, the tests' scripts or data, or the workflow
+runs everything; a change to one binary's own source (`src/niceops.cpp`, `tools/<name>.cpp`,
+`tests/check_*.cpp`, the Catch2 sources) runs the tests that call that binary and those reading
+what they write, and builds only the targets they need; a golden runs the tests that name it. It
+finds a test's binaries in its command, so a test that reached a binary some other way (through a
+file another program wrote, say) needs a fixture to be found. A few mutation-guarded tests are extended where a kept test
+exercises the same code (the file says which); they still run in the whole suite, which is the one to
+run before a merge.
 
 `ctest -N` lists the tests; this file gives no count, because it goes stale. Every CTest runs
 with the **source root** as its working directory. Most of them run `niceops` and compare its
@@ -37,7 +60,9 @@ output with a file in `golden/` or with another run, through `golden_compare`:
   fixture (`FIXTURES_SETUP`/`FIXTURES_REQUIRED`); `ctest -j` and `ctest -R` then run the
   producer first.
 
-The Catch2 binary is `unit_test` under CTest; run it directly by tag for speed
+The Catch2 binary runs under CTest in four shards (`unit_test_0` to `unit_test_3`, Catch2's
+`--shard-count`), so that `ctest -j` runs them side by side; each is its own process, so no case
+may rely on another's leftovers. Run it directly by tag for speed
 (`build/niceops_unit_tests "[sphere_database]"`). Hidden Catch cases (tags starting with `.`,
 such as `[.bump_table]` and `[.terrain_files]`) write input files for CTests and run only when
 a CTest names them.
@@ -52,7 +77,7 @@ condition-bin bounds, frame alignment and common prediction coverage. It is not 
 | File | Made by | Compared by (tolerance) | Producing run | Regenerate |
 | --- | --- | --- | --- | --- |
 | `state_197421.csv` | D reference | `state_golden` (1e-9 rel.) | `regression_default` (`-S state/ci_state.csv`) | `regenerate-goldens` skill |
-| `197421_LAE.csv` | C++ build | `regression_golden` (1e-9 rel.); also `blend_barycentric_is_golden`, `ambient_negligible_matches`, `mask_suspect_cells_clean_is_golden`, `config_demo_is_golden`, `operations_count_one_is_golden` | `regression_default` | copy `integrated/197421_LAE.csv` |
+| `197421_LAE.csv` | C++ build | `regression_golden` (1e-9 rel.). The runs that show an option leaves the demo as it is (`blend_barycentric_is_golden`, `ambient_negligible_matches`, `mask_suspect_cells_clean_is_golden`, `config_demo_is_golden`, the operations' bit-identity checks) compare against `demo_coarse`, the same case at `--gridstep 1640`, for CI's cost | `regression_default` | copy `integrated/197421_LAE.csv` |
 | `metrics_197421_lafmax.csv` | C++ build | `lafmax_golden` (1e-9 rel.) | `metrics_broadband` | copy `integrated/metrics_bb_lafmax.csv` |
 | `metrics_197421_na64.csv` | C++ build | `nax_golden` (1e-9 rel.) | `metrics_broadband` | copy `integrated/metrics_bb_na64.csv` |
 | `metrics_197421_ta70.csv` | C++ build | `ta_golden` (1e-9 rel.) | `metrics_broadband` | copy `integrated/metrics_bb_ta70.csv` |
@@ -60,7 +85,7 @@ condition-bin bounds, frame alignment and common prediction coverage. It is not 
 | `stratified_duct_point.csv` | C++ build | `stratified_duct_point_golden` (1e-4 dB abs.) | `stratified_duct_point` | copy the run's output |
 | `stratified_duct_plate.csv` | C++ build | `stratified_duct_plate_golden` (1e-4 dB abs.) | `stratified_duct_plate` | copy the run's output |
 | `stratified_calm_floor_plate_200hz.csv` | C++ build | `stratified_calm_floor_plate_200hz_golden` (1e-4 dB abs.) | `stratified_calm_floor_plate_200hz` | copy the run's output |
-| `stratified_{windy_point,duct_point,duct_plate,calm_floor_plate_200hz}_exact.csv` | C++ build | `*_exact_golden` (1e-4 dB abs.) | `*_exact` (`--ray_stride 1`) | copy the run's output |
+| `stratified_{windy_point,duct_point}_exact.csv` | C++ build | `*_exact_golden` (1e-4 dB abs.) | `*_exact` (`--ray_stride 1`) | copy the run's output |
 | `terrain_hills_point.csv` | C++ build | `terrain_hills_point_golden` (1e-6 dB abs.) | `terrain_hills_point` | copy the run's output |
 | `terrain_hills_plate.csv` | C++ build | `terrain_hills_plate_golden` (1e-6 dB abs.) | `terrain_hills_plate` | copy the run's output |
 | `terrain_steep_table_plate.csv` | C++ build | `terrain_steep_table_plate_golden` (1e-5 dB abs.) | `terrain_steep_table_plate` | copy the run's output |
@@ -122,9 +147,17 @@ Notes on each:
   `stratified_calm_floor_plate_200hz` ends `--band_limits` at the 200 Hz band, so the layered
   solve's resolution frequency is not the 10 kHz default.
 - **The four stratified goldens were regenerated when `--ray_stride 4` became the default**; the
-  files from before, every state solved, are kept as `*_exact.csv` and pinned by runs with
-  `--ray_stride 1`, which reproduce them to the bit. `stratified_stride_{windy,duct}_is_close`
-  holds the default within 0.005 and 0.02 dB of them.
+  files from before, every state solved, for the windy and duct point runs are kept as
+  `*_exact.csv` and pinned by runs with `--ray_stride 1`, which reproduced them to the bit (the
+  plate and calm-floor ones duplicated these pins within 0.002 dB, and were dropped for CI's cost).
+  `stratified_stride_{windy,duct}_is_close` holds the default within 0.005 and 0.02 dB of them.
+- **CI-size grids.** For CI's cost the goldens of the stratified runs (1968 ft), the terrain hills and
+  ridge runs (984 ft) and the urban tables (24 azimuths and 10 elevations) were regenerated on
+  coarser grids. The grids' nodes are a subset of the old ones, and every node kept its value (to
+  1e-14, the stride-1 windy pin to 3e-6 dB); the tables' runs moved by up to 0.7 dB, which is the
+  coarser table's interpolation. The bump table's mutant, the one a coarse grid could have hidden,
+  still fails `urban_table_bump_windowed_is_exact`. The low-table and bump-table terrain runs keep
+  492 ft: their mutants show in few cells.
 - **`terrain_hills_{point,plate}.csv`** were made by the build that added `--terrain`. They are
   pinned for the same reason: passing the plate's receiver as a point receiver at its call site
   (the plate then measures the source from the line, not from its microphone) moved cells by
@@ -177,12 +210,13 @@ Notes on each:
   The moves are in [HISTORY](../HISTORY.md#changes-that-affect-results).
 - **`buildings_scattering.csv`** was made by the build that added `--facade_scattering` under
   `--buildings`: the test district's seven microphones in a trajectory run, every wall scattering
-  0.3, on the CPU (`--no-gpu`). It pins the run's own diffuse field, which no table carries, and
+  0.3, on the CPU (`--no-gpu`). Like the other option runs over the test district, it takes 4 s of
+  the demo approach (`tests/data/urban_track_short.csv`), for CI's cost; it was regenerated when it
+  left the full track. It pins the run's own diffuse field, which no table carries, and
   the point model's rays under it: it was regenerated with each deliberate change to those rays
   (reflections at a twice-diffracted ray's ends and between its edges, three roof edges, a floor
   bounce between two edges, UTD's edge ends, a shared face's aperture at its limit, a flat face's
-  twice-diffracted ray through its plane). Beside it, `buildings_scattering_states_sampled` holds
-  the sampled states within 0.01 dB of every state, and
+  twice-diffracted ray through its plane). Beside it,
   `buildings_scattering_out_of_reach_is_specular` holds a district out of every microphone's
   `--diffuse_radius` to the specular run.
 
@@ -340,8 +374,8 @@ comments, defaults, path resolution, the wind columns, the period counts, the cl
 covers the clock on AC and WGS84 tracks. The CTests `operations_*` run the fixtures in
 `tests/data/operations/`, which name their files relative to that folder:
 
-- a count of 1 is `regression_default`'s output byte for byte and the golden at 1e-9
-  (`operations_count_one_is_bit_identical`, `operations_count_one_is_golden`), and every run
+- a count of 1 is the `-t` run byte for byte (`operations_count_one_is_bit_identical`, against
+  `demo_coarse`), and every run
   total of a `-t` run byte for byte (`operations_count_one_totals_are_t`);
 - a count of 10 is +10 dB on DNL, Lden and CNEL at 1e-9 and leaves the SEL file and LAmax
   alone; a count of 3 is three repeated `-t` byte for byte on the day metrics, NAx, TA, LAmax and
@@ -442,7 +476,7 @@ plane, the climb's fade at hover, and the frame's precedence over the fit. CTest
   [atmosphere.md](atmosphere.md#wind-profile-tests).
 - **The run's warnings on a profile**: `atmosphere_warns_no_ground_level`,
   `atmosphere_warns_calm_floor`, and `atmosphere_still_does_not_warn` (a profile calm throughout,
-  with `FAIL_REGULAR_EXPRESSION`); `build_atmosphere_manifest` runs a built profile without either
+  with `FAIL_REGULAR_EXPRESSION`); `build_atmosphere_stratified` runs a built profile without either
   warning, and `build_atmosphere_manifest_records_provenance` finds its sidecar in the manifest.
 
 ## The plotting gap

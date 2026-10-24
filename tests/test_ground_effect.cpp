@@ -525,7 +525,7 @@ TEST_CASE("a mass-like admittance keeps the branch without a surface wave", "[gr
 }
 
 TEST_CASE("GroundTable interpolates the model to within its stated accuracy, inside its bound",
-        "[ground_effect]")
+        "[extended][ground_effect]")
 {
     const std::vector<double> bands = {10, 12.5, 16, 20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160,
             200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000,

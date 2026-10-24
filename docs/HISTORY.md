@@ -4,6 +4,15 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## Fewer shipped databases (October 2026)
+
+`databases/` keeps the six spectral 2017 `_fixed_load_factor` databases, the S-76D demo database
+(`S-76D_M3.nod`) and `S-76D_fixed_load_factor.nod`, which the database screen's tests read. The
+broadband `_ambient_gated` twins of the 2017 builds and the NASA/FAA `AW139_M1`, `B205_M1`,
+`B407_M2`, `B407_M3` and `S-76D_M4` files, with the `AW139_` and `B205_fixed_load_factor`
+conversions, were removed (936 MB to 435 MB); they remain in the repository's history. No result
+moved: the tests that named them take a kept database.
+
 ## A step's split made opt-in (October 2026)
 
 The jump split across a step's line (below) is taken only with `--tilted_step_split` now, and a

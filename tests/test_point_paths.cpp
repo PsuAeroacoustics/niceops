@@ -1260,7 +1260,7 @@ TEST_CASE("over a long block the point-source field is the boundary-element solu
 // 0.94 dB, rms 0.21; the BEM's own convergence is 0.05 dB and the point
 // source's 2-D equivalent (each ray times the root of its length) is good to
 // O(1/kL), most of what is left at 125 Hz.
-TEST_CASE("over a long block the edge-source field is the boundary-element solution's", "[point_paths][edge_source]")
+TEST_CASE("over a long block the edge-source field is the boundary-element solution's", "[extended][point_paths][edge_source]")
 {
     const double width = 2.44, height = 5.18;
     Footprint block;
@@ -2035,7 +2035,7 @@ TEST_CASE("the aperture worked out once is every wavenumber's", "[point_paths]")
 // thick with sources low, grazing, in the roof's plane and just above it and
 // microphones behind at heights through its plane.  There the cascade alone
 // is up to 16 dB off, and of the wrong sign with an end in the plane.
-TEST_CASE("a sampled shared face is its integral at every wavenumber", "[point_paths]")
+TEST_CASE("a sampled shared face is its integral at every wavenumber", "[extended][point_paths]")
 {
     std::vector<double> bands;
     for (int b = 13; b <= 40; b++)
@@ -2176,7 +2176,7 @@ TEST_CASE("an end at the line between the edges keeps the shared face's limit", 
 // of a district, and a grid of blocks of mixed heights over several of
 // Buildings' grid cells, with the source low and high, the rays are the same
 // with the pruning off, to the bit.
-TEST_CASE("pruning the diffracted paths loses no ray", "[point_paths]")
+TEST_CASE("pruning the diffracted paths loses no ray", "[extended][point_paths]")
 {
     const Buildings containers({box(4.09, 17.66, 6.53, 23.72, 7.77), box(14.81, 17.66, 17.25, 23.72, 7.77),
             box(1.6, 10.82, 4.04, 16.88, 7.77), box(1.6, 8.38, 13.72, 10.82, 5.18),
@@ -2612,7 +2612,7 @@ TEST_CASE("an edge's end is no step in the field", "[point_paths]")
 // the vertex's own coefficient (FIDELITY), within 0.3 dB rms and 1 dB at
 // worst (0.18 and 0.86 measured); with the edges unending, 1.4 dB rms and
 // 7 dB at worst.
-TEST_CASE("UTD with its edges' ends is the edge-source integral past a corner", "[point_paths][edge_source]")
+TEST_CASE("UTD with its edges' ends is the edge-source integral past a corner", "[extended][point_paths][edge_source]")
 {
     const Buildings city({box(0.0, 0.0, 10.0, 20.0, 6.0)});
     const Vec3 source(-15.0, 5.0, 3.0);

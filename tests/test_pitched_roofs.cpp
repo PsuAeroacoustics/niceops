@@ -320,7 +320,7 @@ double gable_level(const Buildings& city, const GableCase& c, const PointPathOpt
 // edge-source integral within 0.53, rms 0.12; a flat roof at the eaves, at
 // the mean height or at the ridge -- what LoD1 would give it -- is 6.2, 8.9
 // and 11.0 dB rms off.
-TEST_CASE("over a long gable house the point-source field is the boundary-element solution's", "[pitched_roofs]")
+TEST_CASE("over a long gable house the point-source field is the boundary-element solution's", "[extended][pitched_roofs]")
 {
     Footprint house;
     house.x = {-2000.0, 2000.0, 2000.0, -2000.0};

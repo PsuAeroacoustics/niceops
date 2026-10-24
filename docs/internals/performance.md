@@ -33,6 +33,13 @@ down to today's figure, with byte-identical output (golden compare):
 - The optional `ShaftPower` probe logs once, not once per group (that was 1312 of a run's 1349
   log lines).
 
+Tried and not taken, after a later profile (`sample`) put our own code at about 2% of the load:
+starting `nc_close` on its own thread as soon as the last group is read, opening the file
+`NC_DISKLESS` (HDF5's small metadata reads become copies, about 5% of the S-76D's load), and
+computing B407's coverage shares on threads. Together they took 6% off the S-76D's load and 12%
+off B407's (30 ms and 20 ms), byte for byte, at the price of two more threads in the loader and a
+peak higher by the file's size (547 to 614 MB, and 188 to 268 MB). Not worth it.
+
 The real fix is in the database builder (panam): the same data in one group with
 `(condition, channel)` arrays would load in a fraction of the time. Do not go looking for it in
 `sphere_database.cpp`.

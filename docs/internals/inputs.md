@@ -51,6 +51,11 @@ with exit status 0. Know these before adding a reader, and follow the same rules
 - **Errors and warnings reach stderr** as well as `log/niceops.log` (`Logger::write_line`); `-L`
   still decides what is written at all. A skipped trajectory is `Skipping <file>: <why>` on the
   terminal and exit status 1.
+- **The front database loads after every check that does not need it** (`load_front` in
+  `run()`), just before the trajectory loop; only the standalone jobs (`--export_sphere`,
+  `--export_aam`, `--self_test`) load it first. A refusal of the command line or of a non-database
+  input then costs milliseconds, not the load's 0.6 s. A check that reads the database belongs
+  after the load; one that does not belongs before it.
 - **An exception in an observer-loop worker is carried to the caller** by `parallel_chunks`
   (otherwise it terminates the process at any thread count above one), so `input_error` skips
   one trajectory as `run()`'s handler intends.

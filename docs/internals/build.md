@@ -13,6 +13,19 @@ run is an out-of-line call across that boundary. What it is worth, and why, is m
 [performance.md](performance.md). It leaves the golden comparison passing unchanged, and
 GCC 16 and Apple Clang produce identical output with it.
 
+## Fused multiply-adds (`-ffp-contract=on` under GCC)
+
+Several batch paths are exact by construction against the scalar function they inline (absorption
+over bands, a ray's amplitudes over wavenumbers, a shared face's spectrum, the coherence sums with
+and without their variance), and Catch2 cases hold them bit for bit. That holds only if a
+multiply-add is fused or not by its source expression. Clang's default (`on`, the ISO rule) does
+that; GCC's (`fast`) fuses across statements as inlining leaves them, so on a target with FMA the
+two paths fuse differently and part by an ULP. CI's runner showed it: Ubuntu 26.04's amd64v3 GCC
+targets x86-64-v3, and five such cases failed there while passing on the Mac and on baseline
+x86-64. GCC builds therefore take `-ffp-contract=on` (GCC before 14 reads it as `off`, which is as
+deterministic). Clang's output, which the goldens come from, does not change; a GCC build of the
+demo was about 8% slower with it, measured on a loaded machine.
+
 ## Asserts
 
 **Live when testing, compiled out in shipped binaries.** `-DNICEOPS_ASSERTS=ON` strips CMake's
@@ -115,8 +128,12 @@ facade in namespace `plt` (`figure`, `contourf`, `tricontourf`, `plot`, labels, 
   from the build and compiles `src/plotting_disabled.cpp` instead: every entry point exists and
   only warns, and `available()` returns false. `run()` refuses `-p`, `-f` and `-F` up front in
   such a build, before anything runs, so the stubs are never reached; they exist so that a
-  future caller that forgets the check degrades quietly instead of failing to link. CI's
-  "without plotting" job is the only build of that file, so it does not rot unseen.
+  future caller that forgets the check degrades quietly instead of failing to link. CI builds
+  with plotting only, so the plotting build compiles that file as well, into an object library
+  linked nowhere, and `plotting_stub_is_complete` (`tests/check_plotting_stub.cmake`) compares the
+  two objects' `plt::` symbols with `nm`: an entry point added to `plotting.cpp` alone fails it
+  rather than the minimal build's link. That a build without Python compiles at all is the GCC
+  recipe's to show (it is `-DNICEOPS_PLOTTING=OFF`).
 - **Figure names.** The `-F` state figures are written as `base + "_" + name + "_" + ext`, so
   the separator lands before the extension (`state_CT_.png`, `state_mu_.png`,
   `state_gamma_.png`, `state_z_.png`). That is the D original's naming, which the reference

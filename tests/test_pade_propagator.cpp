@@ -149,7 +149,7 @@ TEST_CASE("the split-step march does not depend on its range step", "[pade]")
     CHECK(deepest < -40.0);
 }
 
-TEST_CASE("the split-step march is Crank-Nicolson's with a fine enough step", "[pade]")
+TEST_CASE("the split-step march is Crank-Nicolson's with a fine enough step", "[extended][pade]")
 {
     // Low angles, where Crank-Nicolson's Pade(1,1) equation is good and only
     // its range step stands between the two: forty steps a wavelength.
@@ -339,7 +339,7 @@ TEST_CASE("the self-starter gives an elevated source its own strength", "[pade]"
     CHECK(compared > 20);
 }
 
-TEST_CASE("with the ground and the interpolation at fourth order the grid converges at fourth order", "[pade]")
+TEST_CASE("with the ground and the interpolation at fourth order the grid converges at fourth order", "[extended][pade]")
 {
     // The refracting case over grass, receivers 1.2 and 20 m up, at 6 and at
     // 12 points a wavelength against 24.  A fourth-order scheme gains a

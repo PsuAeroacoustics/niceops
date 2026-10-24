@@ -32,7 +32,7 @@ double edge(double center, int side)
 // Nearer grazing the recording line itself errs (0.2-0.8 dB at 15-30 degrees,
 // however long), which the canyon's transform, over the opening alone, does
 // not share.
-TEST_CASE("the open-ground far field from a recording line is the image solution", "[canyon_wave]")
+TEST_CASE("the open-ground far field from a recording line is the image solution", "[extended][canyon_wave]")
 {
     CanyonWaveSetup s;
     s.max_frequency = 200.0;
@@ -58,7 +58,7 @@ TEST_CASE("the open-ground far field from a recording line is the image solution
 }
 
 // The PML and the margins: moving the grid's edges must not move the answer.
-TEST_CASE("a canyon's far field does not depend on how far the grid extends", "[canyon_wave]")
+TEST_CASE("a canyon's far field does not depend on how far the grid extends", "[extended][canyon_wave]")
 {
     CanyonWaveSetup s;
     s.width = 10.0;

@@ -485,9 +485,8 @@ use, such as a band count that is not the database's, is refused when the databa
 | Files in `databases/` | Contents |
 | --- | --- |
 | `AS350_`, `B407_`, `Be206L3_`, `EC130_`, `RO-44_`, `RO-66_fixed_load_factor.nod` | **Spectral**, 10 Hz–10 kHz, built by panam from the 2017 Noise Abatement flight test. The current, validated databases. |
-| `AS350_`, `B407_`, `Be206L3_`, `EC130_`, `RO-44_`, `RO-66_ambient_gated.nod` | Broadband versions of the same builds. |
-| `AW139_`, `B205_`, `S-76D_fixed_load_factor.nod` | Broadband, converted from the `_M*` files below. |
-| `AW139_M1`, `B205_M1`, `B407_M2`, `B407_M3`, `S-76D_M3`, `S-76D_M4.nod` | Broadband, with discrete load factors, from joint NASA/FAA flight tests. `S-76D_M3.nod` is the demo database. |
+| `S-76D_M3.nod` | Broadband, with discrete load factors, from a joint NASA/FAA flight test. The demo database, which the goldens use. |
+| `S-76D_fixed_load_factor.nod` | Broadband, converted from the NASA/FAA S-76D data; the database screen's test case. |
 | `AW139.json`, `B205.json`, `B407.json`, `S-76D.json` | Vehicle files. |
 
 Of the 2017 databases, **B407 is the reference** and the most validated; its spheres are
@@ -527,8 +526,8 @@ against. `--mask_suspect_cells` drops them, so the blends read those entries as 
 the other conditions' level there. Masking is a judgment about data: rebuilding the database is
 the fix, and a masked run should say so.
 
-Four shipped databases warn: `B407_M2`, `B407_M3`, `S-76D_M4` and `S-76D_fixed_load_factor`. The
-demo database and the 2017 databases do not. A sphere more than half defective has a defective
+One shipped database warns: `S-76D_fixed_load_factor`. The demo database and the 2017 databases
+do not. A sphere more than half defective has a defective
 median, and the screen cannot judge it. The counts are in
 [FIDELITY](FIDELITY.md#database-screen). The screen costs well under a second at load and nothing
 afterward.

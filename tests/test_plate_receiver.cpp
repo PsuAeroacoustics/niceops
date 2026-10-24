@@ -120,7 +120,7 @@ TEST_CASE("Plate receiver's quadratic Q stays within 0.1 dB of the exact", "[pla
     REQUIRE(worst < 0.1);
 }
 
-TEST_CASE("Plate receiver gain bounds hold over random geometries", "[plate_receiver]")
+TEST_CASE("Plate receiver gain bounds hold over random geometries", "[extended][plate_receiver]")
 {
     for (const auto& [path, ground] : {std::pair {std::string("plates/gr1425_db225.nc"), grass()},
                  std::pair {std::string("plates/gr1425_vp200.nc"), amedee()}})

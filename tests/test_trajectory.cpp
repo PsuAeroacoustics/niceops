@@ -24,6 +24,7 @@
 #include "trajectory.hpp"
 #include "util/csv.hpp"
 #include "util/paths.hpp"
+#include "demo_database.hpp"
 
 using namespace niceops;
 
@@ -1279,7 +1280,7 @@ TEST_CASE("write the heading tracks and database for the --nose CTests", "[.head
         rows++;
     }
     REQUIRE(rows > 1000);
-    Database source("databases/S-76D_M3.nod");
+    const Database& source = test::demo_database();
     auto sphere = source.interpolate_sphere(0.15, -4.0, 0.006);
     sphere.azimuth_reference = AzimuthReference::heading;
     write_sphere(sphere, "integrated/heading_sphere.nod");

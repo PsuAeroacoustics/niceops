@@ -35,7 +35,7 @@ scattered (φ, θ) channels of dBA level and EAA excess-attenuation factor.
   footprints with exit 0), and a "scalar" reads element 0 only.
 - **A sphere layout that leaves grid cells without a channel** (they would read as 0 dBA), or
   drops channels that match no angle of sphere 0's axes, is warned about once per distinct
-  layout, the first three in full. None of the 21 shipped databases trips it; `B407_M3`'s 934
+  layout, the first three in full. None of the shipped databases trips it; `B407_M3`'s 934
   zero channels are written zeros, not unreached cells.
 - **The netCDF fill value is refused** in dBA, EAA and amplitude (`refuse_fill_values`). A group
   panam never finished writing holds 9.97e36 everywhere; it is finite, so the non-finite floor
