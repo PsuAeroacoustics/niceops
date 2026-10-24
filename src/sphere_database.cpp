@@ -3384,22 +3384,23 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
 
 bool aam_third_octave_bands(const std::vector<double>& frequencies)
 {
-    // Band n is centered at 10^(n/10) Hz; the nominal centers (12.5, 31.5, 63, ...)
+    // Band n is centered at 10^(n/10) Hz.  The nominal centers (12.5, 31.5, 63, ...)
     // and base-2 ones sit within 0.031 of n in 10 lg f, a 1/12-octave set's off-band
-    // members 0.25 or more away.
-    std::vector<long> bands;
+    // members 0.25 or more away; 0.05 lies between.
+    if (frequencies.empty())
+        return false;
+    std::array<bool, 31> seen {};
     for (const double f : frequencies)
     {
         if (!(f > 0.0))
             return false;
         const double index = 10.0 * std::log10(f);
         const long n = std::lround(index);
-        if (n < 10 || n > 40 || std::fabs(index - static_cast<double>(n)) > 0.05)
+        if (n < 10 || n > 40 || std::fabs(index - static_cast<double>(n)) > 0.05 || seen[n - 10])
             return false;
-        bands.push_back(n);
+        seen[n - 10] = true;
     }
-    std::sort(bands.begin(), bands.end());
-    return !bands.empty() && std::adjacent_find(bands.begin(), bands.end()) == bands.end();
+    return true;
 }
 
 void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, double tip_speed)
@@ -3493,8 +3494,7 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
         const float as_float = static_cast<float>(value);
         nc_check(nc_put_var_float(file, var, &as_float), "writing a scalar");
     };
-    // AAM's sphere types (TR Table 4-37; BB + NB + PT = 1): BB is one-third octave
-    // bands, NB any other band set.  The database's own bands are third octaves.
+    // AAM's sphere types (TR Table 4-37): BB + NB + PT = 1.
     const bool broadband = aam_third_octave_bands(sphere.frequencies);
     put_scalar(bb_var, broadband ? 1.0 : 0.0);
     put_scalar(nb_var, broadband ? 0.0 : 1.0);
