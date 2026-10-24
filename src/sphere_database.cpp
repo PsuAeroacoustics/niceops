@@ -3382,6 +3382,26 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
     log("Wrote interpolated sphere to ", path, " (", n_channels, " channels).");
 }
 
+bool aam_third_octave_bands(const std::vector<double>& frequencies)
+{
+    // Band n is centered at 10^(n/10) Hz; the nominal centers (12.5, 31.5, 63, ...)
+    // and base-2 ones sit within 0.031 of n in 10 lg f, a 1/12-octave set's off-band
+    // members 0.25 or more away.
+    std::vector<long> bands;
+    for (const double f : frequencies)
+    {
+        if (!(f > 0.0))
+            return false;
+        const double index = 10.0 * std::log10(f);
+        const long n = std::lround(index);
+        if (n < 10 || n > 40 || std::fabs(index - static_cast<double>(n)) > 0.05)
+            return false;
+        bands.push_back(n);
+    }
+    std::sort(bands.begin(), bands.end());
+    return !bands.empty() && std::adjacent_find(bands.begin(), bands.end()) == bands.end();
+}
+
 void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, double tip_speed)
 {
     if (sphere.frequencies.empty())
@@ -3473,9 +3493,11 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
         const float as_float = static_cast<float>(value);
         nc_check(nc_put_var_float(file, var, &as_float), "writing a scalar");
     };
-    // Narrowband only: these spheres carry no broadband/tonal split.
-    put_scalar(bb_var, 0.0);
-    put_scalar(nb_var, 1.0);
+    // AAM's sphere types (TR Table 4-37; BB + NB + PT = 1): BB is one-third octave
+    // bands, NB any other band set.  The database's own bands are third octaves.
+    const bool broadband = aam_third_octave_bands(sphere.frequencies);
+    put_scalar(bb_var, broadband ? 1.0 : 0.0);
+    put_scalar(nb_var, broadband ? 0.0 : 1.0);
     put_scalar(pt_var, 0.0);
     put_scalar(dsr_var, 0.0);
     // The database records no weight breakdown, and the format has no way to

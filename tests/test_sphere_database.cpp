@@ -1754,6 +1754,10 @@ TEST_CASE("an AAM export lays out its axes and amplitudes as the format says", "
     int format = 0;
     REQUIRE(nc_inq_format(ncid, &format) == NC_NOERR);
     CHECK(format == NC_FORMAT_CLASSIC);
+    // Third-octave bands are AAM's broadband type (BB), not narrowband.
+    CHECK(read_floats("BB", 1)[0] == 1.0f);
+    CHECK(read_floats("NB", 1)[0] == 0.0f);
+    CHECK(read_floats("PT", 1)[0] == 0.0f);
     const char* order[] = {"BB", "NB", "PT", "DOPPLER_SHIFT_REMOVED", "EMPTY_WEIGHT", "FUEL_WEIGHT",
             "LOAD_WEIGHT", "RADIUS", "FLIGHT_PATH_ANGLE", "PYLON_ANGLE", "SPEED", "XYZ", "PHI", "THETA",
             "FREQUENCY", "AMPLITUDE", "MASTTILT"};
@@ -1770,6 +1774,27 @@ TEST_CASE("an AAM export lays out its axes and amplitudes as the format says", "
     CHECK(frame == "flight_path");
     REQUIRE(nc_close(ncid) == NC_NOERR);
     std::filesystem::remove(path);
+}
+
+TEST_CASE("AAM's sphere type follows the band set", "[sphere_database][export]")
+{
+    // BB is one-third octave bands 10-40 (TR Table 4-37), nominal or exact centers.
+    std::vector<double> nominal = {10, 12.5, 16, 20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315,
+            400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000};
+    CHECK(aam_third_octave_bands(nominal));
+    std::vector<double> base_two;
+    for (int k = -10; k <= 10; k++)
+        base_two.push_back(1000.0 * std::pow(2.0, k / 3.0));
+    CHECK(aam_third_octave_bands(base_two));
+    CHECK(aam_third_octave_bands({500.0}));
+    // A 1/12-octave set, a band past 10 kHz, a repeated band and nothing are not.
+    std::vector<double> twelfth;
+    for (int k = 0; k < 12; k++)
+        twelfth.push_back(1000.0 * std::pow(2.0, k / 12.0));
+    CHECK_FALSE(aam_third_octave_bands(twelfth));
+    CHECK_FALSE(aam_third_octave_bands({8000.0, 12500.0}));
+    CHECK_FALSE(aam_third_octave_bands({1000.0, 1000.0}));
+    CHECK_FALSE(aam_third_octave_bands({}));
 }
 
 TEST_CASE("an AAM export is pitched by its flight path angle", "[sphere_database][export]")

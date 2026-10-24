@@ -409,10 +409,11 @@ old and new results only with them in mind.
   deck's angle of attack plus the flight path angle, so an AAM deck flown at AOA 0 read the
   level sphere NICEOPS used to export pitched by $\gamma$: 6-9° on an approach. The export is now
   pitched to that frame (`sphere_frame = "flight_path"`); a level condition is unchanged. The
-  file is also classic netCDF, with its variables in the order AAM 3.1 reads by position and
-  `MASTTILT` after `AMPLITUDE`. NICEOPS's had `MASTTILT` before `XYZ`, out of that order; AAM
-  refused panam's spheres for their order in the 2026 cross-code runs ("Variable ID mismatch").
-  Runs and footprints are unchanged.
+  file is also classic netCDF, as AAM's own spheres are, where it was netCDF-4, and it declares
+  its variables in panam's order (`MASTTILT` after `AMPLITUDE`), which AAM 3.1 read in the 2026
+  cross-code runs. The order it had before, `MASTTILT` before `XYZ`, is that of NASA's 2017
+  spheres, which AAM read too. A third-octave export is AAM's broadband type (`BB` 1); it was
+  written as narrowband (`NB` 1). Runs and footprints are unchanged.
 - **A static operation with `--origin` and no `--frame_bearing`** reads its headings as compass
   bearings in the east/north frame. It used to orient the sphere by its zero velocity.
 - **The `azimuth_reference` attribute.** panam's builder writes it on every database: `track`
