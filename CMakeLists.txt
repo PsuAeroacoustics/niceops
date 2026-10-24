@@ -470,7 +470,7 @@ if(NICEOPS_PLOTTING)
   target_link_libraries(niceops_plotting_stub PRIVATE niceops_core)
   add_test(NAME plotting_stub_is_complete COMMAND ${CMAKE_COMMAND}
     -DNM=${CMAKE_NM}
-    -DCORE=$<TARGET_FILE:niceops_core>
+    "-DREAL=$<FILTER:$<TARGET_OBJECTS:niceops_core>,INCLUDE,plotting[.]cpp[.]o$>"
     -DSTUB=$<TARGET_OBJECTS:niceops_plotting_stub>
     -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_plotting_stub.cmake)
 endif()
