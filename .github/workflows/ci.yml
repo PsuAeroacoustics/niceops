@@ -1,9 +1,35 @@
 name: Build and Test
 
+# A change that compiles nothing and tests nothing does not start a run.  The
+# same patterns are in .github/ci_select.py, which also narrows a run that does
+# start (a commit that changes the manual and one tool runs that tool's tests).
 on:
   push:
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'reports/**'
+      - 'research_notes/**'
+      - 'LICENSE'
+      - '*batch.sh'
+      - 'tools/*.py'
+      - 'tests/*.py'
+      - '.claude/**'
+      - '.gitignore'
   pull_request:
-  # By hand, from the Actions tab: `full` runs the extended tests too.
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'reports/**'
+      - 'research_notes/**'
+      - 'LICENSE'
+      - '*batch.sh'
+      - 'tools/*.py'
+      - 'tests/*.py'
+      - '.claude/**'
+      - '.gitignore'
+  # By hand, from the Actions tab: every test is built and run; `full` adds the
+  # extended ones.
   workflow_dispatch:
     inputs:
       full:
@@ -76,17 +102,54 @@ jobs:
       # which is what -ffp-contract=on in CMakeLists.txt is about.
       run: >-
         c++ --version | head -1 && c++ -Q --help=target | grep -E -- '-march=|-mfma ' ;
+        cmake --version | head -1 ;
         cmake -S . -B build -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DNICEOPS_ASSERTS=ON
         -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache
 
-    - name: Build
+    - name: Choose the tests
+      # What changed since the last run of this branch (the push's `before`; a
+      # new branch is compared with master, a fork's PR with its base), and from
+      # that the tests and targets (.github/ci_select.py).  Anything it cannot
+      # place -- the library, the build, this workflow -- runs everything.
+      id: select
+      env:
+        GH_TOKEN: ${{ github.token }}
+        EVENT: ${{ github.event_name }}
+        BEFORE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
       run: |
-        cmake --build build --config $BUILD_TYPE -j$(nproc)
+        zero=0000000000000000000000000000000000000000
+        if [ "$EVENT" = workflow_dispatch ]; then
+          echo ALL > changed.txt
+        else
+          base=$BEFORE
+          if [ -z "$base" ] || [ "$base" = "$zero" ]; then base=master; fi
+          if ! gh api "repos/${{ github.repository }}/compare/$base...${{ github.sha }}" \
+                 --jq '.files[].filename' > changed.txt \
+             || [ "$(wc -l < changed.txt)" -ge 300 ] || [ ! -s changed.txt ]; then
+            echo ALL > changed.txt
+          fi
+        fi
+        echo "--- changed:"; cat changed.txt
+        python3 .github/ci_select.py changed.txt build selected.txt | tee -a "$GITHUB_OUTPUT"
+
+    - name: Build
+      # A subset builds only the targets its tests (and their fixtures' setups)
+      # run: each binary's link-time optimization is most of a warm build.
+      if: steps.select.outputs.mode != 'none'
+      env:
+        TARGETS: ${{ steps.select.outputs.targets }}
+      run: |
+        if [ "${{ steps.select.outputs.mode }}" = subset ]; then
+          cmake --build build --config $BUILD_TYPE -j$(nproc) --target $TARGETS
+        else
+          cmake --build build --config $BUILD_TYPE -j$(nproc)
+        fi
         ccache --show-stats
 
     - name: Save the compiler cache
       # Before the tests, so that a red run still leaves its cache (actions/cache
       # saves only when the whole job succeeds).
+      if: steps.select.outputs.mode != 'none'
       uses: actions/cache/save@v4
       with:
         path: .ccache
@@ -98,6 +161,7 @@ jobs:
       # place that should be strict about it: without this, the job stays green
       # while quietly falling back to the system interpreter, and the bundled
       # environment is never actually tested.
+      if: steps.select.outputs.mode == 'all' || contains(format(' {0} ', steps.select.outputs.targets), ' niceops ')
       run: build/pyenv/bin/python -c "import matplotlib; print(matplotlib.__version__)"
 
     - name: Test
@@ -107,18 +171,27 @@ jobs:
       # (docs/internals/testing.md), and the serial suite took over half an hour.
       # The extended tests (tests/extended.cmake) are left out: CI is for
       # catching regressions, and a run by hand with `full` takes them all.
+      if: steps.select.outputs.mode != 'none'
       env:
         LABEL_FILTER: ${{ inputs.full && ' ' || '-LE extended' }}
-      run: ctest --test-dir build -C $BUILD_TYPE --output-on-failure -j$(nproc) $LABEL_FILTER
+      run: |
+        if [ "${{ steps.select.outputs.mode }}" = subset ]; then
+          ctest --test-dir build -C $BUILD_TYPE --output-on-failure -j$(nproc) $LABEL_FILTER \
+                --tests-from-file selected.txt --no-tests=ignore
+        else
+          ctest --test-dir build -C $BUILD_TYPE --output-on-failure -j$(nproc) $LABEL_FILTER
+        fi
 
     - name: Draw the figures
       # No CTest case passes -p/-f/-F, so the plotting path is compiled but
       # never executed.  That is how plotting.cpp shipped missing a pybind11
       # include: it built clean and threw cast_error on every call.  Run the
-      # demo once for real output and confirm the files landed.
+      # demo once for real output and confirm the files landed, whenever niceops
+      # was built.
       #
       # After the tests, not before: this rewrites integrated/197421_LAE.csv,
       # which regression_golden compares.
+      if: steps.select.outputs.mode == 'all' || contains(format(' {0} ', steps.select.outputs.targets), ' niceops ')
       run: |
         mkdir -p ci-figures
         build/niceops -f ci-figures/footprint.png -F ci-figures/state.png
