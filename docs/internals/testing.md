@@ -9,8 +9,18 @@ and run the whole suite with no `-E` exclusion:
 ctest --test-dir build --output-on-failure -j8
 ```
 
-CI runs it in parallel (`-j$(nproc)`); the fixtures below are what make that safe, so a new
-comparison must name the fixture of every run it reads.
+CI runs a regression subset of it, `ctest -LE extended`, in parallel (`-j$(nproc)`), and the
+whole suite only when run by hand with `full` (the Actions tab). `tests/extended.cmake` lists the
+tests left out and says why: CI is for catching regressions, so it keeps the goldens of the default
+path and one pin per model, one windowed-versus-marched pair per gain kind, one degenerate case per
+model, the refusals and warnings, and the mutation-guarded tests, and leaves out checks against
+reference solutions, second variants of one check, and convergence and resolution checks. Catch2
+cases of that kind are tagged `[extended]`. CTest runs every setup of a fixture a selected test
+requires, whatever its label, so the file splits a shared fixture: its extended setups set up
+`<fixture>_extended` instead. A new test is on CI unless listed there; a new comparison must still
+name the fixture of every run it reads. A few mutation-guarded tests are extended where a kept test
+exercises the same code (the file says which); they still run in the whole suite, which is the one to
+run before a merge.
 
 `ctest -N` lists the tests; this file gives no count, because it goes stale. Every CTest runs
 with the **source root** as its working directory. Most of them run `niceops` and compare its

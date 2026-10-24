@@ -13,6 +13,19 @@ run is an out-of-line call across that boundary. What it is worth, and why, is m
 [performance.md](performance.md). It leaves the golden comparison passing unchanged, and
 GCC 16 and Apple Clang produce identical output with it.
 
+## Fused multiply-adds (`-ffp-contract=on` under GCC)
+
+Several batch paths are exact by construction against the scalar function they inline (absorption
+over bands, a ray's amplitudes over wavenumbers, a shared face's spectrum, the coherence sums with
+and without their variance), and Catch2 cases hold them bit for bit. That holds only if a
+multiply-add is fused or not by its source expression. Clang's default (`on`, the ISO rule) does
+that; GCC's (`fast`) fuses across statements as inlining leaves them, so on a target with FMA the
+two paths fuse differently and part by an ULP. CI's runner showed it: Ubuntu 26.04's amd64v3 GCC
+targets x86-64-v3, and five such cases failed there while passing on the Mac and on baseline
+x86-64. GCC builds therefore take `-ffp-contract=on` (GCC before 14 reads it as `off`, which is as
+deterministic). Clang's output, which the goldens come from, does not change; a GCC build of the
+demo was about 8% slower with it, measured on a loaded machine.
+
 ## Asserts
 
 **Live when testing, compiled out in shipped binaries.** `-DNICEOPS_ASSERTS=ON` strips CMake's

@@ -71,7 +71,11 @@ jobs:
         restore-keys: ccache-${{ runner.os }}-
 
     - name: Configure
+      # The compiler and its target first: the image's GCC may default past
+      # baseline x86-64 (Ubuntu's amd64v3 builds take x86-64-v3, with FMA),
+      # which is what -ffp-contract=on in CMakeLists.txt is about.
       run: >-
+        c++ --version | head -1 && c++ -Q --help=target | grep -E -- '-march=|-mfma ' ;
         cmake -S . -B build -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DNICEOPS_ASSERTS=ON
         -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache
 
@@ -103,16 +107,8 @@ jobs:
       # (docs/internals/testing.md), and the serial suite took over half an hour.
       # The extended tests (tests/extended.cmake) are left out: CI is for
       # catching regressions, and a run by hand with `full` takes them all.
-      #
-      # glibc picks its exp, pow, sin and cos by CPU (FMA and AVX2 variants), and
-      # the variants round differently from each other and from the constants
-      # GCC folds at compile time.  The tests that hold a batch path to its
-      # scalar reference bit for bit then fail by an ULP on some runners' CPUs
-      # and not on others.  Baseline variants everywhere make CI's results the
-      # same on every runner.
       env:
         LABEL_FILTER: ${{ inputs.full && ' ' || '-LE extended' }}
-        GLIBC_TUNABLES: glibc.cpu.hwcaps=-AVX2,-FMA
       run: ctest --test-dir build -C $BUILD_TYPE --output-on-failure -j$(nproc) $LABEL_FILTER
 
     - name: Draw the figures

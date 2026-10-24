@@ -52,6 +52,15 @@ if(NICEOPS_LTO)
   endif()
 endif()
 
+# Fused multiply-adds by the ISO rule, within one expression only, as Clang does by default.  GCC's
+# default (-ffp-contract=fast) fuses across statements as inlining leaves them, so where the target
+# has FMA (x86-64-v3, as Ubuntu's amd64v3 builds and CI's runner have, or AArch64) a batch path and
+# the scalar function it inlines are fused differently and part by an ULP, which the tests holding
+# them bit for bit report.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  add_compile_options(-ffp-contract=on)
+endif()
+
 # netCDF shared library (some systems like Homebrew install static and shared
 # in the same place, so force the shared version)
 find_library(NETCDF_LIBRARY NAMES netcdf

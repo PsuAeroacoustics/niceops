@@ -8,6 +8,12 @@
 # test would miss.  `ctest` with no label filter still runs everything; run it before a merge.
 #
 # The Catch2 cases tagged [extended] are the CTest unit_test_extended, listed here too.
+#
+# Mutation-guarded tests (docs/internals/testing.md) here, and what kills their mutant on CI:
+# urban_buildings_golden and urban_buildings_plate_golden, urban_buildings_diffuse_golden (the same
+# builder at s = 0.2) and the [building_paths] cases; stratified_duct_plate_golden,
+# stratified_duct_point_golden; terrain_hills_table_plate_is_the_plate_model, its point twin;
+# stratified_calm_floor_plate_is_floorless, the calm-floor cases of test_stratified.cpp.
 
 set(EXTENDED_TESTS
   unit_test_extended
