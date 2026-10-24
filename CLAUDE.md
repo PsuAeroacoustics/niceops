@@ -65,8 +65,10 @@ Commands and options are in `README.md`; rationale is in
 
 - Run the whole suite before a merge: `ctest --test-dir build --output-on-failure -j8`, with no
   `-E` or label filter. CI runs only `-LE extended`, a regression subset: `tests/extended.cmake`
-  lists what it leaves out, and Catch2 cases tagged `[extended]` go with them. Tests run in
-  parallel, so a comparison must name the fixture of every run it reads.
+  lists what it leaves out, and Catch2 cases tagged `[extended]` go with them. It also runs only
+  the tests a change can reach (`.github/ci_select.py`): a doc-only push runs nothing, one tool's
+  source runs that tool's tests. Tests run in parallel, so a comparison must name the fixture of
+  every run it reads.
   CTests run with the **source root** as working directory. For speed, run Catch2 directly
   (`build/niceops_unit_tests "[sphere_database]"`, by tag or name). Never write a test count
   into a doc; `ctest -N` gives it. `regression_default` runs the demo case and feeds

@@ -18,7 +18,17 @@ reference solutions, second variants of one check, and convergence and resolutio
 cases of that kind are tagged `[extended]`. CTest runs every setup of a fixture a selected test
 requires, whatever its label, so the file splits a shared fixture: its extended setups set up
 `<fixture>_extended` instead. A new test is on CI unless listed there; a new comparison must still
-name the fixture of every run it reads. A few mutation-guarded tests are extended where a kept test
+name the fixture of every run it reads.
+
+CI also runs only what a change can affect. A push that changes only documentation, reports,
+research notes, Python tools or batch scripts starts no run (`paths-ignore` in
+`.github/workflows/ci.yml`). Otherwise `.github/ci_select.py` reads what changed since the
+branch's last run: a change to the library, the build, the tests' scripts or data, or the workflow
+runs everything; a change to one binary's own source (`src/niceops.cpp`, `tools/<name>.cpp`,
+`tests/check_*.cpp`, the Catch2 sources) runs the tests that call that binary and those reading
+what they write, and builds only the targets they need; a golden runs the tests that name it. It
+finds a test's binaries in its command, so a test that reached a binary some other way (through a
+file another program wrote, say) needs a fixture to be found. A few mutation-guarded tests are extended where a kept test
 exercises the same code (the file says which); they still run in the whole suite, which is the one to
 run before a merge.
 
