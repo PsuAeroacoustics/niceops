@@ -148,9 +148,16 @@ Notes on each:
   solve's resolution frequency is not the 10 kHz default.
 - **The four stratified goldens were regenerated when `--ray_stride 4` became the default**; the
   files from before, every state solved, for the windy and duct point runs are kept as
-  `*_exact.csv` and pinned by runs with `--ray_stride 1`, which reproduce them to the bit (the
-  plate and calm-floor ones duplicated these pins within 0.002 dB, and were dropped for CI's cost). `stratified_stride_{windy,duct}_is_close`
-  holds the default within 0.005 and 0.02 dB of them.
+  `*_exact.csv` and pinned by runs with `--ray_stride 1`, which reproduced them to the bit (the
+  plate and calm-floor ones duplicated these pins within 0.002 dB, and were dropped for CI's cost).
+  `stratified_stride_{windy,duct}_is_close` holds the default within 0.005 and 0.02 dB of them.
+- **CI-size grids.** For CI's cost the goldens of the stratified runs (1968 ft), the terrain hills and
+  ridge runs (984 ft) and the urban tables (24 azimuths and 10 elevations) were regenerated on
+  coarser grids. The grids' nodes are a subset of the old ones, and every node kept its value (to
+  1e-14, the stride-1 windy pin to 3e-6 dB); the tables' runs moved by up to 0.7 dB, which is the
+  coarser table's interpolation. The bump table's mutant, the one a coarse grid could have hidden,
+  still fails `urban_table_bump_windowed_is_exact`. The low-table and bump-table terrain runs keep
+  492 ft: their mutants show in few cells.
 - **`terrain_hills_{point,plate}.csv`** were made by the build that added `--terrain`. They are
   pinned for the same reason: passing the plate's receiver as a point receiver at its call site
   (the plate then measures the source from the line, not from its microphone) moved cells by

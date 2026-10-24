@@ -2176,7 +2176,7 @@ TEST_CASE("an end at the line between the edges keeps the shared face's limit", 
 // of a district, and a grid of blocks of mixed heights over several of
 // Buildings' grid cells, with the source low and high, the rays are the same
 // with the pruning off, to the bit.
-TEST_CASE("pruning the diffracted paths loses no ray", "[point_paths]")
+TEST_CASE("pruning the diffracted paths loses no ray", "[extended][point_paths]")
 {
     const Buildings containers({box(4.09, 17.66, 6.53, 23.72, 7.77), box(14.81, 17.66, 17.25, 23.72, 7.77),
             box(1.6, 10.82, 4.04, 16.88, 7.77), box(1.6, 8.38, 13.72, 10.82, 5.18),

@@ -13,7 +13,10 @@
 # urban_buildings_golden and urban_buildings_plate_golden, urban_buildings_diffuse_golden (the same
 # builder at s = 0.2) and the [building_paths] cases; stratified_duct_plate_golden,
 # stratified_duct_point_golden; terrain_hills_table_plate_is_the_plate_model, its point twin;
-# stratified_calm_floor_plate_is_floorless, the calm-floor cases of test_stratified.cpp.
+# stratified_calm_floor_plate_is_floorless, the calm-floor cases of test_stratified.cpp; the Catch2
+# case `pruning the diffracted paths loses no ray`, `pruning finds every ray among pitched houses`
+# (the stretches pulled in, checked) and `a point of an edge proved hidden is hidden` (the grown
+# buildings).
 
 set(EXTENDED_TESTS
   unit_test_extended

@@ -307,9 +307,9 @@ and ground finish. What to keep:
   the rest of the evaluation (the shadow transition, the band levels, the database load and the
   histories), so larger strides gain little; in a duct with wave arrivals the arrivals' kinds
   change often enough that most states are solved anyway.
-- **4 is the default**; `--ray_stride 1` solves every state and reproduces the results from
-  before it to the bit (the `*_exact` goldens: the windy and duct point runs; the plate and the
-  calm floor are pinned at the default stride only).
+- **4 is the default**; `--ray_stride 1` solves every state, as every run did before it (the
+  `*_exact` goldens pin it for the windy and duct point runs; the plate and the calm floor are
+  pinned at the default stride only).
 - Tests: `two states' layered solves interpolate only where they agree`
   (`tests/test_stratified.cpp`), `stratified_stride_{windy,duct}_is_close` (against every state
   solved, at 0.005 and 0.02 dB), `stratified_stride_is_not_exact`, the `*_exact_golden` pins,
