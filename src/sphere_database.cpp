@@ -3411,6 +3411,16 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
                 " in AAM format: the database carries no spectra, and AMPLITUDE(PHI, THETA, "
                 "FREQUENCY) is the whole payload of the format.");
     }
+    // AAM's spheres are lower hemispheres, PHI -90 to 90 (TR Table 4-37); the
+    // database's grid runs the whole circle.  The rows kept, in order.
+    std::vector<std::size_t> rows;
+    for (std::size_t m = 0; m < sphere.phis.size(); m++)
+    {
+        if (std::fabs(sphere.phis[m]) <= 90.0 + 1e-9)
+            rows.push_back(m);
+    }
+    if (rows.size() < 2)
+        input_error("Cannot write ", path, " in AAM format: the sphere has fewer than two PHI rows within -90 to 90.");
     ensure_parent_directory(path);
 
     const double m2ft = 1.0 / ft2m;
@@ -3459,7 +3469,7 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
 
     int xyz_dim = 0, phi_dim = 0, theta_dim = 0, freq_dim = 0;
     nc_check(nc_def_dim(file, "XYZ", 3, &xyz_dim), "defining XYZ dimension");
-    nc_check(nc_def_dim(file, "PHI", sphere.phis.size(), &phi_dim), "defining PHI dimension");
+    nc_check(nc_def_dim(file, "PHI", rows.size(), &phi_dim), "defining PHI dimension");
     nc_check(nc_def_dim(file, "THETA", sphere.thetas.size(), &theta_dim),
             "defining THETA dimension");
     nc_check(nc_def_dim(file, "FREQUENCY", sphere.frequencies.size(), &freq_dim),
@@ -3518,16 +3528,27 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
         std::vector<float> as_float(values.begin(), values.end());
         nc_check(nc_put_var_float(file, var, as_float.data()), "writing an axis");
     };
-    put_axis(phi_var, sphere.phis);
+    std::vector<double> phis;
+    for (const auto m : rows)
+        phis.push_back(sphere.phis[m]);
+    put_axis(phi_var, phis);
     put_axis(theta_var, sphere.thetas);
     put_axis(freq_var, sphere.frequencies);
 
+    // The lower rows of the pitched sphere, an empty band as AAM's missing level.
     const auto flight_path = flight_path_frame_amplitudes(sphere);
-    std::vector<float> amplitude(flight_path.begin(), flight_path.end());
+    const std::size_t row_length = sphere.thetas.size() * sphere.frequencies.size();
+    std::vector<float> amplitude;
+    amplitude.reserve(rows.size() * row_length);
+    for (const auto m : rows)
+    {
+        for (std::size_t k = m * row_length; k < (m + 1) * row_length; k++)
+            amplitude.push_back(flight_path[k] <= empty_level_db ? -999.0F : static_cast<float>(flight_path[k]));
+    }
     nc_check(nc_put_var_float(file, amplitude_var, amplitude.data()), "writing AMPLITUDE");
 
     nc_check(guard.close(), "closing " + path);
-    log("Wrote AAM sphere to ", path, " (", sphere.phis.size(), " x ", sphere.thetas.size(),
+    log("Wrote AAM sphere to ", path, " (", rows.size(), " x ", sphere.thetas.size(),
             " x ", sphere.frequencies.size(), ").");
 }
 

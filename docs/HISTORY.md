@@ -413,7 +413,9 @@ old and new results only with them in mind.
   its variables in panam's order (`MASTTILT` after `AMPLITUDE`), which AAM 3.1 read in the 2026
   cross-code runs. The order it had before, `MASTTILT` before `XYZ`, is that of NASA's 2017
   spheres, which AAM read too. A third-octave export is AAM's broadband type (`BB` 1); it was
-  written as narrowband (`NB` 1). Runs and footprints are unchanged.
+  written as narrowband (`NB` 1). It is a lower hemisphere, `PHI` -90° to 90°, as AAM's format
+  defines it; it was the database's whole circle. An empty band is -999, AAM's missing level; it
+  was -1000. Runs and footprints are unchanged.
 - **A static operation with `--origin` and no `--frame_bearing`** reads its headings as compass
   bearings in the east/north frame. It used to orient the sphere by its zero velocity.
 - **The `azimuth_reference` attribute.** panam's builder writes it on every database: `track`

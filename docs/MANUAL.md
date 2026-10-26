@@ -511,7 +511,8 @@ path angle, so the export is pitched nose-up by the condition's flight path angl
 level sphere, and records `sphere_frame = flight_path`: an AAM deck flown at AOA 0 then hears
 what NICEOPS hears. A database is level; one that records another `sphere_frame` is refused.
 Third-octave bands (10 Hz to 10 kHz) are written as AAM's broadband sphere type (`BB`), any
-other band set as narrowband (`NB`). Of the shipped databases, the six `_fixed_load_factor`
+other band set as narrowband (`NB`). The export is a lower hemisphere, `PHI` -90° to 90°, as
+AAM's spheres are, with an empty band written as AAM's missing level, -999. Of the shipped databases, the six `_fixed_load_factor`
 files of the 2017 aircraft carry spectra; the S-76D demo database does not, so the demo case
 runs broadband.
 

@@ -1708,6 +1708,15 @@ TEST_CASE("an AAM export lays out its axes and amplitudes as the format says", "
     for (std::size_t cell = 0; cell < sphere.cells.size(); cell++)
         for (std::size_t band = 0; band < bands; band++)
             sphere.amplitudes[cell * bands + band] = 40.0 + 0.5 * static_cast<double>(cell % 97) + 10.0 * band;
+    // AAM's spheres are lower hemispheres: the rows with |phi| <= 90, in order.
+    std::vector<std::size_t> rows;
+    for (std::size_t m = 0; m < sphere.phis.size(); m++)
+        if (std::fabs(sphere.phis[m]) <= 90.0)
+            rows.push_back(m);
+    REQUIRE(rows.size() < sphere.phis.size());
+    // An empty band (the load-time floor) is AAM's missing level, -999.
+    const std::size_t empty = (rows[3] * sphere.thetas.size() + 4) * bands + 1;
+    sphere.amplitudes[empty] = Database::no_energy_floor_db;
     const auto path = (std::filesystem::temp_directory_path() / "niceops_aam_export.nc").string();
     const double tip_speed = 213.0;
     write_aam_sphere(sphere, path, tip_speed);
@@ -1721,7 +1730,7 @@ TEST_CASE("an AAM export lays out its axes and amplitudes as the format says", "
         REQUIRE(nc_inq_dimlen(ncid, dim, &n) == NC_NOERR);
         return n;
     };
-    REQUIRE(length("PHI") == sphere.phis.size());
+    REQUIRE(length("PHI") == rows.size());
     REQUIRE(length("THETA") == sphere.thetas.size());
     REQUIRE(length("FREQUENCY") == bands);
     auto read_floats = [&](const char* name, std::size_t n) {
@@ -1731,21 +1740,22 @@ TEST_CASE("an AAM export lays out its axes and amplitudes as the format says", "
         REQUIRE(nc_get_var_float(ncid, var, values.data()) == NC_NOERR);
         return values;
     };
-    const auto phi = read_floats("PHI", sphere.phis.size());
+    const auto phi = read_floats("PHI", rows.size());
     const auto theta = read_floats("THETA", sphere.thetas.size());
     const auto frequency = read_floats("FREQUENCY", bands);
     for (std::size_t i = 0; i < phi.size(); i++)
-        CHECK(phi[i] == static_cast<float>(sphere.phis[i]));
+        CHECK(phi[i] == static_cast<float>(sphere.phis[rows[i]]));
     for (std::size_t i = 0; i < theta.size(); i++)
         CHECK(theta[i] == static_cast<float>(sphere.thetas[i]));
     CHECK(frequency[1] == 250.0f);
     // Element order: phi slowest, then theta, then frequency.
-    const auto amplitude = read_floats("AMPLITUDE", sphere.cells.size() * bands);
-    for (std::size_t m = 0; m < phi.size(); m += 5)
+    const auto amplitude = read_floats("AMPLITUDE", rows.size() * theta.size() * bands);
+    for (std::size_t i = 0; i < phi.size(); i += 5)
         for (std::size_t n = 0; n < theta.size(); n += 3)
             for (std::size_t f = 0; f < bands; f++)
-                REQUIRE(amplitude[(m * theta.size() + n) * bands + f]
-                        == static_cast<float>(sphere.amplitudes[(m * theta.size() + n) * bands + f]));
+                REQUIRE(amplitude[(i * theta.size() + n) * bands + f]
+                        == static_cast<float>(sphere.amplitudes[(rows[i] * theta.size() + n) * bands + f]));
+    CHECK(amplitude[(3 * theta.size() + 4) * bands + 1] == -999.0f);
     CHECK(read_floats("RADIUS", 1)[0] == Catch::Approx(sphere.radius / 0.3048).epsilon(1e-6));
     CHECK(read_floats("SPEED", 1)[0] == Catch::Approx(0.15 * tip_speed / knot).epsilon(1e-6));
     CHECK(read_floats("FLIGHT_PATH_ANGLE", 1)[0] == Catch::Approx(0.0).margin(1e-6));
@@ -1819,17 +1829,21 @@ TEST_CASE("an AAM export is pitched by its flight path angle", "[sphere_database
         int ncid = 0, var = 0;
         REQUIRE(nc_open(path.c_str(), NC_NOWRITE, &ncid) == NC_NOERR);
         REQUIRE(nc_inq_varid(ncid, "AMPLITUDE", &var) == NC_NOERR);
-        std::vector<float> amplitude(sphere.cells.size());
+        std::vector<double> lower;
+        for (const double phi : sphere.phis)
+            if (std::fabs(phi) <= 90.0)
+                lower.push_back(phi);
+        std::vector<float> amplitude(lower.size() * sphere.thetas.size());
         REQUIRE(nc_get_var_float(ncid, var, amplitude.data()) == NC_NOERR);
         REQUIRE(nc_close(ncid) == NC_NOERR);
         std::filesystem::remove(path);
         const double g = gamma * pi / 180.0;
         double worst = 0.0;
-        for (std::size_t m = 0; m < sphere.phis.size(); m++)
+        for (std::size_t m = 0; m < lower.size(); m++)
         {
             for (std::size_t n = 0; n < sphere.thetas.size(); n++)
             {
-                const double phi = sphere.phis[m] * pi / 180.0, theta = sphere.thetas[n] * pi / 180.0;
+                const double phi = lower[m] * pi / 180.0, theta = sphere.thetas[n] * pi / 180.0;
                 const double level_down = -std::sin(g) * std::cos(theta) + std::cos(g) * std::sin(theta) * std::cos(phi);
                 worst = std::max(worst, std::fabs(amplitude[m * sphere.thetas.size() + n] - (60.0 + 10.0 * level_down)));
             }
