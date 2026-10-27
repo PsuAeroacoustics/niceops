@@ -3382,6 +3382,27 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
     log("Wrote interpolated sphere to ", path, " (", n_channels, " channels).");
 }
 
+bool aam_third_octave_bands(const std::vector<double>& frequencies)
+{
+    // Band n is centered at 10^(n/10) Hz.  The nominal centers (12.5, 31.5, 63, ...)
+    // and base-2 ones sit within 0.031 of n in 10 lg f, a 1/12-octave set's off-band
+    // members 0.25 or more away; 0.05 lies between.
+    if (frequencies.empty())
+        return false;
+    std::array<bool, 31> seen {};
+    for (const double f : frequencies)
+    {
+        if (!(f > 0.0))
+            return false;
+        const double index = 10.0 * std::log10(f);
+        const long n = std::lround(index);
+        if (n < 10 || n > 40 || std::fabs(index - static_cast<double>(n)) > 0.05 || seen[n - 10])
+            return false;
+        seen[n - 10] = true;
+    }
+    return true;
+}
+
 void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, double tip_speed)
 {
     if (sphere.frequencies.empty())
@@ -3390,6 +3411,16 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
                 " in AAM format: the database carries no spectra, and AMPLITUDE(PHI, THETA, "
                 "FREQUENCY) is the whole payload of the format.");
     }
+    // AAM's spheres are lower hemispheres, PHI -90 to 90 (TR Table 4-37); the
+    // database's grid runs the whole circle.  The rows kept, in order.
+    std::vector<std::size_t> rows;
+    for (std::size_t m = 0; m < sphere.phis.size(); m++)
+    {
+        if (std::fabs(sphere.phis[m]) <= 90.0 + 1e-9)
+            rows.push_back(m);
+    }
+    if (rows.size() < 2)
+        input_error("Cannot write ", path, " in AAM format: the sphere has fewer than two PHI rows within -90 to 90.");
     ensure_parent_directory(path);
 
     const double m2ft = 1.0 / ft2m;
@@ -3403,25 +3434,30 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
     // The AAM/RNM hemisphere layout, as the source spheres themselves carry it:
     // a handful of scalar descriptors, the three axes, and the spectrum.  AAM 3.1
     // reads them by position ("Variable ID mismatch" otherwise), so they are
-    // declared in its order, each scalar with a dimension of its own name;
-    // MASTTILT, which AAM does not read, comes after AMPLITUDE.  Scalar units are
-    // blank-padded to 20 characters, the Fortran field AAM's spheres write.
+    // declared in its order.  The scalars are true scalars, each beside a
+    // singleton dimension of its own name, as NASA's and panam's spheres have
+    // them; MASTTILT, which AAM does not read, comes after AMPLITUDE.  Scalar
+    // units are blank-padded to 20 characters, the Fortran field AAM's spheres write.
     auto scalar_dim = [&](const char* name) {
         int dim = 0;
         nc_check(nc_def_dim(file, name, 1, &dim), std::string("defining ") + name);
-        return dim;
     };
-    auto define_var = [&](const char* name, int dim, const std::string& unit) {
+    // An axis along `dim`, or with no dim a scalar.
+    auto define_var = [&](const char* name, const int* dim, const std::string& unit) {
         int var = 0;
-        nc_check(nc_def_var(file, name, NC_FLOAT, 1, &dim, &var), std::string("defining ") + name);
+        nc_check(nc_def_var(file, name, NC_FLOAT, dim ? 1 : 0, dim, &var), std::string("defining ") + name);
         nc_check(nc_put_att_text(file, var, "unit", unit.size(), unit.c_str()),
                 std::string("annotating ") + name);
         return var;
     };
+    auto padded = [](const char* unit) {
+        std::string text(unit);
+        text.resize(20, ' ');
+        return text;
+    };
     auto scalar_var = [&](const char* name, const char* unit) {
-        std::string padded(unit);
-        padded.resize(20, ' ');
-        return define_var(name, scalar_dim(name), padded);
+        scalar_dim(name);
+        return define_var(name, nullptr, padded(unit));
     };
 
     const int bb_var = scalar_var("BB", "");
@@ -3438,26 +3474,24 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
 
     int xyz_dim = 0, phi_dim = 0, theta_dim = 0, freq_dim = 0;
     nc_check(nc_def_dim(file, "XYZ", 3, &xyz_dim), "defining XYZ dimension");
-    nc_check(nc_def_dim(file, "PHI", sphere.phis.size(), &phi_dim), "defining PHI dimension");
+    nc_check(nc_def_dim(file, "PHI", rows.size(), &phi_dim), "defining PHI dimension");
     nc_check(nc_def_dim(file, "THETA", sphere.thetas.size(), &theta_dim),
             "defining THETA dimension");
     nc_check(nc_def_dim(file, "FREQUENCY", sphere.frequencies.size(), &freq_dim),
             "defining FREQUENCY dimension");
-    const int masttilt_dim = scalar_dim("MASTTILT");
+    scalar_dim("MASTTILT");
 
-    const int xyz_var = define_var("XYZ", xyz_dim, "FEET");
-    const int phi_var = define_var("PHI", phi_dim, "DEGREE");
-    const int theta_var = define_var("THETA", theta_dim, "DEGREE");
-    const int freq_var = define_var("FREQUENCY", freq_dim, "HERTZ");
+    const int xyz_var = define_var("XYZ", &xyz_dim, "FEET");
+    const int phi_var = define_var("PHI", &phi_dim, "DEGREE");
+    const int theta_var = define_var("THETA", &theta_dim, "DEGREE");
+    const int freq_var = define_var("FREQUENCY", &freq_dim, "HERTZ");
 
     int amplitude_var = 0;
     const int amplitude_dims[3] = {phi_dim, theta_dim, freq_dim};
     nc_check(nc_def_var(file, "AMPLITUDE", NC_FLOAT, 3, amplitude_dims, &amplitude_var),
             "defining AMPLITUDE");
     nc_check(nc_put_att_text(file, amplitude_var, "unit", 7, "DECIBEL"), "annotating AMPLITUDE");
-    std::string masttilt_unit("DEGREE");
-    masttilt_unit.resize(20, ' ');
-    const int masttilt_var = define_var("MASTTILT", masttilt_dim, masttilt_unit);
+    const int masttilt_var = define_var("MASTTILT", nullptr, padded("DEGREE"));
 
     const std::string title = "NICEOPS interpolated sphere";
     nc_check(nc_put_att_text(file, NC_GLOBAL, "title", title.size(), title.c_str()),
@@ -3473,9 +3507,10 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
         const float as_float = static_cast<float>(value);
         nc_check(nc_put_var_float(file, var, &as_float), "writing a scalar");
     };
-    // Narrowband only: these spheres carry no broadband/tonal split.
-    put_scalar(bb_var, 0.0);
-    put_scalar(nb_var, 1.0);
+    // AAM's sphere types (TR Table 4-37): BB + NB + PT = 1.
+    const bool broadband = aam_third_octave_bands(sphere.frequencies);
+    put_scalar(bb_var, broadband ? 1.0 : 0.0);
+    put_scalar(nb_var, broadband ? 0.0 : 1.0);
     put_scalar(pt_var, 0.0);
     put_scalar(dsr_var, 0.0);
     // The database records no weight breakdown, and the format has no way to
@@ -3496,16 +3531,27 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
         std::vector<float> as_float(values.begin(), values.end());
         nc_check(nc_put_var_float(file, var, as_float.data()), "writing an axis");
     };
-    put_axis(phi_var, sphere.phis);
+    std::vector<double> phis;
+    for (const auto m : rows)
+        phis.push_back(sphere.phis[m]);
+    put_axis(phi_var, phis);
     put_axis(theta_var, sphere.thetas);
     put_axis(freq_var, sphere.frequencies);
 
+    // The lower rows of the pitched sphere, an empty band as AAM's missing level.
     const auto flight_path = flight_path_frame_amplitudes(sphere);
-    std::vector<float> amplitude(flight_path.begin(), flight_path.end());
+    const std::size_t row_length = sphere.thetas.size() * sphere.frequencies.size();
+    std::vector<float> amplitude;
+    amplitude.reserve(rows.size() * row_length);
+    for (const auto m : rows)
+    {
+        for (std::size_t k = m * row_length; k < (m + 1) * row_length; k++)
+            amplitude.push_back(flight_path[k] <= empty_level_db ? -999.0F : static_cast<float>(flight_path[k]));
+    }
     nc_check(nc_put_var_float(file, amplitude_var, amplitude.data()), "writing AMPLITUDE");
 
     nc_check(guard.close(), "closing " + path);
-    log("Wrote AAM sphere to ", path, " (", sphere.phis.size(), " x ", sphere.thetas.size(),
+    log("Wrote AAM sphere to ", path, " (", rows.size(), " x ", sphere.thetas.size(),
             " x ", sphere.frequencies.size(), ").");
 }
 
