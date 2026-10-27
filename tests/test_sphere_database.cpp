@@ -1776,6 +1776,11 @@ TEST_CASE("an AAM export lays out its axes and amplitudes as the format says", "
         char name[NC_MAX_NAME + 1] = {};
         REQUIRE(nc_inq_varname(ncid, id, name) == NC_NOERR);
         CHECK(std::string(name) == order[id]);
+        // True scalars, as NASA's and panam's spheres have them, but for the axes and AMPLITUDE.
+        int ndims = -1;
+        REQUIRE(nc_inq_varndims(ncid, id, &ndims) == NC_NOERR);
+        const std::string n(name);
+        CHECK(ndims == (n == "AMPLITUDE" ? 3 : n == "XYZ" || n == "PHI" || n == "THETA" || n == "FREQUENCY" ? 1 : 0));
     }
     std::size_t frame_length = 0;
     REQUIRE(nc_inq_attlen(ncid, NC_GLOBAL, "sphere_frame", &frame_length) == NC_NOERR);

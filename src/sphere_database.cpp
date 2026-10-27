@@ -3434,25 +3434,30 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
     // The AAM/RNM hemisphere layout, as the source spheres themselves carry it:
     // a handful of scalar descriptors, the three axes, and the spectrum.  AAM 3.1
     // reads them by position ("Variable ID mismatch" otherwise), so they are
-    // declared in its order, each scalar with a dimension of its own name;
-    // MASTTILT, which AAM does not read, comes after AMPLITUDE.  Scalar units are
-    // blank-padded to 20 characters, the Fortran field AAM's spheres write.
+    // declared in its order.  The scalars are true scalars, each beside a
+    // singleton dimension of its own name, as NASA's and panam's spheres have
+    // them; MASTTILT, which AAM does not read, comes after AMPLITUDE.  Scalar
+    // units are blank-padded to 20 characters, the Fortran field AAM's spheres write.
     auto scalar_dim = [&](const char* name) {
         int dim = 0;
         nc_check(nc_def_dim(file, name, 1, &dim), std::string("defining ") + name);
-        return dim;
     };
-    auto define_var = [&](const char* name, int dim, const std::string& unit) {
+    // An axis along `dim`, or with no dim a scalar.
+    auto define_var = [&](const char* name, const int* dim, const std::string& unit) {
         int var = 0;
-        nc_check(nc_def_var(file, name, NC_FLOAT, 1, &dim, &var), std::string("defining ") + name);
+        nc_check(nc_def_var(file, name, NC_FLOAT, dim ? 1 : 0, dim, &var), std::string("defining ") + name);
         nc_check(nc_put_att_text(file, var, "unit", unit.size(), unit.c_str()),
                 std::string("annotating ") + name);
         return var;
     };
+    auto padded = [](const char* unit) {
+        std::string text(unit);
+        text.resize(20, ' ');
+        return text;
+    };
     auto scalar_var = [&](const char* name, const char* unit) {
-        std::string padded(unit);
-        padded.resize(20, ' ');
-        return define_var(name, scalar_dim(name), padded);
+        scalar_dim(name);
+        return define_var(name, nullptr, padded(unit));
     };
 
     const int bb_var = scalar_var("BB", "");
@@ -3474,21 +3479,19 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
             "defining THETA dimension");
     nc_check(nc_def_dim(file, "FREQUENCY", sphere.frequencies.size(), &freq_dim),
             "defining FREQUENCY dimension");
-    const int masttilt_dim = scalar_dim("MASTTILT");
+    scalar_dim("MASTTILT");
 
-    const int xyz_var = define_var("XYZ", xyz_dim, "FEET");
-    const int phi_var = define_var("PHI", phi_dim, "DEGREE");
-    const int theta_var = define_var("THETA", theta_dim, "DEGREE");
-    const int freq_var = define_var("FREQUENCY", freq_dim, "HERTZ");
+    const int xyz_var = define_var("XYZ", &xyz_dim, "FEET");
+    const int phi_var = define_var("PHI", &phi_dim, "DEGREE");
+    const int theta_var = define_var("THETA", &theta_dim, "DEGREE");
+    const int freq_var = define_var("FREQUENCY", &freq_dim, "HERTZ");
 
     int amplitude_var = 0;
     const int amplitude_dims[3] = {phi_dim, theta_dim, freq_dim};
     nc_check(nc_def_var(file, "AMPLITUDE", NC_FLOAT, 3, amplitude_dims, &amplitude_var),
             "defining AMPLITUDE");
     nc_check(nc_put_att_text(file, amplitude_var, "unit", 7, "DECIBEL"), "annotating AMPLITUDE");
-    std::string masttilt_unit("DEGREE");
-    masttilt_unit.resize(20, ' ');
-    const int masttilt_var = define_var("MASTTILT", masttilt_dim, masttilt_unit);
+    const int masttilt_var = define_var("MASTTILT", nullptr, padded("DEGREE"));
 
     const std::string title = "NICEOPS interpolated sphere";
     nc_check(nc_put_att_text(file, NC_GLOBAL, "title", title.size(), title.c_str()),
