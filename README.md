@@ -48,7 +48,7 @@ tests, from a build with `-DNICEOPS_ASSERTS=ON` as CI does: `ctest --test-dir bu
 ## Quick start
 
 With no arguments, NICEOPS runs a demo case: the trajectory `tracks/S-76D/197421AC.csv`, the
-database `databases/S-76D_M3.nod` and the vehicle `databases/S-76D.json`, writing
+database `databases/S-76D_load_factors.nod` and the vehicle `databases/S-76D.json`, writing
 `integrated/197421_LAE.csv`. That database is broadband. A database that carries spectra runs
 the spectral path, with ground effect, by default; it needs a relative humidity, from the
 vehicle file, `--humidity` or `--atmosphere`.

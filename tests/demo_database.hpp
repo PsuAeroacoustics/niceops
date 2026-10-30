@@ -9,7 +9,7 @@ namespace niceops::test {
 
 inline const Database& demo_database()
 {
-    static const Database database("databases/S-76D_M3.nod");
+    static const Database database("databases/S-76D_load_factors.nod");
     return database;
 }
 

@@ -27,6 +27,15 @@
 
 using namespace niceops;
 
+namespace
+{
+// The S-76D database NICEOPS shipped before the 2019 rebuild, kept for what it lacks: it was
+// written before panam recorded the azimuth reference, the build air and each sphere's
+// coverage, so it is the older file those readers must leave silent.  (The database screen's
+// tests use it for its defective spheres.)
+const char* const legacy_database = "tests/data/legacy_S-76D.nod";
+} // namespace
+
 TEST_CASE("periodic_bilinear_interp", "[sphere_database]")
 {
     // Test bilinear interpolation
@@ -173,7 +182,7 @@ TEST_CASE("DirectionBounds really bounds the level", "[extended][sphere_database
     // level found so far, so the whole peak search is only correct if the bound
     // is never exceeded.  Sweep a spread of source states and observers and
     // check it directly, in the energy form the hot path compares in.
-    if (!std::filesystem::exists("databases/S-76D_M3.nod"))
+    if (!std::filesystem::exists("databases/S-76D_load_factors.nod"))
         return;
     const Database& db = test::demo_database();
 
@@ -231,7 +240,7 @@ TEST_CASE("DirectionBounds still bounds the level at the nose and tail axes", "[
     // degrees of an axis; this one aims at them, over the whole operating
     // envelope (the violation needs a pole value that is the local maximum of its
     // bin, which not every blend has).
-    if (!std::filesystem::exists("databases/S-76D_M3.nod"))
+    if (!std::filesystem::exists("databases/S-76D_load_factors.nod"))
         return;
     const Database& db = test::demo_database();
 
@@ -435,7 +444,7 @@ TEST_CASE("azimuth_reference is read from the database root and survives export"
     // Absent is the track, as every database built before the attribute was;
     // the Database still says that it was absent, so a run can tell an
     // explicit --nose against the file from one against a default.
-    const Database& source = test::demo_database();
+    const Database source(legacy_database);
     REQUIRE(source.azimuth_reference() == AzimuthReference::track);
     REQUIRE_FALSE(source.recorded_azimuth_reference().has_value());
     auto sphere = source.interpolate_sphere(0.15, -4.0, 0.006);
@@ -1008,6 +1017,63 @@ TEST_CASE("source coverage distinguishes clamping from analytic load scaling", "
     std::filesystem::remove(path);
 }
 
+namespace
+{
+// Gives group "sphere<i>" of an existing test database the condition_origin
+// attribute origins[i] (none where it is empty), as panam writes it.
+void set_condition_origins(const std::string& path, const std::vector<std::string>& origins)
+{
+    int file = 0;
+    REQUIRE(nc_open(path.c_str(), NC_WRITE, &file) == NC_NOERR);
+    REQUIRE(nc_redef(file) == NC_NOERR);
+    for (std::size_t i = 0; i < origins.size(); i++)
+    {
+        if (origins[i].empty())
+            continue;
+        int group = 0;
+        REQUIRE(nc_inq_ncid(file, ("sphere" + std::to_string(i)).c_str(), &group) == NC_NOERR);
+        REQUIRE(nc_put_att_text(group, NC_GLOBAL, "condition_origin", origins[i].size(), origins[i].c_str())
+                == NC_NOERR);
+    }
+    REQUIRE(nc_close(file) == NC_NOERR);
+}
+} // namespace
+
+TEST_CASE("condition_origin: absent is measured, and a blend's weight sums by origin", "[sphere_database]")
+{
+    const auto path = write_fixed_load_factor_test_database(
+            "niceops_condition_origin.nod", fixed_load_factor_conditions, true);
+    {
+        Database db(path);
+        for (std::size_t i = 0; i < db.condition_count(); i++)
+            CHECK(db.origin(i) == ConditionOrigin::measured);
+        const auto weights = db.origin_weights(db.blend_at(0.25, 0.25, test_ct_reference));
+        CHECK(weights[0] == Catch::Approx(1.0));
+    }
+    // Sphere 1 (mu 1) extended, sphere 2 (gamma 1) a synthesized hover; sphere 0
+    // says nothing and stays measured.
+    set_condition_origins(path, {"", "extended_flight_path_angle", "synthesized_hover"});
+    Database db(path);
+    CHECK(db.origin(0) == ConditionOrigin::measured);
+    CHECK(db.origin(1) == ConditionOrigin::extended_flight_path_angle);
+    CHECK(db.origin(2) == ConditionOrigin::synthesized_hover);
+    // Inside the triangle the barycentric weights are 1 - mu - gamma, mu, gamma.
+    const auto weights = db.origin_weights(db.blend_at(0.25, 0.5, test_ct_reference));
+    CHECK(weights[0] == Catch::Approx(0.25));
+    CHECK(weights[1] == Catch::Approx(0.25));
+    CHECK(weights[2] == Catch::Approx(0.5));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("condition_origin: a value panam does not write is refused", "[sphere_database]")
+{
+    const auto path = write_fixed_load_factor_test_database(
+            "niceops_condition_origin_bad.nod", fixed_load_factor_conditions, true);
+    set_condition_origins(path, {"measured", "extrapolated", ""});
+    REQUIRE_THROWS_WITH(Database(path), Catch::Matchers::ContainsSubstring("condition_origin 'extrapolated'"));
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("fixed_load_factor: cull_range accounts for the correction", "[sphere_database]")
 {
     const auto path = write_fixed_load_factor_test_database(
@@ -1349,7 +1415,7 @@ TEST_CASE("inside the sphere the level is the surface's", "[sphere_database]")
     // asserts live the r = 0 case aborted the run.  The sphere is the source's own
     // volume, so spreading and absorption start at its surface and the level inside
     // is the surface's.
-    if (!std::filesystem::exists("databases/S-76D_M3.nod"))
+    if (!std::filesystem::exists("databases/S-76D_load_factors.nod"))
         return;
     const Database& db = test::demo_database();
     const double radius = db.sphere_radius();
@@ -1963,7 +2029,7 @@ TEST_CASE("The build atmosphere and rotor speed are read when the file records t
         "[sphere_database][build]")
 {
     // Older databases carry neither, and must say nothing rather than guess.
-    const Database& plain = test::demo_database();
+    const Database plain(legacy_database);
     REQUIRE(!plain.build_atmosphere().has_value());
     REQUIRE(!plain.rotor_rpm().has_value());
 
@@ -1999,8 +2065,8 @@ TEST_CASE("The build atmosphere and rotor speed are read when the file records t
 TEST_CASE("The unmeasured share follows the channels the builder did not measure",
         "[sphere_database][coverage]")
 {
-    // The shipped databases record no coverage, so the share is undefined.
-    const Database& plain = test::demo_database();
+    // A database that records no coverage leaves the share undefined.
+    const Database plain(legacy_database);
     REQUIRE(!plain.has_coverage());
 
     // One sphere written out, with a coverage variable along its channels:

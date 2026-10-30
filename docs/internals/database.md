@@ -37,6 +37,17 @@ scattered (φ, θ) channels of dBA level and EAA excess-attenuation factor.
   drops channels that match no angle of sphere 0's axes, is warned about once per distinct
   layout, the first three in full. None of the shipped databases trips it; `B407_M3`'s 934
   zero channels are written zeros, not unreached cells.
+- **`condition_origin` is read per group** (`Database::origin`, `origin_weights`): panam's
+  `measured`, `extended_flight_path_angle` or `synthesized_hover`. Absent is measured, so the
+  shipped databases that predate it, the goldens' among them, run as before; any other value is
+  refused. The run's warning counts states whose blend puts less than half its weight on measured
+  spheres, other than states on the synthesized hover itself (weight 0.99 or more), which a
+  hovering trajectory is meant to use. The threshold is a majority, not fitted. On the 2019 S-76D
+  build (58 measured spheres, 62 extended, 3 synthesized hovers) it warns on 21 of the 31
+  approaches, whose flare and climb-out over the array lie between the measured conditions (21
+  to 1164 states each; 12% of the approaches' blend weight is extended), and on none of the 39
+  descents and 3 level runs the build was made from (3% and 1%). The per-observer exposure share
+  in `--provenance_file` is the finer measure.
 - **The netCDF fill value is refused** in dBA, EAA and amplitude (`refuse_fill_values`). A group
   panam never finished writing holds 9.97e36 everywhere; it is finite, so the non-finite floor
   passed it, and it read as a 1e37 dB level (the September 2026 files, HISTORY).
@@ -189,7 +200,7 @@ completed with `-phi` instead of `180 - phi`. Since the source spheres span only
 (φ = 0 straight down), negating is a left/right flip *within* the lower half that maps the range
 onto itself, so the mirrored channels wear lower-hemisphere labels and the upper surface is
 missing. Forward-flight spheres in those files were completed correctly; only hover is affected
-(in `S-76D_M3.nod`, exactly the 24 spheres at μ = 0).
+(in `S-76D_M3.nod`, now in the repository's history only, exactly the 24 spheres at μ = 0).
 
 Only the labels are wrong, so `Database::Database` repairs them on load via
 `repair_legacy_hover_directivity()`: for the mirrored half, `phi_correct = wrap(180 +
@@ -220,7 +231,7 @@ the fix-up unnecessary; the loader then trusts the file as written.
   attenuates each band at its own ISO 9613-1 coefficient. `Database::eval_spectrum` mirrors
   `eval`'s bracketing and bilinear cell exactly, so a difference between them is the physics and
   never the interpolation. `--spectral` is the default whenever the database carries spectra
-  (and falls back to broadband when it does not), so the goldens, made from `S-76D_M3.nod`,
+  (and falls back to broadband when it does not), so the goldens, made from `S-76D_load_factors.nod`,
   which has none, are the broadband path. On B407, spectral minus `--no-spectral` is median
   -1.2 dB (-3.2 to +2.3) on the demo track: the humidity and temperature of the run against the
   ones the database's EAA was built at, and EAA being a linear-in-range rate anchored at 1 km

@@ -98,8 +98,8 @@ int main(int argc, char** argv)
         std::string cell;
         while (std::getline(stream, cell, ','))
             row.push_back(std::strtod(cell.c_str(), nullptr));
-        if (row.size() != 13)
-            fail("a provenance row without 13 columns");
+        if (row.size() != 15)
+            fail("a provenance row without 15 columns");
         if (i >= observers)
             fail("more provenance rows than observers");
         const std::string where = "observer " + std::to_string(i);

@@ -44,7 +44,7 @@ void check_vehicle(const dimensional_data& vehicle, const Database& database, co
     // whatever tip speed the database records.  Disagree, and every lookup lands
     // at the wrong condition with nothing downstream able to notice.  Worth
     // checking because the two are easy to state in different units:
-    // S-76D_M3.nod was built at 220 m/s, and 600 is that same figure read as
+    // the S-76D databases were built at 220 m/s, and 600 is that same figure read as
     // ft/s, which puts the tip at Mach 1.7.
     //
     // Weight and rotor radius set CT and mu in the same way and the database

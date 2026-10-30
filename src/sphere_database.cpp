@@ -164,9 +164,10 @@ bool read_coverage(int group_id, std::vector<int>& coverage)
     return true;
 }
 
-// A root text attribute, or nullopt when the file has none.  panam writes them
-// with netCDF4-python, whose str attributes are NC_CHAR; NC_STRING is accepted
-// too.  Anything else is refused by name rather than read as absent.
+// A root text attribute (or a group's, given the group's id), or nullopt when
+// there is none.  panam writes them with netCDF4-python, whose str attributes
+// are NC_CHAR; NC_STRING is accepted too.  Anything else is refused by name
+// rather than read as absent.
 std::optional<std::string> read_root_text(int ncid, const char* name)
 {
     nc_type type = NC_NAT;
@@ -414,6 +415,31 @@ std::optional<AzimuthReference> parse_azimuth_reference(const std::string& name)
 const char* to_string(AzimuthReference reference)
 {
     return reference == AzimuthReference::heading ? "heading" : "track";
+}
+
+std::optional<ConditionOrigin> parse_condition_origin(const std::string& name)
+{
+    if (name == "measured")
+        return ConditionOrigin::measured;
+    if (name == "extended_flight_path_angle")
+        return ConditionOrigin::extended_flight_path_angle;
+    if (name == "synthesized_hover")
+        return ConditionOrigin::synthesized_hover;
+    return std::nullopt;
+}
+
+const char* to_string(ConditionOrigin origin)
+{
+    switch (origin)
+    {
+    case ConditionOrigin::extended_flight_path_angle:
+        return "extended_flight_path_angle";
+    case ConditionOrigin::synthesized_hover:
+        return "synthesized_hover";
+    case ConditionOrigin::measured:
+        break;
+    }
+    return "measured";
 }
 
 // Repair the azimuth labels of a sphere written by a pre-versioned builder.
@@ -1193,6 +1219,20 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
         advance_ratios.push_back(advance_ratio);
         flight_path_angles.push_back(flight_path_angle);
         thrust_coefficients.push_back(thrust_coefficient);
+        // A group without condition_origin is measured; one panam does not name
+        // is refused, not guessed at.
+        if (const auto origin_text = read_root_text(group_id, "condition_origin"))
+        {
+            const auto origin = parse_condition_origin(*origin_text);
+            if (!origin)
+                input_error("Database error: sphere ", group_id, " has condition_origin '", *origin_text,
+                        "'; expected measured, extended_flight_path_angle or synthesized_hover.");
+            origins_.push_back(*origin);
+        }
+        else
+        {
+            origins_.push_back(ConditionOrigin::measured);
+        }
         trace("Sphere ", group_id, " loaded with \t μ = ", advance_ratios[i],
                 ",\t γ = ", flight_path_angles[i], ",\t CT = ", thrust_coefficients[i],
                 ",\t scale = ", scale, ",\t radius = ", radius);

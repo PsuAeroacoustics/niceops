@@ -2387,6 +2387,7 @@ with the shipped database:
 | EC130 | 112 | day 298, 1025 mic-runs | +0.70 / 2.70 |
 | RO-44 | 83 | day 229, 585 mic-runs | +0.04 / 1.16 |
 | RO-66 | 88 | day 236, 876 mic-runs | +0.87 / 1.56 |
+| S-76D | 70 | 2019, days 197–198, 826 mic-runs | +1.61 / 2.71 |
 
 - **Every aircraft over-predicts at low elevation.** The AS350 is +1.59 / 2.29 dB at 5–10° of
   elevation, and carries a +0.6 dB bias overhead. The RO-44 is 1.94 dB rms at 0–5° and 1.23 dB
@@ -2406,6 +2407,39 @@ with the shipped database:
 How these scores compare with earlier builds of the same databases is in
 [HISTORY](HISTORY.md#the-2017-noise-abatement-databases).
 
+### The S-76D at Coyle Field (2019)
+
+The 2019 Noise Abatement test flew the S-76D over 39 flush ground plates at Coyle Field, NJ. Its
+database is built from every steady run, three climbs among them. The approach cards are held
+out: PANAM refuses them by name. Coyle has no pole and plate pairs to fit a ground to, so these
+scores take Amedee's (variable porosity, σ 200 kPa s/m²). NICEOPS minus the measured 10 dB-down
+SEL, station atmosphere, plates:
+
+| Set | Runs | Mic-runs | Mean | MAE |
+| --- | --- | --- | --- | --- |
+| Approaches, days 197–198 (held out) | 31 | 826 | +1.79 dB | 2.12 |
+| Descents, day 176, database built without day 176 | 15 | 408 | −0.74 | 1.36 |
+| Descents, day 177, database built without day 177 | 24 | 633 | +0.33 | 1.28 |
+| Descents, days 176–177 (in the build) | 39 | 1041 | −0.28 | 1.07 |
+| Climbs, day 177 (in the build) | 5 | 142 | −0.62 | 1.35 |
+
+- **The approach error is the flare and climb-out.** Each approach descends steadily at 55–88 kt
+  to about 1500 ft before the array's center, then flares to 28–42 kt over it, 70–150 ft up,
+  and climbs out at +4 to +8° accelerating. Split there, the steady descent scores −0.17 dB
+  (MAE 1.77), and the flare and climb-out +2.05 (+3.1 below 10° of elevation). No measured S-76D
+  condition is that slow, or climbs that shallowly out of a flare. On 21 of the 31 approaches,
+  states there take less than half their blend from measured spheres, and the run warns.
+- **A day held out costs about 0.3 dB of MAE**, and moves the mean by ±0.6 dB, the spread of the
+  other aircraft's held-out days.
+- **LAmax is under-predicted:** approaches −1.60 dB, descents in the build −1.97. The climbs'
+  −3.78 is their pull-up just before the array, which no steady condition holds.
+- **The database these replaced was low.** On the broadband path, which all three can run, the
+  approaches score +5.97 dB with the 2019 build, +6.40 with the previous `S-76D_fixed_load_factor`
+  and +1.52 with `S-76D_M3`. The previous `S-76D_fixed_load_factor` was converted from NASA's ART
+  spheres. `S-76D_M3` was 4.5 dB below both, by 2.9 to 7.8 dB depending on direction, and its
+  smaller error was that deficit cancelling the broadband path's own excess (+3.4 dB on the
+  descents in the build).
+
 ### Database screen
 
 The load-time screen ([MANUAL](MANUAL.md#screening-a-database)) on the databases shipped when it was
@@ -2418,19 +2452,19 @@ the median of its sphere, a band more than 45 dB above the median of its cell's 
 | `B407_M2` | 240 (24 of 1248), all low | — | 27.1 dBA against 89.3 |
 | `B407_M3` | 3928 (72 of 1296), all low | — | 0 dBA (a written zero) against 89.6 |
 | `S-76D_M4` | 1376 (32 of 1312), all high | — | 1463.5 dBA against 108.3 |
-| `S-76D_fixed_load_factor` | 172 (4 of 164), all high | — | 1449.5 dBA against 94.3 (μ 0.208, γ −7.8°) |
+| `legacy_S-76D` (`tests/data/`) | 172 (4 of 164), all high | — | 1449.5 dBA against 94.3 (μ 0.208, γ −7.8°) |
 | NASA R44 spheres | 2397 (86 of 122), all high | 5380 (102 of 122) | 170.2 dB at 10 kHz against 70.1 |
-| The other 17 shipped files | 0 | 0 | |
+| The other 17 shipped files, and the 2019 S-76D builds | 0 | 0 | |
 
 - **The margins clear every sound database.** On the 17, no stored cell sits more than 29.1 dB
   above its sphere's median (B205) or 21.4 dB below it (B407), and no band more than 35.9 dB above
   its cell's median (RO-44). Most S-76D cells flagged are whole azimuth columns 40–60 dB high:
-  sphere 33 of `S-76D_fixed_load_factor` reads 135–139 dBA along φ 100° against a median of 91.
+  sphere 33 of `legacy_S-76D` reads 135–139 dBA along φ 100° against a median of 91.
 - **Two rules that were tried do not separate.** Against the median of its eight grid neighbors, a
   sound cell beside a strip of written zeros reads 44 dB off (224 sound 88 dBA cells in
   `B407_M3`), and a strip two cells wide is its own median. Against the same band in neighboring
   cells, gating leaves sound bands in the AS350 file up to 169 dB below and 116 dB above.
-- **The S-76D defects move the demo footprint.** On `S-76D_fixed_load_factor`, masking moves 958
+- **The S-76D defects move the demo footprint.** On `legacy_S-76D`, masking moves 958
   of the 14,400 nodes by more than 0.1 dB, from −1.8 to +7.5 dB (`S-76D_M4`: 957, the same
   range). The rises are where a spike set the observer's peak: at (3363, −1394) ft its kept peak
   is 69.5 dB, which narrows the 10 dB-down window to 105 samples (SEL 65.8 dB); masked, the peak

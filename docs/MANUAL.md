@@ -73,7 +73,7 @@ the demo case, 6,551 states by 14,400 observers.
 ### Quick start
 
 With no arguments NICEOPS runs the demo case: `tracks/S-76D/197421AC.csv` against
-`databases/S-76D_M3.nod` and `databases/S-76D.json`, writing `integrated/197421_LAE.csv`. Run from
+`databases/S-76D_load_factors.nod` and `databases/S-76D.json`, writing `integrated/197421_LAE.csv`. Run from
 the repository root, since paths are relative; output directories are created as needed.
 
 ```sh
@@ -97,7 +97,7 @@ is a physical quantity, given here in meters with its value in feet.
 | --- | --- |
 | `-t`, `--trajectoryfile` | Trajectory CSV ([Trajectories](#trajectories)). Repeat for several flight paths. Default the demo track. |
 | `--operations` | A CSV of operations, one row per track flown, with its count and optionally its database, vehicle, clock, lateral offset and air ([An operations file](#an-operations-file)). Replaces `-t`. |
-| `-d`, `--database` | netCDF noise database. Once, or once per trajectory. Default `databases/S-76D_M3.nod`. |
+| `-d`, `--database` | netCDF noise database. Once, or once per trajectory. Default `databases/S-76D_load_factors.nod`. |
 | `-v`, `--vehicle` | JSON vehicle file ([Vehicle file](#vehicle-file)). Once, or once per trajectory. Default `databases/S-76D.json`. |
 | `-o`, `--output` | SEL output file, once per trajectory. Default `integrated/197421_LAE.csv`. With several tracks and one name (or none), each is named after its track. |
 | `-b`, `--observer` | Scattered observer file ([Observers](#observers)); replaces the default grid. |
@@ -485,8 +485,8 @@ use, such as a band count that is not the database's, is refused when the databa
 | Files in `databases/` | Contents |
 | --- | --- |
 | `AS350_`, `B407_`, `Be206L3_`, `EC130_`, `RO-44_`, `RO-66_fixed_load_factor.nod` | **Spectral**, 10 Hz–10 kHz, built by panam from the 2017 Noise Abatement flight test. The current, validated databases. |
-| `S-76D_M3.nod` | Broadband, with discrete load factors, from a joint NASA/FAA flight test. The demo database, which the goldens use. |
-| `S-76D_fixed_load_factor.nod` | Broadband, converted from the NASA/FAA S-76D data; the database screen's test case. |
+| `S-76D_fixed_load_factor.nod` | **Spectral**, built by panam from the 2019 Noise Abatement flight test at Coyle Field: level flight at 45–155 kt, descents to −10.7° and climbs at +11° to +22°. Its approaches' flare and climb-out lie between these conditions, and a run there warns ([Choosing spheres](#choosing-spheres-blending-and---blend)). |
+| `S-76D_load_factors.nod` | Broadband, with discrete load factors, from the same spheres. The demo database, which the goldens use. |
 | `AW139.json`, `B205.json`, `B407.json`, `S-76D.json` | Vehicle files. |
 
 Of the 2017 databases, **B407 is the reference** and the most validated; its spheres are
@@ -533,8 +533,7 @@ against. `--mask_suspect_cells` drops them, so the blends read those entries as 
 the other conditions' level there. Masking is a judgment about data: rebuilding the database is
 the fix, and a masked run should say so.
 
-One shipped database warns: `S-76D_fixed_load_factor`. The demo database and the 2017 databases
-do not. A sphere more than half defective has a defective
+No shipped database warns. A sphere more than half defective has a defective
 median, and the screen cannot judge it. The counts are in
 [FIDELITY](FIDELITY.md#database-screen). The screen costs well under a second at load and nothing
 afterward.
@@ -547,6 +546,16 @@ holds it. A condition outside an axis's range is clamped to that axis's end, and
 padded so that the clamped edge falls inside the hull; a query still outside takes the nearest
 vertex. Each run logs how many states were clamped on each axis and how many took the load-factor
 correction, and warns if any were clamped. Neither count says which directions were measured.
+
+The axis ranges include spheres a database builder made rather than measured: panam extends the
+measured path angles to steeper and shallower ones, and synthesizes a hover, and records which in
+each sphere's `condition_origin`. A state can therefore sit inside every range and still be far
+from any measured condition. Each run logs the mean blend weight its states put on measured,
+extended and synthesized spheres, and warns, with their number and time span, about states that
+take less than half their weight from measured spheres (a state on the hover itself excepted: a
+hovering trajectory is meant to use it). `--provenance_file` gives each observer's share of its
+exposure from the extended and the synthesized spheres. A database without `condition_origin`
+counts every sphere as measured.
 
 Two other policies exist for comparing with other codes and with regulatory practice. Neither
 predicts better ([FIDELITY](FIDELITY.md#source-options-blend-and-load-factor-law)); they show how
@@ -1389,7 +1398,9 @@ others:
   from states whose advance ratio, path angle or C<sub>T</sub> lay outside the database and were
   clamped to its edge, and from states whose load factor was held at `--max_load_factor` or
   `--min_load_factor`; then the sphere that supplied the most of it (its index in the database),
-  its share, and its stored μ, γ and C<sub>T</sub>. Each state counts as the SEL counts it (inside
+  its share, and its stored μ, γ and C<sub>T</sub>; last, the shares from spheres the database
+  marks as extended to another flight path angle and as a synthesized hover (`condition_origin`;
+  zero on a database that does not record it). Each state counts as the SEL counts it (inside
   the 10 dB-down window, or the whole history under `--full_history`), and its energy is shared
   among its spheres by their blend weights, so a sphere with nothing measured toward the observer
   is still credited. The run evaluates every state, as `--coverage_file` does, whose share is
