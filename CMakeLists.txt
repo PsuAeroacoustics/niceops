@@ -589,6 +589,13 @@ add_test(NAME provenance_spheres_need_the_file COMMAND niceops --provenance_sphe
 set_tests_properties(provenance_spheres_need_the_file PROPERTIES PASS_REGULAR_EXPRESSION "--provenance_spheres writes beside --provenance_file: give that too")
 add_test(NAME provenance_refuses_ambient COMMAND niceops -a 40 --provenance_file integrated/provenance_ambient.csv -o integrated/provenance_ambient_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(provenance_refuses_ambient PROPERTIES PASS_REGULAR_EXPRESSION "does not combine with -a")
+# condition_origin: AS350_fixed_load_factor records which spheres panam extended or synthesized,
+# and an AW139 approach flown on it leaves its measured conditions; B407_fixed_load_factor records
+# nothing, so every sphere is measured and the same track is silent.
+add_test(NAME source_origin_warns COMMAND niceops -d databases/AS350_fixed_load_factor.nod -v databases/S-76D.json --accept_vehicle_mismatch -t tracks/AW139/192217AC.csv --humidity 70 --gridstep 2000 -L warn -o integrated/source_origin_warns.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(source_origin_warns PROPERTIES PASS_REGULAR_EXPRESSION "1529 of 5801 states \\(t = 76\\.54 to 109\\.72 s\\) take less than half their source from measured spheres")
+add_test(NAME source_origin_absent_is_measured COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/AW139/192217AC.csv --humidity 70 --gridstep 2000 -L warn -o integrated/source_origin_absent.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(source_origin_absent_is_measured PROPERTIES FAIL_REGULAR_EXPRESSION "less than half their source from measured spheres")
 add_test(NAME provenance_refuses_two_databases COMMAND niceops -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197421AC.csv -d databases/S-76D_M3.nod -d databases/S-76D_fixed_load_factor.nod -o integrated/provenance_two.csv --provenance_file integrated/provenance_two_list.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(provenance_refuses_two_databases PROPERTIES PASS_REGULAR_EXPRESSION "run it once per database")
 # The database cache: each distinct database loads once, however its trajectories are interleaved

@@ -949,7 +949,9 @@ struct RunTotals
 // the SEL integrated; the top sphere is the one the blend weights gave the
 // most of it, with that share and its stored condition.  Spheres are credited
 // by their blend weights as the blend gave them, so a sphere with nothing
-// measured toward the observer, which the evaluation leaves out, still is.  An observer that
+// measured toward the observer, which the evaluation leaves out, still is.  The
+// last two columns are the shares from spheres the database marks extended to a
+// flight path angle or synthesized as a hover (Database::origin).  An observer that
 // heard nothing has no shares, and is written as NaN.
 void write_provenance(const std::vector<Vec3>& observers, const RunTotals& totals, const Database& database,
         const std::string& out_file, LengthUnit unit)
@@ -957,7 +959,8 @@ void write_provenance(const std::vector<Vec3>& observers, const RunTotals& total
     auto file = open_output(out_file);
     file << "x(" << unit.name << "),y(" << unit.name << "),exposure_db,share_mu_clamped,share_gamma_clamped,"
          << "share_ct_clamped,share_load_factor_held_max,share_load_factor_held_min,top_sphere,"
-         << "top_sphere_share,top_sphere_mu,top_sphere_gamma,top_sphere_ct\n";
+         << "top_sphere_share,top_sphere_mu,top_sphere_gamma,top_sphere_ct,share_extended_flight_path_angle,"
+         << "share_synthesized_hover\n";
     file << std::setprecision(10);
     const double nan = std::numeric_limits<double>::quiet_NaN();
     for (std::size_t i = 0; i < totals.provenance.size(); i++)
@@ -979,12 +982,18 @@ void write_provenance(const std::vector<Vec3>& observers, const RunTotals& total
                 [](const auto& a, const auto& b) { return a.second < b.second; });
         if (top == list.end() || !(p[0] > 0.0))
         {
-            file << ",nan,nan,nan,nan,nan\n";
+            file << ",nan,nan,nan,nan,nan,nan,nan\n";
             continue;
         }
+        // The spheres' energy by where their conditions came from.
+        std::array<double, condition_origin_count> by_origin {};
+        for (const auto& [sphere, energy] : list)
+            by_origin[static_cast<std::size_t>(database.origin(sphere))] += energy;
         const auto& condition = database.condition(top->first);
         file << "," << top->first << "," << top->second / p[0] << "," << condition[0] << ","
-             << condition[1] << "," << condition[2] << "\n";
+             << condition[1] << "," << condition[2] << ","
+             << by_origin[static_cast<std::size_t>(ConditionOrigin::extended_flight_path_angle)] / p[0] << ","
+             << by_origin[static_cast<std::size_t>(ConditionOrigin::synthesized_hover)] / p[0] << "\n";
     }
 }
 
@@ -1492,6 +1501,18 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     double crab_cos = 0.0, crab_sin = 0.0;
     std::vector<double> crabs;
     std::size_t mu_clamped = 0, fpa_clamped = 0, ct_clamped = 0, load_scaled = 0, load_lowered = 0;
+    // Where the states' spheres came from (Database::origin): the axis ranges
+    // above include the spheres a builder extrapolated, so a state can lie
+    // inside them and still be far from anything measured.  The blend weight on
+    // each origin summed over the states, and the states that take less than
+    // half of it from measured spheres (other than those on the database's own
+    // hover, which a hovering trajectory is meant to use), with the times they
+    // span.
+    std::array<double, condition_origin_count> origin_weight_sum {};
+    std::size_t mostly_unmeasured = 0;
+    double first_unmeasured = std::numeric_limits<double>::infinity();
+    double last_unmeasured = -std::numeric_limits<double>::infinity();
+    constexpr double hover_itself = 0.99;
     std::array<std::size_t, 4> spheres_blended {};
     std::vector<Database::SourceState> source_states;
     source_states.reserve(nt);
@@ -1537,6 +1558,16 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         mu_clamped += blend.advance_ratio_clamped;
         fpa_clamped += blend.flight_path_angle_clamped;
         ct_clamped += blend.thrust_coefficient_clamped;
+        const auto origin_weights = database.origin_weights(blend);
+        for (std::size_t o = 0; o < condition_origin_count; o++)
+            origin_weight_sum[o] += origin_weights[o];
+        const auto on = [&](ConditionOrigin origin) { return origin_weights[static_cast<std::size_t>(origin)]; };
+        if (on(ConditionOrigin::measured) < 0.5 && on(ConditionOrigin::synthesized_hover) < hover_itself)
+        {
+            mostly_unmeasured++;
+            first_unmeasured = std::min(first_unmeasured, state.t);
+            last_unmeasured = std::max(last_unmeasured, state.t);
+        }
         load_scaled += blend.level_correction_db > 0.0;
         load_lowered += blend.level_correction_db < 0.0;
         if (blend_options.policy == BlendPolicy::aam)
@@ -1565,6 +1596,18 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 "fixed_load_factor database; the two-sided load-factor correction is held at ",
                 blend_options.min_load_factor, " g (--min_load_factor).");
     }
+    const double states = static_cast<double>(std::max<std::size_t>(nt, 1));
+    log("Source origin over ", nt, " states: mean blend weight on measured spheres ",
+            origin_weight_sum[static_cast<std::size_t>(ConditionOrigin::measured)] / states,
+            ", extended flight path angles ",
+            origin_weight_sum[static_cast<std::size_t>(ConditionOrigin::extended_flight_path_angle)] / states,
+            ", synthesized hovers ",
+            origin_weight_sum[static_cast<std::size_t>(ConditionOrigin::synthesized_hover)] / states, ".");
+    if (mostly_unmeasured > 0)
+        warn(mostly_unmeasured, " of ", nt, " states (t = ", first_unmeasured, " to ", last_unmeasured,
+                " s) take less than half their source from measured spheres: the rest is from spheres the "
+                "database extended to other flight path angles or synthesized as a hover, so their levels are "
+                "extrapolated. --provenance_file gives each observer's share of its exposure.");
     if (mu_clamped || fpa_clamped || ct_clamped)
         warn("Flight conditions exceed the source database's axis ranges: advance ratio ", mu_clamped,
                 ", flight-path angle ", fpa_clamped, ", thrust coefficient ", ct_clamped,

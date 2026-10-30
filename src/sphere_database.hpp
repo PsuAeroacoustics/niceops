@@ -66,6 +66,24 @@ enum class AzimuthReference
 std::optional<AzimuthReference> parse_azimuth_reference(const std::string& name);
 const char* to_string(AzimuthReference reference);
 
+// Where a sphere's operating condition came from, as panam records it in each
+// group's text attribute condition_origin: measured in flight, extended to a
+// steeper or shallower flight path angle than any measured one, or a hover
+// synthesized from a sphere outside the build.  A group without the attribute
+// is taken as measured, which every database written before panam recorded it
+// is.
+enum class ConditionOrigin : unsigned char
+{
+    measured,
+    extended_flight_path_angle,
+    synthesized_hover,
+};
+inline constexpr std::size_t condition_origin_count = 3;
+
+// panam's names for them; nullopt for anything else.
+std::optional<ConditionOrigin> parse_condition_origin(const std::string& name);
+const char* to_string(ConditionOrigin origin);
+
 
 // Bilinear interpolation on the sphere grid.  A cell whose knots come in
 // decreasing order wraps the seam of a periodic axis: with `x_period` set, its
@@ -397,6 +415,20 @@ public:
     std::size_t condition_count() const
     {
         return conditions_.size();
+    }
+    // Where a sphere's condition came from (its group's condition_origin).
+    ConditionOrigin origin(std::size_t sphere) const
+    {
+        return origins_[sphere];
+    }
+    // A blend's weight on spheres of each origin, in ConditionOrigin order; the
+    // three sum to one.
+    std::array<double, condition_origin_count> origin_weights(const Blend& blend) const
+    {
+        std::array<double, condition_origin_count> out {};
+        for (std::size_t k = 0; k < blend.weights.size(); k++)
+            out[static_cast<std::size_t>(origins_[blend.indices[k]])] += blend.weights[k];
+        return out;
     }
     // The file's root attributes and scalar variables, as text, for --manifest.
     const std::map<std::string, std::string>& root_attributes() const
@@ -887,6 +919,7 @@ private:
     // loud a blended state can be at a given range.
     std::vector<double> sphere_max_;
     std::vector<std::array<double, 3>> conditions_;
+    std::vector<ConditionOrigin> origins_;
     std::map<std::string, std::string> root_attributes_;
     std::size_t suspect_cells_ = 0;
     std::size_t suspect_bands_ = 0;

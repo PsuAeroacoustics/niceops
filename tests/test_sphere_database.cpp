@@ -1008,6 +1008,63 @@ TEST_CASE("source coverage distinguishes clamping from analytic load scaling", "
     std::filesystem::remove(path);
 }
 
+namespace
+{
+// Gives group "sphere<i>" of an existing test database the condition_origin
+// attribute origins[i] (none where it is empty), as panam writes it.
+void set_condition_origins(const std::string& path, const std::vector<std::string>& origins)
+{
+    int file = 0;
+    REQUIRE(nc_open(path.c_str(), NC_WRITE, &file) == NC_NOERR);
+    REQUIRE(nc_redef(file) == NC_NOERR);
+    for (std::size_t i = 0; i < origins.size(); i++)
+    {
+        if (origins[i].empty())
+            continue;
+        int group = 0;
+        REQUIRE(nc_inq_ncid(file, ("sphere" + std::to_string(i)).c_str(), &group) == NC_NOERR);
+        REQUIRE(nc_put_att_text(group, NC_GLOBAL, "condition_origin", origins[i].size(), origins[i].c_str())
+                == NC_NOERR);
+    }
+    REQUIRE(nc_close(file) == NC_NOERR);
+}
+} // namespace
+
+TEST_CASE("condition_origin: absent is measured, and a blend's weight sums by origin", "[sphere_database]")
+{
+    const auto path = write_fixed_load_factor_test_database(
+            "niceops_condition_origin.nod", fixed_load_factor_conditions, true);
+    {
+        Database db(path);
+        for (std::size_t i = 0; i < db.condition_count(); i++)
+            CHECK(db.origin(i) == ConditionOrigin::measured);
+        const auto weights = db.origin_weights(db.blend_at(0.25, 0.25, test_ct_reference));
+        CHECK(weights[0] == Catch::Approx(1.0));
+    }
+    // Sphere 1 (mu 1) extended, sphere 2 (gamma 1) a synthesized hover; sphere 0
+    // says nothing and stays measured.
+    set_condition_origins(path, {"", "extended_flight_path_angle", "synthesized_hover"});
+    Database db(path);
+    CHECK(db.origin(0) == ConditionOrigin::measured);
+    CHECK(db.origin(1) == ConditionOrigin::extended_flight_path_angle);
+    CHECK(db.origin(2) == ConditionOrigin::synthesized_hover);
+    // Inside the triangle the barycentric weights are 1 - mu - gamma, mu, gamma.
+    const auto weights = db.origin_weights(db.blend_at(0.25, 0.5, test_ct_reference));
+    CHECK(weights[0] == Catch::Approx(0.25));
+    CHECK(weights[1] == Catch::Approx(0.25));
+    CHECK(weights[2] == Catch::Approx(0.5));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("condition_origin: a value panam does not write is refused", "[sphere_database]")
+{
+    const auto path = write_fixed_load_factor_test_database(
+            "niceops_condition_origin_bad.nod", fixed_load_factor_conditions, true);
+    set_condition_origins(path, {"measured", "extrapolated", ""});
+    REQUIRE_THROWS_WITH(Database(path), Catch::Matchers::ContainsSubstring("condition_origin 'extrapolated'"));
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("fixed_load_factor: cull_range accounts for the correction", "[sphere_database]")
 {
     const auto path = write_fixed_load_factor_test_database(
