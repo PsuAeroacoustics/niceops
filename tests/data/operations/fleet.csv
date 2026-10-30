@@ -1,4 +1,4 @@
 name,track,database,vehicle
-a1,../../../tracks/S-76D/197421AC.csv,../../../databases/S-76D_M3.nod,../../../databases/S-76D.json
+a1,../../../tracks/S-76D/197421AC.csv,../../../databases/S-76D_load_factors.nod,../../../databases/S-76D.json
 b,../../../tracks/S-76D/197422AC.csv,../../../databases/B407_fixed_load_factor.nod,../../../databases/B407.json
-a2,../../../tracks/S-76D/197421AC.csv,../../../databases/S-76D_M3.nod,../../../databases/S-76D.json
+a2,../../../tracks/S-76D/197421AC.csv,../../../databases/S-76D_load_factors.nod,../../../databases/S-76D.json

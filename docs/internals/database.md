@@ -200,7 +200,7 @@ completed with `-phi` instead of `180 - phi`. Since the source spheres span only
 (φ = 0 straight down), negating is a left/right flip *within* the lower half that maps the range
 onto itself, so the mirrored channels wear lower-hemisphere labels and the upper surface is
 missing. Forward-flight spheres in those files were completed correctly; only hover is affected
-(in `S-76D_M3.nod`, exactly the 24 spheres at μ = 0).
+(in `S-76D_M3.nod`, now in the repository's history only, exactly the 24 spheres at μ = 0).
 
 Only the labels are wrong, so `Database::Database` repairs them on load via
 `repair_legacy_hover_directivity()`: for the mirrored half, `phi_correct = wrap(180 +
@@ -231,7 +231,7 @@ the fix-up unnecessary; the loader then trusts the file as written.
   attenuates each band at its own ISO 9613-1 coefficient. `Database::eval_spectrum` mirrors
   `eval`'s bracketing and bilinear cell exactly, so a difference between them is the physics and
   never the interpolation. `--spectral` is the default whenever the database carries spectra
-  (and falls back to broadband when it does not), so the goldens, made from `S-76D_M3.nod`,
+  (and falls back to broadband when it does not), so the goldens, made from `S-76D_load_factors.nod`,
   which has none, are the broadband path. On B407, spectral minus `--no-spectral` is median
   -1.2 dB (-3.2 to +2.3) on the demo track: the humidity and temperature of the run against the
   ones the database's EAA was built at, and EAA being a linear-in-range rate anchored at 1 km

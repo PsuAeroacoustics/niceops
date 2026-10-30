@@ -4948,7 +4948,7 @@ int run(int argc, char* argv[])
     // trajectory.  Several trajectories in one run is what makes the day-night
     // level meaningful: DNL sums the acoustic energy of a whole day's
     // operations, not of one flight.
-    std::vector<std::string> database_files = {"databases/S-76D_M3.nod"};
+    std::vector<std::string> database_files = {"databases/S-76D_load_factors.nod"};
     std::vector<std::string> path_files = {"tracks/S-76D/197421AC.csv"};
     std::vector<std::string> vehicle_files = {"databases/S-76D.json"};
     std::vector<std::string> out_files = {"integrated/197421_LAE.csv"};

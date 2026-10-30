@@ -100,7 +100,7 @@ Commands and options are in `README.md`; rationale is in
 - **The hot loop:** a default run makes about 94 million evaluations, so anything left in the
   inner loop costs about 100 million times over.
 - **`--spectral` is the default whenever the database carries spectra.** The goldens use the
-  broadband path, because `S-76D_M3.nod` has no spectra (`regression_default` also passes
+  broadband path, because `S-76D_load_factors.nod` has no spectra (`regression_default` also passes
   `--no-spectral --no-ground_effect` explicitly). `eval` and `eval_spectrum` share their
   cell and stencil, so any disagreement between them is physics, not interpolation.
 - **GPU paths are on by default wherever there is a device, and the CPU is their reference.**

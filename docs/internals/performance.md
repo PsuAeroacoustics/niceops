@@ -7,7 +7,8 @@ anything, or "simplify" code that looks over-engineered. Costs of the refraction
 ## Where the database load time goes
 
 A default run is about 0.93 s, and about 0.61 s of that is `Database::Database`. Most of it is
-not ours: `S-76D_M3.nod` has **one netCDF group per operating condition**, 1312 of them, and
+not ours: a `.nod` has **one netCDF group per operating condition** (1312 in `S-76D_M3.nod`, the
+demo database these costs were measured on), and
 netCDF-4 reads every group's metadata eagerly at `nc_open`: it opens all of the file's ~8000
 HDF5 datasets before returning. The measured split, taken when the load was about 0.75 s:
 
@@ -66,7 +67,8 @@ weakly canonical path, so two spellings of one file are one database (and one da
 
 What it costs, measured with `/usr/bin/time -l` on a coarse grid (`--gridstep 2000`): a
 database held after its load is tens of megabytes (B407_fixed_load_factor about 33 MB), while
-the load itself peaks far higher and returns most of it: about 540 MB for `S-76D_M3.nod` and
+the load itself peaks far higher and returns most of it: about 540 MB for `S-76D_M3.nod` (the
+demo database then) and
 180 MB for `B407_fixed_load_factor.nod`. So holding a database until its last use is cheap
 against loading it twice, and the peak is set by the largest single load, not by the number
 held. Holding one database and reloading on every change would load A twice in
@@ -311,7 +313,7 @@ raised by the most the ground or the plate can add.
 ## The spectral and ground paths
 
 Current cost of the acoustic loop on the full demo grid (S-76D track, B407 fixed-load-factor
-database, 94.3 M evaluations, 14 threads; the broadband demo case, on `S-76D_M3.nod`, is the
+database, 94.3 M evaluations, 14 threads; the broadband demo case, measured on `S-76D_M3.nod`, is the
 0.16 s wall above):
 
 | | acoustic loop |
@@ -365,7 +367,7 @@ All of it is exact: the footprint moved by 2.8e-14 dB end to end, and the EGA te
 panam at 1e-9 dB.
 
 **A synthetic spectral database for timing.** `write_flat_spectral_database` in
-`tests/test_spectral_propagation.cpp` interpolates a sphere out of the shipped `S-76D_M3.nod`,
+`tests/test_spectral_propagation.cpp` interpolates a sphere out of the demo database,
 hangs synthetic band amplitudes on it and writes it back with `write_sphere`, giving a one-group
 `.nod` that `--spectral` accepts, so the path runs from a bare checkout. Its single condition
 makes the blend degenerate, so timings off it run optimistic against a real multi-condition

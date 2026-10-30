@@ -4,6 +4,24 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## The S-76D rebuilt from the 2019 flight test (October 2026)
+
+The S-76D databases were replaced by panam builds from the 2019 Noise Abatement test at Coyle
+Field: `S-76D_fixed_load_factor.nod` (spectral, 70 spheres from level flight, descents and climbs)
+and `S-76D_load_factors.nod` (broadband, the same spheres at discrete load factors), which is the
+demo database in place of `S-76D_M3.nod`. `S-76D_M3.nod` was 4.5 dB below the measurements and
+below NASA's own spheres, by 2.9–7.8 dB depending on direction; why was never found. The
+goldens moved with it. Over the demo grid, `197421_LAE.csv` rose by a median of 3.7 dB (5th to
+95th percentile +0.6 to +5.9), and its peak went from 95.5 to 100.2 dBA. The LAmax, NA and TA goldens
+and the demo's area metrics moved with it. The previous `S-76D_fixed_load_factor.nod`, with
+its four defective spheres, is `tests/data/legacy_S-76D.nod`. The database screen's tests read it,
+as do the tests of a file that records no azimuth reference, build air or coverage. Validation:
+[FIDELITY](FIDELITY.md#the-s-76d-at-coyle-field-2019).
+
+At the same time each run began to read panam's `condition_origin` and to warn where a state takes
+less than half its blend from measured spheres. The demo trajectory is a 2019 approach, and it now
+warns over its flare and climb-out.
+
 ## Fewer shipped databases (October 2026)
 
 `databases/` keeps the six spectral 2017 `_fixed_load_factor` databases, the S-76D demo database
