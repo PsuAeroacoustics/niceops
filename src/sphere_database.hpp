@@ -1302,9 +1302,15 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path);
 void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, double tip_speed,
         const std::vector<double>* absorption = nullptr);
 
+// The one-third octave band number n (center 10^(n/10) Hz) of each band center, in
+// order, where every center is a distinct band (nominal, base-10 or base-2 centers);
+// empty otherwise.
+std::vector<long> third_octave_band_numbers(const std::vector<double>& frequencies);
+
 // Whether every band center is a distinct one-third octave band of AAM's, numbers
-// 10 to 40 (10 Hz to 10 kHz): nominal, base-10 or base-2 centers.  AAM's BB sphere
-// type is these bands (TR Table 4-37); any other band set is NB.
+// 10 to 40 (10 Hz to 10 kHz).  AAM's BB sphere type is these bands (TR Table 4-37).
+// write_aam_sphere exports a third-octave set that reaches past them as BB with the
+// bands outside left out (and says so); any other band set is NB.
 bool aam_third_octave_bands(const std::vector<double>& frequencies);
 
 } // namespace niceops

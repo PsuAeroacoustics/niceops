@@ -523,9 +523,12 @@ vehicle file's air under the first `--temperature`, `--pressure` and `--humidity
 names that air.
 A database that records `sphere_levels_lossless = 1` (predicted spheres, with no absorption
 between the hub and the sphere) is absorbed from the hub rather than from the sphere's surface.
-Third-octave bands (10 Hz to 10 kHz) are written as AAM's broadband sphere type (`BB`), any
-other band set as narrowband (`NB`). The export is a lower hemisphere, `PHI` -90° to 90°, as
-AAM's spheres are, with an empty band written as AAM's missing level, -999. Of the shipped databases, the six `_fixed_load_factor`
+Third-octave bands (10 Hz to 10 kHz, nominal or exact centers) are written as AAM's broadband
+sphere type (`BB`), any other band set as narrowband (`NB`). A third-octave database that reaches
+past 10 kHz (or below 10 Hz) is still `BB`: the bands outside are left out of the file, with a
+warning that names them. The export is a lower hemisphere, `PHI` -90° to 90°, as AAM's spheres
+are, with an empty band, or a level that is not a finite number, written as AAM's missing level,
+-999. Of the shipped databases, the six `_fixed_load_factor`
 files of the 2017 aircraft carry spectra; the S-76D demo database does not, so the demo case
 runs broadband.
 

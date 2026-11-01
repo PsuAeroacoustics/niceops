@@ -1922,19 +1922,97 @@ TEST_CASE("AAM's sphere type follows the band set", "[sphere_database][export]")
     std::vector<double> nominal = {10, 12.5, 16, 20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315,
             400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000};
     CHECK(aam_third_octave_bands(nominal));
+    // Exact base-2 centers over the whole set: 9.84 Hz (band 10) is 0.069 from n in
+    // 10 lg f, past the 0.05 the test once used, which wrote such sets as NB.
     std::vector<double> base_two;
-    for (int k = -10; k <= 10; k++)
+    for (int k = -20; k <= 10; k++)
         base_two.push_back(1000.0 * std::pow(2.0, k / 3.0));
     CHECK(aam_third_octave_bands(base_two));
+    CHECK(third_octave_band_numbers(base_two).front() == 10);
+    CHECK(third_octave_band_numbers(base_two).back() == 40);
     CHECK(aam_third_octave_bands({500.0}));
     // A 1/12-octave set, a band past 10 kHz, a repeated band and nothing are not.
     std::vector<double> twelfth;
     for (int k = 0; k < 12; k++)
         twelfth.push_back(1000.0 * std::pow(2.0, k / 12.0));
     CHECK_FALSE(aam_third_octave_bands(twelfth));
+    CHECK(third_octave_band_numbers(twelfth).empty());
     CHECK_FALSE(aam_third_octave_bands({8000.0, 12500.0}));
+    CHECK(third_octave_band_numbers({8000.0, 12500.0}) == std::vector<long>{39, 41});
     CHECK_FALSE(aam_third_octave_bands({1000.0, 1000.0}));
+    CHECK(third_octave_band_numbers({1000.0, 1000.0}).empty());
     CHECK_FALSE(aam_third_octave_bands({}));
+}
+
+TEST_CASE("an AAM export of third-octave bands past 10 kHz is BB, the bands outside left out",
+        "[sphere_database][export]")
+{
+    // Bands 37, 40, 41 and 42: still band levels, so BB with 5 and 10 kHz kept, not NB
+    // (AAM would read every band level as a tone's).  A level that is not finite is
+    // AAM's missing level, -999, as panam's writer has it.  Level flight, so the
+    // payload is the sphere's own.
+    const Database& source = test::demo_database();
+    auto sphere = source.interpolate_sphere(0.15, 0.0, 0.006);
+    sphere.frequencies = {5000.0, 10000.0, 12500.0, 16000.0};
+    const std::size_t bands = sphere.frequencies.size();
+    sphere.amplitudes.resize(sphere.cells.size() * bands);
+    for (std::size_t cell = 0; cell < sphere.cells.size(); cell++)
+        for (std::size_t band = 0; band < bands; band++)
+            sphere.amplitudes[cell * bands + band] = 30.0 + 0.25 * static_cast<double>(cell % 89) + 7.0 * band;
+    std::vector<std::size_t> rows;
+    for (std::size_t m = 0; m < sphere.phis.size(); m++)
+        if (std::fabs(sphere.phis[m]) <= 90.0 + 1e-9)
+            rows.push_back(m);
+    const std::size_t thetas = sphere.thetas.size();
+    auto at = [&](std::size_t row, std::size_t n, std::size_t band) {
+        return (rows[row] * thetas + n) * bands + band;
+    };
+    sphere.amplitudes[at(2, 3, 0)] = std::numeric_limits<double>::quiet_NaN();
+    sphere.amplitudes[at(4, 5, 1)] = std::numeric_limits<double>::infinity();
+    sphere.amplitudes[at(6, 7, 0)] = -std::numeric_limits<double>::infinity();
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_aam_export_wide.nc").string();
+    write_aam_sphere(sphere, path, 213.0);
+
+    int ncid = 0;
+    REQUIRE(nc_open(path.c_str(), NC_NOWRITE, &ncid) == NC_NOERR);
+    auto length = [&](const char* name) {
+        int dim = 0;
+        std::size_t n = 0;
+        REQUIRE(nc_inq_dimid(ncid, name, &dim) == NC_NOERR);
+        REQUIRE(nc_inq_dimlen(ncid, dim, &n) == NC_NOERR);
+        return n;
+    };
+    REQUIRE(length("PHI") == rows.size());
+    REQUIRE(length("THETA") == thetas);
+    REQUIRE(length("FREQUENCY") == 2);
+    auto read_floats = [&](const char* name, std::size_t n) {
+        int var = 0;
+        REQUIRE(nc_inq_varid(ncid, name, &var) == NC_NOERR);
+        std::vector<float> values(n);
+        REQUIRE(nc_get_var_float(ncid, var, values.data()) == NC_NOERR);
+        return values;
+    };
+    CHECK(read_floats("BB", 1)[0] == 1.0f);
+    CHECK(read_floats("NB", 1)[0] == 0.0f);
+    const auto frequency = read_floats("FREQUENCY", 2);
+    CHECK(frequency[0] == 5000.0f);
+    CHECK(frequency[1] == 10000.0f);
+    const auto amplitude = read_floats("AMPLITUDE", rows.size() * thetas * 2);
+    auto written = [&](std::size_t row, std::size_t n, std::size_t band) {
+        return amplitude[(row * thetas + n) * 2 + band];
+    };
+    for (std::size_t i = 0; i < rows.size(); i += 5)
+        for (std::size_t n = 0; n < thetas; n += 3)
+            for (std::size_t band = 0; band < 2; band++)
+                if (std::isfinite(sphere.amplitudes[at(i, n, band)]))
+                    REQUIRE(written(i, n, band) == static_cast<float>(sphere.amplitudes[at(i, n, band)]));
+    CHECK(written(2, 3, 0) == -999.0f);
+    CHECK(written(4, 5, 1) == -999.0f);
+    CHECK(written(6, 7, 0) == -999.0f);
+    for (const float value : amplitude)
+        REQUIRE(std::isfinite(value));
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+    std::filesystem::remove(path);
 }
 
 TEST_CASE("an AAM export is pitched by its flight path angle", "[sphere_database][export]")

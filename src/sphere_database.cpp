@@ -4358,25 +4358,32 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
     log("Wrote interpolated sphere to ", path, " (", n_channels, " channels).");
 }
 
-bool aam_third_octave_bands(const std::vector<double>& frequencies)
+std::vector<long> third_octave_band_numbers(const std::vector<double>& frequencies)
 {
-    // Band n is centered at 10^(n/10) Hz.  The nominal centers (12.5, 31.5, 63, ...)
-    // and base-2 ones sit within 0.031 of n in 10 lg f, a 1/12-octave set's off-band
-    // members 0.25 or more away; 0.05 lies between.
-    if (frequencies.empty())
-        return false;
-    std::array<bool, 31> seen {};
+    // Band n is centered at 10^(n/10) Hz.  The nominal centers sit within 0.041 of n
+    // in 10 lg f (16, 160, 1600 Hz) and the base-2 ones 1000 * 2^((n - 30)/3) within
+    // 0.069 (9.84 Hz, band 10; the offset grows away from 1 kHz), while a 1/12-octave
+    // set's off-band members are 0.25 or more away: 0.1 lies between.
+    std::vector<long> numbers;
     for (const double f : frequencies)
     {
-        if (!(f > 0.0))
-            return false;
+        if (!(f > 0.0) || !std::isfinite(f))
+            return {};
         const double index = 10.0 * std::log10(f);
         const long n = std::lround(index);
-        if (n < 10 || n > 40 || std::fabs(index - static_cast<double>(n)) > 0.05 || seen[n - 10])
-            return false;
-        seen[n - 10] = true;
+        if (std::fabs(index - static_cast<double>(n)) > 0.1
+                || std::find(numbers.begin(), numbers.end(), n) != numbers.end())
+            return {};
+        numbers.push_back(n);
     }
-    return true;
+    return numbers;
+}
+
+bool aam_third_octave_bands(const std::vector<double>& frequencies)
+{
+    const auto numbers = third_octave_band_numbers(frequencies);
+    return !numbers.empty()
+            && std::all_of(numbers.begin(), numbers.end(), [](long n) { return n >= 10 && n <= 40; });
 }
 
 void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, double tip_speed,
@@ -4398,6 +4405,37 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
     }
     if (rows.size() < 2)
         input_error("Cannot write ", path, " in AAM format: the sphere has fewer than two PHI rows within -90 to 90.");
+    // AAM's sphere types (TR Table 4-37): BB is one-third octave bands 10-40
+    // (10 Hz-10 kHz), NB anything else.  A third-octave set reaching past them is
+    // still band levels, so it is BB with the bands outside left out (and said so):
+    // labeled NB, AAM would read every band level as a tone's.
+    const auto band_numbers = third_octave_band_numbers(sphere.frequencies);
+    std::vector<std::size_t> bands;
+    std::ostringstream outside;
+    for (std::size_t k = 0; k < sphere.frequencies.size(); k++)
+    {
+        if (band_numbers.empty() || (band_numbers[k] >= 10 && band_numbers[k] <= 40))
+            bands.push_back(k);
+        else
+            outside << (outside.tellp() > 0 ? ", " : "") << sphere.frequencies[k];
+    }
+    const std::string left_out = outside.str();
+    const bool broadband = !band_numbers.empty() && !bands.empty();
+    if (!band_numbers.empty() && bands.empty())
+    {
+        warn("Writing ", path, " as AAM's narrowband type: its one-third octave bands (", left_out,
+                " Hz) all lie outside AAM's broadband set, 10 Hz to 10 kHz.");
+        for (std::size_t k = 0; k < sphere.frequencies.size(); k++)
+            bands.push_back(k);
+    }
+    else if (!left_out.empty())
+    {
+        warn("Leaving out of ", path, " the one-third octave bands outside AAM's broadband set (10 Hz to 10 kHz): ",
+                left_out, " Hz.");
+    }
+    std::vector<double> frequencies;
+    for (const auto k : bands)
+        frequencies.push_back(sphere.frequencies[k]);
     ensure_parent_directory(path);
 
     const double m2ft = 1.0 / ft2m;
@@ -4454,7 +4492,7 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
     nc_check(nc_def_dim(file, "PHI", rows.size(), &phi_dim), "defining PHI dimension");
     nc_check(nc_def_dim(file, "THETA", sphere.thetas.size(), &theta_dim),
             "defining THETA dimension");
-    nc_check(nc_def_dim(file, "FREQUENCY", sphere.frequencies.size(), &freq_dim),
+    nc_check(nc_def_dim(file, "FREQUENCY", bands.size(), &freq_dim),
             "defining FREQUENCY dimension");
     scalar_dim("MASTTILT");
 
@@ -4485,7 +4523,6 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
         nc_check(nc_put_var_float(file, var, &as_float), "writing a scalar");
     };
     // AAM's sphere types (TR Table 4-37): BB + NB + PT = 1.
-    const bool broadband = aam_third_octave_bands(sphere.frequencies);
     put_scalar(bb_var, broadband ? 1.0 : 0.0);
     put_scalar(nb_var, broadband ? 0.0 : 1.0);
     put_scalar(pt_var, 0.0);
@@ -4513,40 +4550,47 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
         phis.push_back(sphere.phis[m]);
     put_axis(phi_var, phis);
     put_axis(theta_var, sphere.thetas);
-    put_axis(freq_var, sphere.frequencies);
+    put_axis(freq_var, frequencies);
 
-    // The lower rows of the pitched sphere, an empty band as AAM's missing level.
-    // A sphere already in the flight-path frame is AAM's as it stands.
+    // The lower rows of the pitched sphere, its kept bands, and an empty band or
+    // any level that is not finite (NaN, +-inf) as AAM's missing level, as panam's
+    // writer has it.  A sphere already in the flight-path frame is AAM's as it stands.
     auto flight_path = sphere.sphere_frame == SphereFrameKind::flight_path ? sphere.amplitudes
                                                                           : flight_path_frame_amplitudes(sphere);
+    const std::size_t n_bands = sphere.frequencies.size();
     // AAM's levels at the sphere radius carry the absorption out to it, and AAM
     // absorbs only beyond.  A lossless sphere (sphere_levels_lossless) has none
     // yet, so it takes alpha(f) R here, in the air the caller gives.
     if (sphere.levels_lossless)
     {
-        if (absorption == nullptr || absorption->size() != sphere.frequencies.size())
+        if (absorption == nullptr || absorption->size() != n_bands)
             input_error("Cannot write ", path, " in AAM format: its levels are lossless (no absorption to the sphere "
                     "radius), and AAM's carry it, so the writer needs the air's absorption at each band.");
-        const std::size_t n_bands = sphere.frequencies.size();
         for (std::size_t k = 0; k < flight_path.size(); k++)
         {
             if (flight_path[k] > empty_level_db)
                 flight_path[k] -= (*absorption)[k % n_bands] * sphere.radius;
         }
     }
-    const std::size_t row_length = sphere.thetas.size() * sphere.frequencies.size();
     std::vector<float> amplitude;
-    amplitude.reserve(rows.size() * row_length);
+    amplitude.reserve(rows.size() * sphere.thetas.size() * bands.size());
     for (const auto m : rows)
     {
-        for (std::size_t k = m * row_length; k < (m + 1) * row_length; k++)
-            amplitude.push_back(flight_path[k] <= empty_level_db ? -999.0F : static_cast<float>(flight_path[k]));
+        for (std::size_t n = 0; n < sphere.thetas.size(); n++)
+        {
+            for (const auto k : bands)
+            {
+                const double level = flight_path[(m * sphere.thetas.size() + n) * n_bands + k];
+                amplitude.push_back(!std::isfinite(level) || level <= empty_level_db ? -999.0F
+                                                                                     : static_cast<float>(level));
+            }
+        }
     }
     nc_check(nc_put_var_float(file, amplitude_var, amplitude.data()), "writing AMPLITUDE");
 
     nc_check(guard.close(), "closing " + path);
     log("Wrote AAM sphere to ", path, " (", rows.size(), " x ", sphere.thetas.size(),
-            " x ", sphere.frequencies.size(), ").");
+            " x ", bands.size(), ").");
 }
 
 void Database::self_test(const std::string& datafile_path)
