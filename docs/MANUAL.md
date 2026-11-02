@@ -469,8 +469,9 @@ A database (`.nod`, netCDF) holds one group per operating condition: advance rat
 path angle γ and thrust coefficient C<sub>T</sub>. Each group stores one sphere around the rotor:
 scattered (φ, θ) channels of the overall A-weighted level and of the EAA excess-attenuation
 factor, and optionally per-band spectra. A `fixed_load_factor` database stores 1 g spheres only
-and carries the load factor by an analytic law. Databases are built by panam, from measured or
-computed hemispheres. [THEORY §2](THEORY.md#2-the-source) describes how they are read.
+and carries the load factor by an analytic law. A database of bands other than one-third octaves
+(one that records another `band_type`) is refused, except a format 2 database's pure tones.
+Databases are built by panam, from measured or computed hemispheres. [THEORY §2](THEORY.md#2-the-source) describes how they are read.
 
 ### Source coherence
 

@@ -1304,6 +1304,18 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
         info("Database conditions are in multirotor axes: ", rotor_count_, " rotors of radius ", multirotor_radius_,
                 " m, hover thrust coefficient ", hover_thrust_coefficient_, ".");
     }
+    // panam records the bands the spheres were built from.  The weighting,
+    // absorption and EPNL here take one-third octaves; a database of 1/12-octave,
+    // narrowband or pure-tone spheres is refused, not read as one.  Absent: one-
+    // third octaves, as every database built before it.  A format 2 database's
+    // pure tones are its own content (tones.hpp), so pure_tone passes there.
+    if (const auto bands = read_root_text(file_ncid, "band_type");
+            bands && *bands != "third_octave" && !(database_version >= 2 && *bands == "pure_tone"))
+    {
+        input_error("Database ", datafile_path, " records band_type '", *bands,
+                "'; NICEOPS reads one-third-octave databases only. Build it from BB spheres "
+                "(panam's sphere_type 'BB').");
+    }
     // The atmosphere the broadband EAA was built in, when the builder recorded
     // all three of its values; the rotor speed the spheres were built at.
     const auto build_temperature = read_double_attribute(file_ncid, "build_temperature_K");

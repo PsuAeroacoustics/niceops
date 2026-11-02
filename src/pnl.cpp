@@ -287,6 +287,21 @@ EpnlResult effective_perceived_noise_level(const std::vector<PnlSpectrum>& histo
     return r;
 }
 
+namespace {
+
+// Whether band b of `band_centers` is a third of an octave wide: a neighbor a
+// third of an octave (10^0.1) from it, to 5 percent.  A 1/12-octave band near a
+// PNL band's center is a quarter of it, and must not stand in for it.
+bool third_octave_wide(const std::vector<double>& band_centers, std::size_t b)
+{
+    const double third = std::pow(10.0, 0.1);
+    auto spaced = [&](double lower, double upper) { return std::fabs(upper / lower / third - 1.0) <= 0.05; };
+    return (b > 0 && spaced(band_centers[b - 1], band_centers[b]))
+            || (b + 1 < band_centers.size() && spaced(band_centers[b], band_centers[b + 1]));
+}
+
+} // namespace
+
 std::array<std::size_t, pnl_band_count> pnl_band_indices(const std::vector<double>& band_centers,
         std::vector<double>& missing)
 {
@@ -298,7 +313,7 @@ std::array<std::size_t, pnl_band_count> pnl_band_indices(const std::vector<doubl
         std::size_t found = band_centers.size();
         for (std::size_t b = 0; b < band_centers.size(); b++)
         {
-            if (std::fabs(band_centers[b] / nominal - 1.0) <= 0.05)
+            if (std::fabs(band_centers[b] / nominal - 1.0) <= 0.05 && third_octave_wide(band_centers, b))
             {
                 found = b;
                 break;

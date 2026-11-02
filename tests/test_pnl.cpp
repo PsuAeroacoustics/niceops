@@ -470,6 +470,28 @@ TEST_CASE("masking takes a prediction's inaudible tones out of EPNL", "[pnl]")
 
 // panam's own cases, tests/test_pnl_epnl.py, one for one.
 
+// 1/12-octave bands come within 5 percent of every PNL band's nominal center,
+// but each is a twelfth of the band PNL needs: none of them is taken.  A
+// third-octave set lacking one band misses that band only.
+TEST_CASE("only one-third-octave bands are taken as the PNL bands", "[pnl]")
+{
+    std::vector<double> third, twelfth;
+    for (int n = 16; n <= 41; n++)
+        third.push_back(std::pow(10.0, 0.1 * n));
+    for (int n = 4 * 16; n <= 4 * 41; n++)
+        twelfth.push_back(std::pow(10.0, 0.025 * n));
+    std::vector<double> missing;
+    pnl_band_indices(third, missing);
+    REQUIRE(missing.empty());
+    pnl_band_indices(twelfth, missing);
+    REQUIRE(missing.size() == pnl_band_count);
+    auto gap = third;
+    gap.erase(gap.begin() + 14);                     // 1 kHz
+    pnl_band_indices(gap, missing);
+    REQUIRE(missing.size() == 1);
+    REQUIRE(missing.front() == 1000.0);
+}
+
 TEST_CASE("noy anchors (panam test_noy_anchors)", "[pnl]")
 {
     PnlSpectrum spl {};

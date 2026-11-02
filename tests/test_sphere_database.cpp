@@ -529,6 +529,28 @@ TEST_CASE("a database records its sphere frame, and an unknown one is refused", 
     std::filesystem::remove(path);
 }
 
+TEST_CASE("a database of bands other than one-third octaves is refused", "[sphere_database]")
+{
+    // panam records the bands it built from (band_type).  NICEOPS's weighting,
+    // absorption and EPNL take one-third octaves; a 1/12-octave, narrowband or
+    // pure-tone database is refused, one that says third_octave read.
+    const auto sphere = test::demo_database().interpolate_sphere(0.15, -4.0, 0.006);
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_band_type.nod").string();
+    write_sphere(sphere, path);
+    auto set_band_type = [&](const std::string& value) {
+        int ncid = 0;
+        REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+        REQUIRE(nc_redef(ncid) == NC_NOERR);
+        REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, "band_type", value.size(), value.c_str()) == NC_NOERR);
+        REQUIRE(nc_close(ncid) == NC_NOERR);
+    };
+    set_band_type("third_octave");
+    REQUIRE(Database(path).root_attributes().at("band_type") == "third_octave");
+    set_band_type("twelfth_octave");
+    REQUIRE_THROWS_WITH(Database(path), Catch::Matchers::ContainsSubstring("band_type 'twelfth_octave'"));
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("Spectra survive interpolation and re-export", "[sphere_database]")
 {
     // Spectra are optional, and none of the shipped databases has any.
