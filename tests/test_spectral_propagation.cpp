@@ -118,6 +118,63 @@ TEST_CASE("eval_spectrum applies spreading and per-band absorption", "[spectral]
     std::filesystem::remove(path);
 }
 
+TEST_CASE("a source radius runs spreading and absorption on inside the sphere", "[spectral]")
+{
+    // --source_radius: between it and the sphere radius a level gains what spreading
+    // and absorption would have taken going out (the build depropagated those
+    // microphones outward); below it the level is held; beyond the sphere nothing
+    // changes, to the bit.  Without it the level inside the sphere is the surface's.
+    const auto path = write_flat_spectral_database("niceops_flat_source_radius.nod");
+    const Database plain(path);
+    const double radius = plain.sphere_radius();
+    DatabaseLoadOptions load;
+    load.source_radius = 0.1 * radius;
+    const Database inner(path, load);
+    REQUIRE(inner.source_radius() == 0.1 * radius);
+    REQUIRE(plain.source_radius() == radius);
+
+    const auto blend = plain.blend_at(0.15, -4.0, 0.006);
+    Atmosphere air;
+    const auto alpha = absorption_coefficients(air, kBands);
+    std::vector<double> levels(kBands.size()), reference(kBands.size());
+
+    SECTION("spectra")
+    {
+        inner.eval_spectrum(0.5 * radius, 0.0, 90.0, blend, alpha.data(), levels.data());
+        for (std::size_t band = 0; band < kBands.size(); band++)
+            check_close(levels[band], kFlatLevel + 20.0 * std::log10(2.0) + alpha[band] * 0.5 * radius, 1e-9);
+        inner.eval_spectrum(0.05 * radius, 0.0, 90.0, blend, alpha.data(), levels.data());
+        for (std::size_t band = 0; band < kBands.size(); band++)
+            check_close(levels[band], kFlatLevel + 20.0 + alpha[band] * 0.9 * radius, 1e-9);
+        plain.eval_spectrum(0.5 * radius, 0.0, 90.0, blend, alpha.data(), levels.data());
+        for (const double level : levels)
+            check_close(level, kFlatLevel, 1e-12);
+        for (const double range : {radius, 1.5 * radius, 40.0 * radius})
+        {
+            inner.eval_spectrum(range, 0.0, 90.0, blend, alpha.data(), levels.data());
+            plain.eval_spectrum(range, 0.0, 90.0, blend, alpha.data(), reference.data());
+            REQUIRE(levels == reference);
+        }
+    }
+
+    SECTION("A-weighted levels")
+    {
+        // The excess attenuation factor E (dB/km) from the plain database outside
+        // the sphere, where the two agree: L(2R) - L(R) = -20 lg 2 - E R / 1000.
+        const double at_radius = plain.eval(radius, 0.0, 90.0, blend);
+        const double excess = -(plain.eval(2.0 * radius, 0.0, 90.0, blend) - at_radius + 20.0 * std::log10(2.0))
+                * 1000.0 / radius;
+        check_close(inner.eval(0.5 * radius, 0.0, 90.0, blend),
+                at_radius + 20.0 * std::log10(2.0) + excess * 0.5 * radius / 1000.0, 1e-9);
+        CHECK(inner.eval(0.05 * radius, 0.0, 90.0, blend) == inner.eval(0.1 * radius, 0.0, 90.0, blend));
+        CHECK(plain.eval(0.5 * radius, 0.0, 90.0, blend) == at_radius);
+        for (const double range : {radius, 1.5 * radius, 40.0 * radius})
+            CHECK(inner.eval(range, 0.0, 90.0, blend) == plain.eval(range, 0.0, 90.0, blend));
+    }
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("spectral_level_at_observer weights and band-limits", "[spectral]")
 {
     const auto path = write_flat_spectral_database("niceops_flat_observer.nod");

@@ -426,6 +426,8 @@ struct DatabaseLoadOptions
     // Whether to precompute each tone's first-order near-field term, Lap[D A] on
     // the grid (ToneSource::near_field; THEORY 4.4): --tone_near_field on.
     bool tone_near_field = false;
+    // --source_radius, m: Database::source_radius (0: the sphere radius).
+    double source_radius = 0.0;
 };
 
 // One pure-tone source of a format 2 database (a rotor): a subgroup of every
@@ -1072,6 +1074,17 @@ public:
         return sphere_radius_;
     }
 
+    // The range inside which a level is held (--source_radius): spreading and
+    // absorption are taken from the sphere's surface down to it, so inside the
+    // sphere radius they are a gain, and below it the level is its own.  By
+    // default the sphere radius: inside the sphere is the source's own volume.
+    double source_radius() const
+    {
+        return source_radius_ > 0.0 ? source_radius_ : sphere_radius_;
+    }
+    // Set it, 0 < radius <= the sphere radius (refused otherwise).
+    void set_source_radius(double radius);
+
     // dBA of -inf legitimately means "no energy in this direction" (ambient
     // gating emptied it), but a zero barycentric weight against -inf is a
     // NaN under IEEE 754 that poisons an entire blended sum regardless of
@@ -1133,6 +1146,8 @@ private:
     double sphere_radius_ = 0.0;
     // 1 / sphere_radius_, so eval's spherical spreading term is a multiply.
     double inv_sphere_radius_ = 0.0;
+    // source_radius(), or 0 for the sphere radius (the default).
+    double source_radius_ = 0.0;
 
     // Whether dropping the excess attenuation term bounds a level from above.
     // A level is sphere_level - 20*log10(r/r0) - EAA*(r - r0)/1000, so dropping

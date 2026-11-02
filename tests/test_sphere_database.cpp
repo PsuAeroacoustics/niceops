@@ -3120,6 +3120,27 @@ TEST_CASE("a tone over the ground is the exact two-ray sum with the model's Q at
     }
 }
 
+TEST_CASE("inside the sphere a tone spreads down to --source_radius and holds below it", "[tones]")
+{
+    // The band path's inside-the-sphere rule (Database::eval_spectrum), for tones:
+    // by default held at the sphere's surface; with a source radius r0, 1/r down
+    // to r0 and held there.  No absorption here, so spreading alone.
+    auto fixture = omni_tones({"front"});
+    fixture.center = [](std::size_t) { return std::array<double, 3> {0.0, 0.0, 0.0}; };
+    ToneRun run("niceops_tones_source_radius.nod", fixture);
+    const double radius = run.database.sphere_radius();
+    REQUIRE(radius < 90.0);
+    const auto at = [&](double d) { return run.power(Vec3(0.0, 0.0, 100.0 - d)); };
+    const double surface = at(radius);
+    REQUIRE(surface > 0.0);
+    REQUIRE(std::fabs(at(0.5 * radius) / surface - 1.0) < 1e-12);
+    run.database.set_source_radius(0.25 * radius);
+    REQUIRE(std::fabs(at(radius) / surface - 1.0) < 1e-12);
+    REQUIRE(std::fabs(at(0.5 * radius) / surface - 4.0) < 1e-9);
+    REQUIRE(std::fabs(at(0.25 * radius) / surface - 16.0) < 1e-9);
+    REQUIRE(std::fabs(at(0.1 * radius) / surface - 16.0) < 1e-9);
+}
+
 TEST_CASE("a tone's ground is the band model's at any observer height", "[tones]")
 {
     // The band model (excess_ground_attenuation on straight_ray) takes the plane

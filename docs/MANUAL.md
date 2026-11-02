@@ -138,6 +138,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--rotor_azimuth`, `--sync_group`, `--tone_coherence`, `--tone_ground`, `--tone_near_field` | A format 2 database's rotor tones: each rotor's azimuth, coherent groups declared for the run, coherent or energy sums, the ground per tone or per band, and the spheres' near-field term ([Pure-tone sources](#pure-tone-sources-format-2)). |
 | `--nose` | `velocity`, `ground_velocity` or `heading`. Default: what the database's `azimuth_reference` records, `velocity` if nothing ([The sphere's nose](#the-spheres-nose)). |
 | `--accept_vehicle_mismatch` | Warn, rather than refuse, when the vehicle file disagrees with the database by more than 2 percent ([Vehicle file](#vehicle-file)). |
+| `--source_radius` | The source's own size, in `--units`. Inside the database's sphere radius, spreading and absorption run on down to it, and below it the level is held. Default: the sphere radius, so an observer inside the sphere hears the sphere's level. For a source much smaller than its sphere, such as a multirotor on a 100 ft sphere passing a few meters from a microphone. Refused at or below 0, or beyond the sphere radius. |
 | `--screen_database` | Write every entry the load-time screen finds suspect to this CSV ([Screening a database](#screening-a-database)). One database per run. |
 | `--mask_suspect_cells` | Drop the suspect entries, as gating drops a direction, instead of only warning. Not with `--self_test`. |
 

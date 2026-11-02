@@ -384,8 +384,10 @@ void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTone
     const auto& sources = database_.tone_sources();
     const double c = sound_speed_;
     const double radius = database_.sphere_radius();
+    // --source_radius: spreading and absorption run on inside the sphere down to
+    // it, as Database::eval_spectrum has them (by default the sphere radius).
+    const double inner = database_.source_radius();
     const double start = database_.absorption_start();
-    const bool lossless = database_.sphere_levels_lossless();
     const bool with_ground = ground != nullptr && ground->model != nullptr;
     // One reception time for every arrival: the state's center's direct lag.
     const double lag = (observer - state.position).norm() / c;
@@ -439,15 +441,18 @@ void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTone
         if (look.level_db <= Database::no_energy_floor_db && !near)
             return std::complex<double>(0.0, 0.0);
         const double alpha = absorption_at(absorption, received);
-        const double absorbed = std::max(a.length - start, lossless ? radius : 0.0);
+        // Absorbed from absorption_start (the hub for a lossless sphere, else its
+        // surface) to the range, held at the source radius inside it: at the
+        // default max(L, R) - 0 and max(L, R) - R, exactly the sphere-surface hold.
+        const double absorbed = std::max(a.length, inner) - start;
         if (!near)
         {
             // The far field alone, as without --tone_near_field.
             const double amplitude = std::pow(10.0, (look.level_db - alpha * absorbed) / 20.0)
-                    * (radius / std::max(a.length, radius));
+                    * (radius / std::max(a.length, inner));
             return std::polar(amplitude, look.phase + psi + 2.0 * pi * frequency_e * a.delta);
         }
-        const double range = std::max(a.length, radius);
+        const double range = std::max(a.length, inner);
         const double loss = std::pow(10.0, -alpha * absorbed / 20.0) * (radius / range);
         const double turn = psi + 2.0 * pi * frequency_e * a.delta;
         // The first-order near-field term at the arrival's range from the hub,

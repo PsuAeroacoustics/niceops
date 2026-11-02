@@ -42,6 +42,7 @@ leaves the result unchanged. The demo case has 6,551 states and 14,400 observers
 | $\lg$ | base-10 logarithm |
 | $r$ | slant range from source to observer |
 | $R_s$ | the database's sphere radius |
+| $r_0$ | the source radius (`--source_radius`; $R_s$ by default) |
 | $h_s$, $h_r$ | source and receiver heights above the ground plane |
 | $d$ | horizontal distance |
 | $\beta = 1/Z$ | normalized surface admittance ($Z$ the normalized impedance) |
@@ -410,14 +411,17 @@ A database without spectra, or a run with `--no-spectral`, propagates the A-weig
 directly:
 
 $$
-L = L_\mathrm{sph}(\phi,\theta) - 20 \lg\frac{\max(r, R_s)}{R_s} -
-  \mathrm{EAA}(\phi,\theta)\,\frac{\max(r, R_s) - R_s}{1000\ \mathrm{m}} + \Delta L_n .
+L = L_\mathrm{sph}(\phi,\theta) - 20 \lg\frac{\max(r, r_0)}{R_s} -
+  \mathrm{EAA}(\phi,\theta)\,\frac{\max(r, r_0) - R_s}{1000\ \mathrm{m}} + \Delta L_n .
 $$
 
 EAA is the A-weighted atmospheric attenuation over 1000 m in the database's build atmosphere.
 PANAM writes it as the difference between the A-weighted level with and without absorption over
-that distance. Spreading is capped at the sphere surface: inside $R_s$ the sphere level is
-taken as is.
+that distance. Spreading is capped at the source radius $r_0$, by default the sphere surface:
+inside $R_s$ the sphere level is then taken as is. A source much smaller than its sphere (a
+multirotor on a 100 ft sphere) sets $r_0 < R_s$: between $r_0$ and $R_s$ both terms are gains,
+the inverse of the build's depropagation of the microphones inside the radius out to it, and
+below $r_0$ the level is held.
 
 **Lossless spheres.** A measured sphere is depropagated to $R_s$, so its levels already carry the
 absorption from the hub to the sphere, and absorption runs from $R_s$ outward. A predicted sphere
@@ -433,11 +437,12 @@ When the database carries spectra (the default for such a database), each band $
 propagated separately:
 
 $$
-L_b = L_{\mathrm{sph},b}(\phi,\theta) - 20 \lg\frac{\max(r, R_s)}{R_s} -
-  \alpha_b \max(\ell - R_s, 0) + \Delta L_n - \Delta L_{\mathrm{extra},b} + 10 \lg G_b .
+L_b = L_{\mathrm{sph},b}(\phi,\theta) - 20 \lg\frac{\max(r, r_0)}{R_s} -
+  \alpha_b \left(\max(\ell, r_0) - R_s\right)^{+} + \Delta L_n - \Delta L_{\mathrm{extra},b} + 10 \lg G_b .
 $$
 
-$r$ is the spreading range, $\ell$ the absorbed path length ($\ell = r$ on a straight ray), $G_b$
+$r$ is the spreading range, $\ell$ the absorbed path length ($\ell = r$ on a straight ray),
+$(x)^{+}$ is $\max(x, 0)$ at the default $r_0 = R_s$ and $x$ itself when $r_0 < R_s$, $G_b$
 the ground or receiver power ratio (§5, §6), and $\Delta L_{\mathrm{extra},b}$ any shadow-zone
 loss or table correction (§8, §9.3). The bands are then weighted and summed in energy (§10.1).
 
@@ -2779,7 +2784,7 @@ A run interpolates the table multilinearly in dB and applies it in place of the 
 refraction models, with the straight-line direction and range:
 
 $$
-L_b = L_{\mathrm{sph},b} - 20\lg\frac{\max(r, R_s)}{R_s} - \alpha_b \max(r - R_s, 0) + \Delta L_n + \Delta L .
+L_b = L_{\mathrm{sph},b} - 20\lg\frac{\max(r, r_0)}{R_s} - \alpha_b \left(\max(r, r_0) - R_s\right)^{+} + \Delta L_n + \Delta L .
 $$
 
 A table that declares `includes_absorption` drops the $\alpha_b$ term. A pair the table does

@@ -1352,6 +1352,26 @@ set_tests_properties(buildings_far_run buildings_far_sampled_run buildings_far_r
 add_test(NAME buildings_far_is_open_without_ground COMMAND golden_compare integrated/buildings_far.csv integrated/buildings_far_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME buildings_far_sampled_is_open COMMAND golden_compare integrated/buildings_far_sampled.csv integrated/buildings_far_reference.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_far_is_open_without_ground buildings_far_sampled_is_open PROPERTIES FIXTURES_REQUIRED buildings_far_runs)
+# --source_radius (Database::source_radius): spreading and absorption run on inside the sphere radius
+# down to it.  Microphones 1.5-24 m from the short track, inside the B407's 30.48 m sphere: the
+# point-source model among a far building (its rays weighed inside the sphere) is the open run, the
+# windowed peak search is the march, and a run whose microphones are all outside the sphere is the
+# run without the flag.
+set(URBAN_NEAR niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tests/data/urban_track_short.csv --frame_bearing 210 -b tests/data/urban_near_observers.csv -L warn --source_radius 3.28)
+add_test(NAME source_radius_open_run COMMAND ${URBAN_NEAR} --no-ground_effect -o integrated/source_radius_open.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME source_radius_marched_run COMMAND ${URBAN_NEAR} --no-ground_effect -D integrated/source_radius_dnl.csv -o integrated/source_radius_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME source_radius_buildings_run COMMAND ${URBAN_NEAR} --buildings tests/data/urban_far_building.csv --floor_absorption 1 --phase_interval 90 --state_tolerance 0 --no-gpu -o integrated/source_radius_buildings.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME source_radius_outside_run COMMAND ${URBAN_DISTRICT_SHORT} --no-ground_effect --source_radius 3.28 -o integrated/source_radius_outside.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(source_radius_open_run source_radius_marched_run source_radius_buildings_run source_radius_outside_run PROPERTIES FIXTURES_SETUP source_radius_runs)
+add_test(NAME source_radius_windowed_is_exact COMMAND golden_compare integrated/source_radius_open.csv integrated/source_radius_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME source_radius_buildings_far_is_open COMMAND golden_compare integrated/source_radius_buildings.csv integrated/source_radius_open.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(source_radius_windowed_is_exact source_radius_buildings_far_is_open PROPERTIES FIXTURES_REQUIRED source_radius_runs)
+add_test(NAME source_radius_outside_is_default COMMAND golden_compare integrated/source_radius_outside.csv integrated/buildings_far_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(source_radius_outside_is_default PROPERTIES FIXTURES_REQUIRED "source_radius_runs;buildings_far_runs")
+add_test(NAME source_radius_beyond_sphere_refused COMMAND ${URBAN_DISTRICT_SHORT} --no-ground_effect --source_radius 200 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(source_radius_beyond_sphere_refused PROPERTIES PASS_REGULAR_EXPRESSION "--source_radius must be above 0 and at most the database's sphere radius")
+add_test(NAME source_radius_zero_refused COMMAND ${URBAN_DISTRICT_SHORT} --no-ground_effect --source_radius 0 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(source_radius_zero_refused PROPERTIES PASS_REGULAR_EXPRESSION "--source_radius must be above 0, got 0")
 # The demo approach over the test district: its states sampled (the default) against every state
 # evaluated, within 0.01 dB of SEL at every microphone (0.001 measured; 0.003 on the full track).
 add_test(NAME buildings_every_state_run COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --state_tolerance 0 --no-gpu -o integrated/buildings_every_state.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

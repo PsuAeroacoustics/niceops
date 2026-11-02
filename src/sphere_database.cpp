@@ -1851,6 +1851,8 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
     inv_sphere_radius_ = 1.0 / sphere_radius_;
     absorption_start_ = levels_lossless_ ? 0.0 : sphere_radius_;
     info("Sphere radius set to ", sphere_radius_);
+    if (load.source_radius > 0.0)
+        set_source_radius(load.source_radius);
     // Find range of conditions
     advance_ratio_max = *std::max_element(advance_ratios.begin(), advance_ratios.end());
     advance_ratio_min = *std::min_element(advance_ratios.begin(), advance_ratios.end());
@@ -2630,9 +2632,12 @@ double Database::eval(double range, double phi, double theta, const Blend& blend
     // inward grows as 1/r, which put 28 of the demo's observers up to 4.4 dB above
     // the sphere-surface level and diverged at r = 0 (+inf in the CSV, an abort
     // with the asserts live).  The sphere is the source's own volume, so there is
-    // no propagation to account for in it.  Clamped once, so the spreading and the
-    // excess attenuation below agree on the range; a no-op beyond the sphere.
-    range = std::max(range, sphere_radius_);
+    // no propagation to account for in it.  A source much smaller than its sphere
+    // (a multirotor on a 100 ft sphere) sets --source_radius: spreading and
+    // absorption then run on inward to it, as the build depropagated microphones
+    // inside the radius outward.  Clamped once, so the spreading and the excess
+    // attenuation below agree on the range; a no-op beyond the sphere.
+    range = std::max(range, source_radius());
     // Find the sphere grid cell containing the desired phi, theta, and where in
     // it they sit.  locate() gives the bracketing indices and the interpolation
     // weight together, so nothing below has to read the knot arrays back.
@@ -2768,12 +2773,16 @@ void Database::eval_spectrum(double range, double absorbed_range, double phi, do
 
     // Spreading is geometry, so it is the same for every band; absorption is
     // not, which is the whole point of propagating the spectrum.
-    // Capped at the sphere's surface as eval() does: no spreading gain and no
-    // negative absorption inside the source's own volume.
-    const double spreading_loss = 20.0 * std::log10(std::max(range, sphere_radius()) / sphere_radius());
-    // Lossless spheres absorb from the hub, and inside the sphere their level is
-    // the surface's, absorbed over the radius, as eval() clamps the range.
-    const double path_length = std::max(absorbed_range - absorption_start_, levels_lossless_ ? sphere_radius_ : 0.0);
+    // Capped at the source radius as eval() does (by default the sphere's
+    // surface): no spreading gain inside the source's own volume.  Absorption
+    // runs from absorption_start_ (the hub for a lossless sphere, else its
+    // surface) to the range, held at the source radius inside it: with
+    // --source_radius inside a measured sphere a gain, undoing the absorption
+    // its depropagation added.  At the default both are exactly as they were
+    // (max(a, R) - R is max(a - R, 0), and max(a, R) - 0 is max(a - 0, R)).
+    const double inner = source_radius();
+    const double spreading_loss = 20.0 * std::log10(std::max(range, inner) / sphere_radius());
+    const double path_length = std::max(absorbed_range, inner) - absorption_start_;
     const double* w = blend.weights.data();
     const double* sw = stencil.weight;
     constexpr std::size_t n_slots = condition_dims + 1;
@@ -3331,8 +3340,21 @@ double Database::cull_range(const Blend& blend, double cutoff) const
     blended_max += blend.level_correction_db;
 
     // Spherical spreading alone takes that peak below the cutoff at this range,
-    // and excess attenuation only takes it further down.
-    return sphere_radius_ * std::pow(10.0, 0.05 * (blended_max - cutoff));
+    // and excess attenuation only takes it further down.  Inside the sphere, with
+    // --source_radius, absorption is a gain this does not know, so the range is
+    // never put inside the sphere then (beyond it, nothing changed).
+    const double range = sphere_radius_ * std::pow(10.0, 0.05 * (blended_max - cutoff));
+    return source_radius() < sphere_radius_ ? std::max(range, sphere_radius_) : range;
+}
+
+void Database::set_source_radius(double radius)
+{
+    if (!(radius > 0.0) || radius > sphere_radius_)
+        input_error("--source_radius must be above 0 and at most the database's sphere radius (", sphere_radius_,
+                " m), got ", radius, " m.");
+    source_radius_ = radius;
+    info("Source radius set to ", radius, " m: spreading and absorption run inside the ", sphere_radius_,
+            " m sphere down to it.");
 }
 
 void Database::group_blends(const std::vector<SourceState>& states, DirectionBounds& bounds,
@@ -3961,6 +3983,10 @@ double Database::find_range(double contour_level, double bearing, double altitud
         const auto correction = blend_at(advance_ratio, flight_path_angle, thrust_coefficient)
                 .level_correction_db;
         auto range_max = sphere_radius() * std::pow(10.0, 0.05 * (max_level_ + correction - contour_level));
+        // Inside the sphere, with --source_radius, absorption is a gain spreading
+        // alone does not bound; search the whole sphere then.
+        if (source_radius() < sphere_radius())
+            range_max = std::max(range_max, sphere_radius());
         trace("Max search range set to: ", range_max);
         range = bisect(residual, 0.0, range_max, threshold);
         trace("Found range: ", range);

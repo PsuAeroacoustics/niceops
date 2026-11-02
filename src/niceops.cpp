@@ -5675,6 +5675,11 @@ int run(int argc, char* argv[])
     auto* mask_suspect_option = app.add_flag("--mask_suspect_cells", database_load.mask_suspect_cells,
             "Drop the entries the load-time screen finds suspect, as gating drops a direction, "
             "instead of only warning about them.");
+    auto* source_radius_option = app.add_option("--source_radius", database_load.source_radius,
+            "The source's own size, in --units: spreading and absorption run on inside the "
+            "database's sphere radius down to this range, and the level is held below it. "
+            "Default: the sphere radius (no spreading gain inside the sphere). For a source "
+            "much smaller than its sphere, such as a multirotor on a 100 ft sphere.");
     app.add_flag("--accept_vehicle_mismatch", accept_vehicle_mismatch,
             "Warn, rather than refuse, a vehicle file that disagrees with the database by more "
             "than 2 percent.");
@@ -6605,6 +6610,9 @@ int run(int argc, char* argv[])
     to_meters(layer_depth_option, layer_depth);
     to_meters(roughness_option, roughness);
     to_meters(path_smoothing_option, path_smoothing);
+    if (source_radius_option->count() > 0 && !(database_load.source_radius > 0.0))
+        input_error("--source_radius must be above 0, got ", database_load.source_radius, ".");
+    to_meters(source_radius_option, database_load.source_radius);
     to_meters(trim_option, trim_start);
     to_meters(ground_elevation_option, ground_elevation);
     to_meters(roughness_length_option, roughness_length);
