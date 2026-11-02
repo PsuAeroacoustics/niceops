@@ -100,7 +100,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `-t`, `--trajectoryfile` | Trajectory CSV ([Trajectories](#trajectories)). Repeat for several flight paths. Default the demo track. |
 | `--operations` | A CSV of operations, one row per track flown, with its count and optionally its database, vehicle, clock, lateral offset and air ([An operations file](#an-operations-file)). Replaces `-t`. |
 | `-d`, `--database` | netCDF noise database. Once, or once per trajectory. Default `databases/S-76D_load_factors.nod`. |
-| `-v`, `--vehicle` | JSON vehicle file ([Vehicle file](#vehicle-file)). Once, or once per trajectory. Default `databases/S-76D.json`. |
+| `-v`, `--vehicle` | JSON vehicle file ([Vehicle file](#vehicle-file)). Once, or once per trajectory. Without it, the database's own vehicle where it records all of it (rotor radius and tip speed, weight and air density, as panam writes them), with the atmosphere it was built in; else `databases/S-76D.json`. |
 | `-o`, `--output` | SEL output file, once per trajectory. Default `integrated/197421_LAE.csv`. With several tracks and one name (or none), each is named after its track. |
 | `-b`, `--observer` | Scattered observer file ([Observers](#observers)); replaces the default grid. |
 | `--grid` | Observer grid bounds: `xmin xmax ymin ymax`; the grid starts at each minimum and stops short of each maximum. Default −1500 … 1475 m in 25 m steps (120 values per axis); −4921.26 … 4839.24 ft. |

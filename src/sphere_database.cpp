@@ -1206,6 +1206,8 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
         rotor_radius_ = root_value;
     if (NC_NOERR == get_scalar(file_ncid, "vehicle_weight_newtons", &root_value))
         vehicle_weight_newtons_ = root_value;
+    if (NC_NOERR == get_scalar(file_ncid, "air_density_kg_m3", &root_value))
+        air_density_ = root_value;
     speed_reference_ = read_speed_reference(file_ncid);
     azimuth_reference_ = read_azimuth_reference(file_ncid);
     // The frame the spheres are in.  NICEOPS's, PANAM's and NORAH2's is level:

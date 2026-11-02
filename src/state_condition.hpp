@@ -103,4 +103,10 @@ unsigned condition_flags(const StateCondition& condition, const Blend& blend)
 void check_vehicle(const dimensional_data& vehicle, const Database& database, const std::string& vehicle_path,
         bool accept_mismatch);
 
+// The vehicle a database records at its root (rotor radius and tip speed,
+// weight, and the air density its weight coefficient was formed with), with
+// the atmosphere it was built in; nullopt unless it records all four.  A run
+// given no -v takes it in place of the default vehicle file.
+std::optional<dimensional_data> database_vehicle(const Database& database);
+
 } // namespace niceops

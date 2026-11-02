@@ -908,6 +908,9 @@ struct PathJob
     std::string trajectory;
     std::string database;
     std::string vehicle;
+    // No -v was given (nor an operations file's vehicle): `vehicle` is the
+    // default file, which a database recording its own vehicle replaces.
+    bool vehicle_default = false;
     std::string output;
     std::string state;
     // --write_atmosphere: where the --wind profile goes; empty for nowhere.
@@ -1255,7 +1258,7 @@ AtmosphereProfile wind_profile(const Trajectory& trajectory, const PathJob& job,
 // Compute one trajectory's footprint and write its outputs, returning the
 // trajectory itself for the single-path plotting block.  Anything that throws
 // in here condemns this trajectory alone; the caller catches and moves on.
-Trajectory process_trajectory(const Database& database, const PathJob& job,
+Trajectory process_trajectory(const Database& database, const PathJob& path_job,
         const RunOptions& options, const std::vector<Vec3>& observers,
         const std::vector<double>& microphone_heights, const std::vector<std::int64_t>& ground_class_ids,
         const std::vector<double>& x_obs,
@@ -1265,8 +1268,21 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     auto& lamax = totals.lamax;
     auto& nax = totals.nax;
     auto& coverage = totals.coverage;
+    // The vehicle: the -v file, or, given none, the one the database records
+    // at its root (panam's, with the air density), else the default file.
+    PathJob job = path_job;
+    const auto root_vehicle = job.vehicle_default ? database_vehicle(database) : std::nullopt;
+    if (root_vehicle)
+    {
+        job.vehicle = job.database + " (its root vehicle)";
+        log("Vehicle from the database's root: no -v given, and ", job.database, " records its vehicle.");
+    }
+    // Where the vehicle's atmosphere came from, for the run's summary.
+    const char* vehicle_source = root_vehicle ? "database root" : "vehicle file";
     // Create trajectory from CSV data
-    Trajectory trajectory(job.trajectory, job.vehicle, options.geodetic, options.unit);
+    Trajectory trajectory = root_vehicle
+            ? Trajectory(job.trajectory, *root_vehicle, options.geodetic, options.unit)
+            : Trajectory(job.trajectory, job.vehicle, options.geodetic, options.unit);
     // Ground effect is on by default, but it acts on per-band levels, so it is
     // applied only where the spectral path runs on a database that has spectra.
     const bool ground_effect = options.ground_effect && options.spectral && database.has_spectra();
@@ -2311,7 +2327,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         // states its own configuration rather than leaving it in the log file.
         const char* humidity_from = options.atmosphere ? "the --atmosphere profile's ground level"
                 : !std::isnan(options.humidity_override) ? "--humidity"
-                : trajectory.vehicle.humidity_given ? "vehicle file" : "default, not given";
+                : trajectory.vehicle.humidity_given ? vehicle_source : "default, not given";
         const double receiver = options.ground.receiver_height / options.unit.to_meters;
         std::cout << "Physics: "
                   << (spectral ? "spectral, per-band ISO 9613-1 absorption" : "broadband, database EAA factor")
@@ -2421,8 +2437,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         // Where each value came from, so a default is not mistaken for a
         // measurement: the vehicle file usually gives a temperature and a
         // density, derives the pressure from them, and gives no humidity at all.
-        const auto origin = [](bool overridden, const char* option, bool given, const char* otherwise) {
-            return std::string(overridden ? option : given ? "vehicle file" : otherwise);
+        const auto origin = [&](bool overridden, const char* option, bool given, const char* otherwise) {
+            return std::string(overridden ? option : given ? vehicle_source : otherwise);
         };
         const auto& vehicle = trajectory.vehicle;
         const std::string temperature_from = origin(!std::isnan(options.temperature_override),
@@ -7497,6 +7513,7 @@ int run(int argc, char* argv[])
             job.epnl = epnl_files.empty() ? std::string() : epnl_files[path_index];
             job.band_frames = band_frames_files.empty() ? std::string() : band_frames_files[path_index];
             job.vehicle = vehicle_files[path_index];
+            job.vehicle_default = vehicle_option->count() == 0 && operations_file.empty();
             job.output = out_files[path_index];
             job.state = state_files.empty() ? std::string() : state_files[path_index];
             job.atmosphere_out = atmosphere_out_files.empty() ? std::string()

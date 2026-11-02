@@ -845,6 +845,13 @@ public:
     {
         return vehicle_weight_newtons_;
     }
+    // The air density (kg/m^3) the weight coefficient was formed with, from the
+    // root variable air_density_kg_m3, or NaN.  With the three above it is the
+    // whole vehicle a run needs (database_vehicle, state_condition.hpp).
+    double air_density() const
+    {
+        return air_density_;
+    }
 
     // Which velocity the flight conditions were taken from, as the root
     // attribute speed_reference records it.  Absent means the ground, which is
@@ -1231,6 +1238,7 @@ private:
     double tip_speed_ = std::numeric_limits<double>::quiet_NaN();
     double rotor_radius_ = std::numeric_limits<double>::quiet_NaN();
     double vehicle_weight_newtons_ = std::numeric_limits<double>::quiet_NaN();
+    double air_density_ = std::numeric_limits<double>::quiet_NaN();
     SpeedReference speed_reference_ = SpeedReference::ground;
     std::optional<AzimuthReference> azimuth_reference_;
     bool upper_hemisphere_measured_ = false;

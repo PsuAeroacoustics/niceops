@@ -144,4 +144,30 @@ void check_vehicle(const dimensional_data& vehicle, const Database& database, co
     }
 }
 
+std::optional<dimensional_data> database_vehicle(const Database& database)
+{
+    if (!(std::isfinite(database.rotor_radius()) && std::isfinite(database.tip_speed())
+                && std::isfinite(database.vehicle_weight()) && std::isfinite(database.air_density())))
+        return std::nullopt;
+    dimensional_data vehicle;
+    vehicle.radius = database.rotor_radius();
+    vehicle.tip_speed = database.tip_speed();
+    vehicle.weight = database.vehicle_weight();
+    vehicle.rho = database.air_density();
+    if (const auto& built = database.build_atmosphere())
+    {
+        vehicle.atmosphere.temperature = built->temperature_kelvin;
+        vehicle.atmosphere.pressure = built->pressure_kpa;
+        vehicle.atmosphere.relative_humidity = built->relative_humidity_percent;
+        vehicle.temperature_given = vehicle.pressure_given = vehicle.humidity_given = true;
+    }
+    else
+    {
+        // As configure_vehicle without a pressure: the one the density implies.
+        constexpr double dry_air_gas_constant = 287.05; // J/(kg K)
+        vehicle.atmosphere.pressure = vehicle.rho * dry_air_gas_constant * vehicle.atmosphere.temperature / 1000.0;
+    }
+    return vehicle;
+}
+
 } // namespace niceops

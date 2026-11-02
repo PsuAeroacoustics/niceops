@@ -529,6 +529,53 @@ TEST_CASE("a database records its sphere frame, and an unknown one is refused", 
     std::filesystem::remove(path);
 }
 
+// The vehicle a run takes without -v: the database's own, when its root records
+// all of it (panam writes the rotor, the weight and, now, the air density the
+// weight coefficient was formed with), with the atmosphere it was built in.
+TEST_CASE("a database that records its whole vehicle supplies it", "[sphere_database]")
+{
+    const auto sphere = test::demo_database().interpolate_sphere(0.15, -4.0, 0.006);
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_root_vehicle.nod").string();
+    write_sphere(sphere, path);
+    auto put = [&](const char* name, double value) {
+        int ncid = 0, var = 0;
+        REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+        REQUIRE(nc_redef(ncid) == NC_NOERR);
+        if (nc_inq_varid(ncid, name, &var) != NC_NOERR)
+            REQUIRE(nc_def_var(ncid, name, NC_DOUBLE, 0, nullptr, &var) == NC_NOERR);
+        REQUIRE(nc_enddef(ncid) == NC_NOERR);
+        REQUIRE(nc_put_var_double(ncid, var, &value) == NC_NOERR);
+        REQUIRE(nc_close(ncid) == NC_NOERR);
+    };
+    put("main_rotor_radius_meters", 5.334);
+    put("main_rotor_tip_speed_meters_per_sec", 230.7);
+    put("vehicle_weight_newtons", 22064.9625);
+    // Without the density, no vehicle: the default vehicle file stands.
+    REQUIRE(!database_vehicle(Database(path)));
+    put("air_density_kg_m3", 1.07);
+    {
+        int ncid = 0;
+        REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+        REQUIRE(nc_redef(ncid) == NC_NOERR);
+        for (const auto& [name, value] : {std::pair {"build_temperature_K", 288.15},
+                     {"build_pressure_kPa", 99.5}, {"build_relative_humidity_percent", 70.0}})
+            REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, name, NC_DOUBLE, 1, &value) == NC_NOERR);
+        REQUIRE(nc_close(ncid) == NC_NOERR);
+    }
+    const auto vehicle = database_vehicle(Database(path));
+    REQUIRE(vehicle);
+    REQUIRE(vehicle->radius == 5.334);
+    REQUIRE(vehicle->tip_speed == 230.7);
+    REQUIRE(vehicle->weight == 22064.9625);
+    REQUIRE(vehicle->rho == 1.07);
+    // The atmosphere the database was built in, as a vehicle file's would be.
+    REQUIRE(vehicle->atmosphere.temperature == 288.15);
+    REQUIRE(vehicle->atmosphere.pressure == 99.5);
+    REQUIRE(vehicle->atmosphere.relative_humidity == 70.0);
+    REQUIRE((vehicle->temperature_given && vehicle->pressure_given && vehicle->humidity_given));
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("a database of bands other than one-third octaves is refused", "[sphere_database]")
 {
     // panam records the bands it built from (band_type).  NICEOPS's weighting,
