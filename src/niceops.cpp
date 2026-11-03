@@ -61,6 +61,7 @@
 #include "sphere_database.hpp"
 #include "sphere_energy.hpp"
 #include "state_condition.hpp"
+#include "tones.hpp"
 #include "trajectory.hpp"
 #include "util/csv.hpp"
 #include "util/logger.hpp"
@@ -850,6 +851,9 @@ struct RunOptions
     std::optional<SpeedReference> speed_reference;
     // Which air density C_T is formed with (--condition_density).
     ConditionDensity condition_density = ConditionDensity::vehicle;
+    // A format 2 database's pure tones: --rotor_azimuth, --sync_group,
+    // --tone_coherence, --tone_ground (tones.hpp).
+    ToneRunOptions tones;
     // Where the sphere's nose comes from (--nose).  Unset follows each
     // database's own azimuth_reference attribute.
     std::optional<NoseSource> nose;
@@ -2905,6 +2909,75 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             "a database referred to the air (--speed_reference).");
     }
 
+    // A format 2 database's pure tones (tones.hpp).  Evaluated beside a band
+    // spectrum that leaves them out (band_content broadband); one that holds
+    // them runs on its bands, as before, and the tones are not added again.
+    std::optional<ToneEvaluator> tone_evaluator;
+    std::vector<ToneEvaluator::StateTones> tone_states;
+    // Each ground class's admittance at any frequency, for the per-frequency
+    // ground (empty without a ground model).
+    std::vector<AdmittanceTable> tone_admittance;
+    if (database.has_tones() && database.band_content() == BandContent::total)
+    {
+        warn("The database carries ", database.tone_sources().size(), " pure-tone sources and its band spectrum "
+                "already holds them (band_content total): the run uses the bands, and the tones are not added "
+                "again (they would count twice), so there is no rotor phase.");
+    }
+    else if (database.has_tones())
+    {
+        // What the tones cannot go through: refused, naming why.
+        if (!spectral)
+            input_error("The database's pure tones need the spectral path: --no-spectral evaluates its dBA, which "
+                    "leaves the tones out (band_content broadband).");
+        if (options.buildings)
+            input_error("--buildings does not evaluate pure tones: its rays carry the band spectrum alone, and "
+                    "this database's bands leave its rotor tones out (band_content broadband).");
+        if (options.gpu_required)
+            input_error("--gpu: the GPU paths do not evaluate pure tones, and this database's bands leave its rotor "
+                    "tones out (band_content broadband).");
+        if (!std::isnan(options.db_cutoff))
+            input_error("--db_cutoff does not combine with a database's pure tones: the cutoff's bound is on the "
+                    "band spectrum, which leaves the tones out.");
+        tone_evaluator.emplace(database, options.tones, band_gains, sound_speed);
+        const auto& groups = tone_evaluator->groups();
+        for (const auto& g : groups)
+        {
+            std::string members;
+            for (const std::size_t s : g.sources)
+                members += (members.empty() ? "" : ", ") + database.tone_sources()[s].tag;
+            log("Tones: ", g.forced ? "run-time group " : g.sources.size() > 1 ? "sync group " : "source ", g.name,
+                    g.sources.size() > 1 ? " (" + members + ")" : std::string(), g.coherent ? ", coherent" : ", in energy",
+                    ".");
+        }
+        log("Tones: the spheres' first-order near-field phase error, (m + 1) c / (2 |Omega| R), is up to ",
+                tone_evaluator->near_field_degrees(), " degrees (shaft order ", tone_evaluator->near_field_order(),
+                " of source ", tone_evaluator->near_field_source(), "); the run does not correct it.");
+        tone_states.reserve(nt);
+        std::vector<double> rate_low(groups.size(), std::numeric_limits<double>::infinity());
+        std::vector<double> rate_high(groups.size(), 0.0);
+        for (std::size_t it = 0; it < nt; it++)
+        {
+            const auto v = ground_velocity(trajectory.states[it]);
+            tone_states.push_back(tone_evaluator->prepare(source_states[it], Vec3(v[0], v[1], v[2])));
+            for (std::size_t g = 0; g < groups.size(); g++)
+            {
+                rate_low[g] = std::min(rate_low[g], tone_states.back().group_rates[g]);
+                rate_high[g] = std::max(rate_high[g], tone_states.back().group_rates[g]);
+            }
+        }
+        for (std::size_t g = 0; g < groups.size(); g++)
+            if (groups[g].forced && nt > 0)
+                log("Tones: --sync_group ", groups[g].name, " holds its rotors at their mean shaft rate, ",
+                        rate_low[g], " to ", rate_high[g], " rad/s over the trajectory.");
+        if (ground_model != nullptr && options.tones.ground == ToneGround::frequency)
+        {
+            const auto& centers = database.band_centers();
+            for (const auto& model : class_models)
+                tone_admittance.emplace_back(model, 0.25 * centers.front(), 4.0 * centers.back(), sound_speed);
+        }
+    }
+    const bool tone_run = tone_evaluator.has_value();
+
     // The spectral path's bound (Database::spectral_direction_bounds) serves
     // both --db_cutoff and the peak search below.  With --ground_effect, each
     // band's gain is raised by the most the ground can add to it
@@ -3112,6 +3185,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         < cull_energy * squared_range;
     };
     std::atomic<std::size_t> culled_samples {0};
+    // Tone evaluations by path: per frequency (straight rays over level ground or
+    // none), or by the band fallback (plates, tables, terrain, screening,
+    // refraction, urban, --tone_ground band).
+    std::atomic<std::size_t> tone_frequency_evaluations {0};
+    std::atomic<std::size_t> tone_band_evaluations {0};
 
     // Find each observer's peak and expand out to the 10-dB-down points, rather
     // than marching every emission time -- see windowed_sound_exposure_level.
@@ -3141,8 +3219,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // A table beside refraction mixes two geometries per state -- the
     // straight line the table is read along and the ray's launch direction --
     // which the bounds were not built for, so every state is evaluated.
+    // Tones march every state: the bounds are on the band spectrum alone.
     const bool expand_from_peak = direction_bounds.usable() && !culling && !needs_full_history
-            && !(options.propagation_table && options.refraction) && !options.buildings;
+            && !(options.propagation_table && options.refraction) && !options.buildings && !tone_run;
 
     // Each blend's spectra packed contiguously (Database::pack_spectra), one
     // copy per distinct blend the track visits, so the observer loop's reads
@@ -3615,6 +3694,14 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         std::vector<double> arrival_loss(shadow.size(), 0.0);
         std::vector<double> arrival_bands(shadow.size(), 0.0);
         const std::vector<double> no_ground(shadow.size(), 0.0);
+        // The tones' scratch (tones.hpp): their power and A-weighted power per
+        // band, the band path's levels with every term and in free field, and the
+        // ratio of the two (the band fallback's correction).
+        const std::size_t tone_band_count = tone_run ? database.band_centers().size() : 0;
+        std::vector<double> tone_power(tone_band_count), tone_weighted(tone_band_count);
+        std::vector<double> tone_bands_with(tone_band_count), tone_bands_free(tone_band_count);
+        std::vector<double> tone_ratio(tone_band_count, 1.0);
+        std::size_t tone_frequency_here = 0, tone_band_here = 0;
         for (std::size_t index = begin; index < end; index++)
         {
             // Evaluated at the microphone, with this observer's receiver.
@@ -4008,6 +4095,50 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             // fit's ray past the layered boundary: its lit level there is the fit's.
             if (layered_rays)
                 layered_rays->begin_observer(observer, at_receiver, transition_here != nullptr);
+            // The tones (tones.hpp) at this observer: per frequency where the band
+            // path is the straight ray over level ground (or none) at a point
+            // receiver; otherwise the band fallback, free-field tones times the
+            // band path's own correction (its levels with every term over the
+            // free field's), which is what --tone_ground band asks for anywhere.
+            const bool tone_by_frequency = tone_run && options.tones.ground == ToneGround::frequency && !flush
+                    && !on_planes && !screening && !options.propagation_table && urban_here == nullptr
+                    && point_levels.empty() && !effective_sound_speed;
+            const ToneEvaluator::Ground tone_ground_here {ground_here,
+                    ground_here != nullptr && !tone_admittance.empty() ? &tone_admittance[class_of[index]] : nullptr};
+            // `bands_with` holds the band path's band levels (every term) for this
+            // state; `bands_out` is the history's, which takes the tones too.
+            auto with_tones = [&](std::size_t it, double level, const double* bands_with, double* bands_out) {
+                std::fill(tone_power.begin(), tone_power.end(), 0.0);
+                std::fill(tone_weighted.begin(), tone_weighted.end(), 0.0);
+                const double* path_absorption_here = absorption_for(it, observer);
+                if (tone_by_frequency)
+                {
+                    tone_frequency_here++;
+                    const bool grounded = ground_here != nullptr;
+                    tone_evaluator->evaluate(source_states[it], tone_states[it], observer, path_absorption_here,
+                            grounded ? &tone_ground_here : nullptr,
+                            grounded ? observer.z - ground_here->receiver_height : 0.0, tone_power.data(),
+                            tone_weighted.data());
+                    return add_tone_power(level, tone_power.data(), tone_weighted.data(), nullptr, first_band,
+                            last_band, bands_out);
+                }
+                tone_band_here++;
+                tone_evaluator->evaluate(source_states[it], tone_states[it], observer, path_absorption_here, nullptr,
+                        0.0, tone_power.data(), tone_weighted.data());
+                database.spectral_level_at_observer(observer, source_states[it], absorption_for(it, observer),
+                        band_gains, nullptr, nullptr, sound_speed, first_band, last_band, packed_of_state[it],
+                        nullptr, 0.0, nullptr, tone_bands_free.data());
+                for (std::size_t band = first_band; band < last_band; band++)
+                {
+                    // A band the database leaves empty there has no correction to
+                    // carry; the free field stands.
+                    tone_ratio[band] = tone_bands_free[band] > -250.0
+                            ? std::pow(10.0, 0.1 * (bands_with[band] - tone_bands_free[band]))
+                            : 1.0;
+                }
+                return add_tone_power(level, tone_power.data(), tone_weighted.data(), tone_ratio.data(), first_band,
+                        last_band, bands_out);
+            };
             auto refracted_level = [&](std::size_t it, RefractedRay ray) {
                 // With a table too, the pairs it covers take it; the rest the ray model.
                 if (options.propagation_table)
@@ -4016,11 +4147,19 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     double* table_bands_out = keep_bands
                             ? record_path(it, straight_ray(source_states[it].position, observer))
                             : nullptr;
-                    if (table_level(it, table_bands_out, level, nullptr, nullptr))
+                    double* table_buffer = tone_run && table_bands_out == nullptr ? tone_bands_with.data()
+                                                                                   : table_bands_out;
+                    if (table_level(it, table_buffer, level, nullptr, nullptr))
+                    {
+                        if (tone_run)
+                            level = with_tones(it, level, table_buffer, table_bands_out);
                         return add_ambient ? level_with_ambient(level, ambient_energy) : level;
+                    }
                 }
                 finish_ray(it, ray, ray_ground, microphone_height[index]);
-                double* bands_out = record_path(it, ray.path);
+                double* history_bands = record_path(it, ray.path);
+                // The tones' fallback reads every state's bands, kept or not.
+                double* bands_out = tone_run && history_bands == nullptr ? tone_bands_with.data() : history_bands;
                 const double* extra_loss = nullptr;
                 const double* ground_weight = nullptr;
                 // The plate's frame, as Database::spectral_level_along takes it.
@@ -4114,6 +4253,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     }
                     level = 10.0 * std::log10(energy);
                 }
+                if (tone_run)
+                    level = with_tones(it, level, bands_out, history_bands);
                 if (add_ambient)
                     level = level_with_ambient(level, ambient_energy);
                 return level;
@@ -4214,10 +4355,16 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     double* bands_out = keep_bands
                             ? record_path(it, straight_ray(source_states[it].position, observer))
                             : nullptr;
-                    double level = !point_levels.empty() ? point_level(it, bands_out)
-                            : spectral ? (urban_here != nullptr ? urban_level(it, bands_out)
-                                                                : straight_level(it, bands_out))
+                    // The tones' fallback reads every state's bands, kept or not.
+                    double* band_buffer = tone_run && !tone_by_frequency && bands_out == nullptr
+                            ? tone_bands_with.data()
+                            : bands_out;
+                    double level = !point_levels.empty() ? point_level(it, band_buffer)
+                            : spectral ? (urban_here != nullptr ? urban_level(it, band_buffer)
+                                                                : straight_level(it, band_buffer))
                                        : database.level_at_observer(observer, source_states[it]);
+                    if (tone_run)
+                        level = with_tones(it, level, band_buffer, bands_out);
                     if (add_ambient)
                     {
                         // Add ambient noise
@@ -4473,6 +4620,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             }
         }
         culled_samples += culled_here;
+        tone_frequency_evaluations += tone_frequency_here;
+        tone_band_evaluations += tone_band_here;
         evaluated_samples += evaluated_here;
         shadowed_samples += shadowed_here;
         table_samples += tabled_here;
@@ -4624,6 +4773,16 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 100.0 * static_cast<double>(evaluated_samples.load())
                         / static_cast<double>(total),
                 "%); the rest is provably outside every observer's 10 dB window.");
+    }
+
+    if (tone_run)
+    {
+        log("Tones: ", tone_frequency_evaluations.load(), " evaluations with the ground per tone frequency, ",
+                tone_band_evaluations.load(), " by the band fallback (free-field tones times the band path's "
+                "correction: plate microphones, tables, terrain, screening, refraction, urban, or --tone_ground band).");
+        if (tone_evaluator->outside_bands() > 0)
+            warn("Tones: ", tone_evaluator->outside_bands(), " tone arrivals were received outside the database's "
+                    "bands and are not counted.");
     }
 
     if (culling)
@@ -5087,6 +5246,8 @@ int run(int argc, char* argv[])
     double min_load_factor = 0.5;
     bool accept_vehicle_mismatch = false;
     DatabaseLoadOptions database_load;
+    // The run evaluates a format 2 database's pure tones (tones.hpp).
+    database_load.tones_evaluated = true;
     double flow_resistance = flow_resistance::grassy_field;
     double receiver_height = 1.2; // meters
     double turbulence = 0.0;
@@ -5154,6 +5315,10 @@ int run(int argc, char* argv[])
     // Empty follows the database's speed_reference attribute.
     std::string speed_reference;
     std::string condition_density = "vehicle";
+    std::vector<std::string> rotor_azimuth_args;
+    std::vector<std::string> sync_group_args;
+    std::string tone_coherence = "coherent";
+    std::string tone_ground = "frequency";
     // Empty follows the database's azimuth_reference attribute.
     std::string nose;
     // WGS84 input and output.  An unset origin is taken from the first geodetic
@@ -5530,6 +5695,21 @@ int run(int argc, char* argv[])
             "A database records which its C_T used (thrust_coefficient_density), and the run warns "
             "when the two differ.")
             ->check(CLI::IsMember({"vehicle", "atmosphere"}));
+    app.add_option("--rotor_azimuth", rotor_azimuth_args,
+            "A format 2 database's rotors: tag=degrees,... advances each named source by that angle in its own "
+            "sense of rotation, multiplying its shaft order m by e^(i m angle). Repeatable. Default: the stored "
+            "rotor-locked phases as they are.");
+    app.add_option("--sync_group", sync_group_args,
+            "A format 2 database's rotors: tag,tag,... adds the named sources coherently, replacing their database "
+            "groups, at the group's mean shaft rate. Repeatable, one group each.");
+    app.add_option("--tone_coherence", tone_coherence,
+            "A format 2 database's tones: coherent (default) adds the sources of a sync group coherently; energy adds "
+            "every source in energy.")
+            ->check(CLI::IsMember({"coherent", "energy"}));
+    app.add_option("--tone_ground", tone_ground,
+            "A format 2 database's tones over the ground: frequency (default), each arrival's reflection at its own "
+            "frequency where the run's path allows; band, the band model's correction on free-field tones.")
+            ->check(CLI::IsMember({"frequency", "band"}));
     auto* ground_elevation_option = app.add_option("--ground_elevation", ground_elevation,
             "Elevation of the observer plane above mean sea level, in --units. Subtracted "
             "from a geodetic track's altitude column to give height above the observers "
@@ -6194,6 +6374,9 @@ int run(int argc, char* argv[])
     if (!sphere_file.empty() || !aam_file.empty() || self_test)
     {
         Database& database = load_front();
+        if ((!sphere_file.empty() || !aam_file.empty()) && database.has_tones())
+            input_error("--export_sphere/--export_aam write the band spectrum alone, and ", front_database,
+                    " carries pure-tone sources: the exported sphere would leave the rotor tones out. Refused.");
         if (!sphere_file.empty() || !aam_file.empty())
         {
             // The writers create with NC_CLOBBER.  `-d X --export_sphere X` replaced a
@@ -7001,6 +7184,12 @@ int run(int argc, char* argv[])
     if (!speed_reference.empty())
         options.speed_reference = parse_speed_reference(speed_reference);
     options.condition_density = *parse_condition_density(condition_density);
+    for (const auto& text : rotor_azimuth_args)
+        parse_rotor_azimuths(text, options.tones.rotor_azimuth_deg);
+    for (const auto& text : sync_group_args)
+        options.tones.sync_groups.push_back(parse_sync_group(text));
+    options.tones.coherence = *parse_tone_coherence(tone_coherence);
+    options.tones.ground = *parse_tone_ground(tone_ground);
     if (!nose.empty())
         options.nose = parse_nose_source(nose);
     // Each distinct --wind and --atmosphere is parsed once, and its warnings

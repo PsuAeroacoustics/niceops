@@ -168,6 +168,41 @@ std::vector<double> reflection_coefficient_bounds(const GroundModel& ground,
 std::array<double, 2> spherical_reflection_coefficient(double cos_grazing, double kappa,
         std::complex<double> admittance, bool boundary_loss = true);
 
+// The coherence of the direct and reflected paths that the model's turbulence
+// term gives at one frequency (Chessell's or HARMONOISE's, as `ground` says),
+// for a source `source_height` up and `ground_distance` away from a receiver at
+// ground.receiver_height: the factor on their cross term, 1 without turbulence.
+// The same arithmetic as excess_ground_attenuation's.
+double turbulence_coherence(const GroundModel& ground, double source_height, double ground_distance,
+        double frequency, double sound_speed);
+
+// The factor roughness puts on the coherent reflection at one frequency and
+// grazing cosine (the Kirchhoff factor exp(-2 (k sigma cos)^2)), 1 without it.
+double roughness_coherence(const GroundModel& ground, double cos_grazing, double frequency, double sound_speed);
+
+// The ground's admittance at any frequency, from a table the impedance model
+// fills at `per_octave` points per octave over [low, high] Hz and read by
+// linear interpolation in log frequency (clamped at the ends).  For the pure
+// tones (tones.hpp), whose frequencies are each arrival's own rather than the
+// band centers.  At 96 points per octave every model's admittance is within
+// 1e-5 of its exact value.
+class AdmittanceTable
+{
+public:
+    AdmittanceTable() = default;
+    AdmittanceTable(const GroundModel& ground, double low, double high, double sound_speed, int per_octave = 96);
+    std::complex<double> at(double frequency) const;
+    bool empty() const
+    {
+        return values_.empty();
+    }
+
+private:
+    double log2_low_ = 0.0;
+    double step_ = 1.0;
+    std::vector<std::complex<double>> values_;
+};
+
 // The share of a diffuse field's energy the ground reflects: 1 less Paris's
 // statistical absorption coefficient, the plane-wave |R_p|^2 averaged over
 // incidence weighted by sin 2 theta.  For a model that carries energy alone

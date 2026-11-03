@@ -405,10 +405,10 @@ struct DatabaseLoadOptions
     // Drop the suspect entries, as gating drops a direction, instead of only
     // warning about them.
     bool mask_suspect_cells = false;
-    // Whether the caller evaluates a format 2 database's pure tones.  None does
-    // yet, so a database whose tones are not in its band spectrum (band_content
-    // broadband) is refused, and one whose are (total) warns that it runs on its
-    // bands alone.
+    // Whether the caller evaluates a format 2 database's pure tones (niceops's
+    // run does, tones.hpp).  For one that does not, a database whose tones are not
+    // in its band spectrum (band_content broadband) is refused, and one whose are
+    // (total) warns that it runs on its bands alone.
     bool tones_evaluated = false;
 };
 
@@ -888,6 +888,35 @@ public:
     bool has_tones() const
     {
         return !tone_sources_.empty();
+    }
+    // One tone of a source along a direction, as the run evaluates it: its level
+    // at the sphere radius, dB re 20 uPa, blended in dB over the grid cell and the
+    // conditions with the band spectrum's weights (empty entries dropped as
+    // there), the blend's load-factor correction included; and its phase, rad,
+    // the argument of the same weighted sum of the complex amplitudes (zero for a
+    // source without phase).  The level is no_energy_floor_db where every
+    // weighted entry is empty.
+    struct ToneLookup
+    {
+        double level_db;
+        double phase;
+    };
+    // Every tone of `source` along `direction` (the unit vector leaving its hub,
+    // in the run's frame), into `out` (tone_count() entries).  The cell and its
+    // weights are eval_spectrum()'s at the same angles.
+    void tone_directivity(std::size_t source, const SourceState& state, const Vec3& direction,
+            ToneLookup* out) const;
+    // A source's hub (m, sphere frame: forward, starboard, up), shaft rate (rad/s,
+    // signed) and emission-frame frequencies (Hz, into `frequencies`, one per tone)
+    // at a blend: each the blend-weighted mean of its conditions'.
+    std::array<double, 3> tone_center(std::size_t source, const Blend& blend) const;
+    double tone_shaft_rate(std::size_t source, const Blend& blend) const;
+    void tone_frequencies(std::size_t source, const Blend& blend, double* frequencies) const;
+    // Where absorption starts along a path, m: the sphere radius, or 0 for
+    // lossless spheres (sphere_levels_lossless).
+    double absorption_start() const
+    {
+        return absorption_start_;
     }
 
     // Whether this is a fixed_load_factor build, and the thrust coefficient of

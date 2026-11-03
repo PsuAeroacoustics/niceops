@@ -254,10 +254,55 @@ the sources only in format 2. Things to keep:
   a step of more than 90° between neighbors (phi, across the seam when phi spans the circle, and
   theta) both within 20 dB of its peak. It warns, marks the tone energy-only, and refuses
   nothing: decision 3 of the plan.
-- **Nothing evaluates tones yet**, so the constructor refuses `band_content = broadband` with
-  tones unless `DatabaseLoadOptions::tones_evaluated`, and warns for `total`. Putting the refusal
-  in the constructor covers every tool that loads a database. The tone evaluation sets the flag.
+- **Only niceops's run evaluates tones** (below), so the constructor refuses `band_content =
+  broadband` with tones unless `DatabaseLoadOptions::tones_evaluated`, and warns for `total`.
+  Putting the refusal in the constructor covers every other tool that loads a database; `run()`
+  sets the flag.
 - `condition_axes = multirotor` is refused until the multirotor axes are decided.
+
+## Pure tones in a run (`src/tones.hpp`, THEORY 4.4)
+
+The second step of the plan: the tones of a `band_content = broadband` database, per arrival,
+with phase. Things to keep:
+
+- **Nothing on the default path.** Every tone term is behind `tone_run` in `process_trajectory`:
+  a database without tones takes the old calls, and the goldens are byte-identical. A tone run
+  marches every state (`expand_from_peak` is off): the bounds are on the bands alone, and
+  `--db_cutoff` is refused for the same reason.
+- **`Database::tone_directivity` uses `eval_spectrum`'s cell and weights** (`cell_stencil`,
+  `blend_present`), so a tone and its bands are read at the same point. The level is blended in
+  dB, the phase is the argument of the complex sum under the same weights: no unwrapping, and no
+  dip between neighbors of different phase.
+- **One reception time per state** (`tone_arrival`): every arrival's emission time is solved
+  against the state's center's direct lag, so hubs and image arrivals compare. That is what gives
+  PSU-WOPWOP's far-field e^(+i omega n.d/(c(1 - M.n))) between hubs (`two hubs' relative phase`)
+  without any far-field approximation in the code.
+- **Q enters conjugated.** `spherical_reflection_coefficient` is written for e^(-i omega t); the
+  tones are in e^(+i omega t) like the spheres. The two-ray test (`a tone over the ground is the
+  exact two-ray sum`) holds the sign.
+- **One combining form for a source and a group** (`combine` in `evaluate`): a group of one adds
+  `0 + d`, which is `d`, so `--tone_coherence coherent` and `energy` agree to the bit for one
+  source (`one source sums the same coherently or in energy, to the bit`; CTest
+  `tones_one_coherent_is_energy`). The turbulence coherence is taken from the state's center for
+  the same reason.
+- **The band fallback reads the band path's own levels** (`with_tones` in `process_trajectory`):
+  with every term and in straight-ray free field, so every path (plates, tables, terrain,
+  screening, refraction, urban) gives its correction without its own tone code. The lambdas
+  already write band levels when given a buffer; a tone run gives them one even when no history
+  is kept. A band the database leaves empty there keeps the free field.
+- **Database sync groups must share a shaft rate at every condition**; a run-time group is held at
+  its members' mean instead. Only `rotor_azimuth` sources join a coherent group.
+- **The A-weighted level weights each tone at its own frequency**; outputs built from the band
+  levels afterwards (the C-weighted SEL, EPNL's PNLT, band histories and frames) see the tone's
+  power filed in its band and weight it as the band. `add_tone_power` writes that power into the
+  history's bands.
+- **The ground per frequency uses an admittance table** (`AdmittanceTable`, 96 points per octave),
+  not the band admittances: a tone's frequency is its own, Doppler-shifted. The ground table
+  (`GroundTable`) is the band model's and is not read for tones.
+- Tested in `[tones]` (`test_sphere_database.cpp`) and the `tones_*` CTests, on databases
+  `make_tone_database` writes from B407's (two rotors at 110 and 220 Hz, 95 dB). Deferred: tones on
+  refracted and terrain paths per frequency, a bound for the peak search, multirotor axes, the
+  near-field correction.
 
 ## Broadband and spectral propagation
 

@@ -135,6 +135,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--min_load_factor` | With `two_sided`, the smallest load factor, g, the law is taken to. Default 0.5; at most 1. Refused without `two_sided`. |
 | `--speed_reference` | `ground` or `air`: which velocity sets μ, the path angle and the `velocity` nose. Default: what the database records, ground if nothing ([Speed reference](#speed-reference)). |
 | `--condition_density` | `vehicle` (default) or `atmosphere`: which air density C<sub>T</sub> is formed with, the vehicle file's or the run's air at each state's height ([The density in C<sub>T</sub>](#the-density-in-ct)). |
+| `--rotor_azimuth`, `--sync_group`, `--tone_coherence`, `--tone_ground` | A format 2 database's rotor tones: each rotor's azimuth, coherent groups declared for the run, coherent or energy sums, and the ground per tone or per band ([Pure-tone sources](#pure-tone-sources-format-2)). |
 | `--nose` | `velocity`, `ground_velocity` or `heading`. Default: what the database's `azimuth_reference` records, `velocity` if nothing ([The sphere's nose](#the-spheres-nose)). |
 | `--accept_vehicle_mismatch` | Warn, rather than refuse, when the vehicle file disagrees with the database by more than 2 percent ([Vehicle file](#vehicle-file)). |
 | `--screen_database` | Write every entry the load-time screen finds suspect to this CSV ([Screening a database](#screening-a-database)). One database per run. |
@@ -590,20 +591,41 @@ stays one-sided.
 A database of format 2 (`database_version = 2`) may carry pure-tone sources beside its spheres:
 one subgroup per source (a rotor) in every condition group, named in the root attribute
 `sources`, each holding its hub position, shaft rate, sync group and shaft-order tones, with
-their amplitude and phase over the sphere grid. NICEOPS reads and checks them, but **does not
-evaluate the tones yet**, so:
+their amplitude and phase over the sphere grid.
 
+- **`band_content = broadband`**: the bands leave the tones out, and the run evaluates every tone
+  of every rotor at each observer, with its phase, Doppler shift and the ground at its own
+  frequency, and adds it to the bands. Rotors in one sync group (the database's `sync_group`, for
+  rotors whose phases are tied to their azimuth) add coherently; every other rotor adds in energy.
 - **`band_content = total`**: the band spectrum and dBA already hold the tones; the run uses them,
-  as for any other database, and warns that the tones' phase is not modeled.
-- **`band_content = broadband`**: the bands leave the tones out, and the run is refused rather
-  than predict without them.
+  as for any other database, and warns that the tones are not added again.
+
+| Option | What it does |
+| --- | --- |
+| `--rotor_azimuth tag=deg,...` | Advances each named rotor by that angle in its own sense of rotation: the synchrophasing angle. Repeatable. Default: the stored phases as they are. |
+| `--sync_group tag,tag,...` | Adds the named rotors coherently, replacing their database groups, at their mean shaft rate (logged). Repeatable, one group each. Only rotors whose phases are tied to their azimuth can join one. |
+| `--tone_coherence coherent\|energy` | `energy` adds every rotor in energy, each keeping its own ground interference: the level with no synchrophasing. Default `coherent`. |
+| `--tone_ground frequency\|band` | `frequency` (default) reflects each tone at its own frequency where the path allows; `band` applies the band model's correction to free-field tones. |
+
+**Where the ground is per tone.** On straight rays over level ground at point microphones, or
+with no ground model, each tone's reflection is evaluated at its own frequency. Over plate
+microphones, propagation tables, terrain, screening, refraction and urban tables, the tones take
+the band path's correction instead (the run logs how many evaluations went each way). A tone
+heard outside every band of the database is not counted, with a warning.
+
+**Limits.** A tone run evaluates every state (the quick peak search covers the bands only), so it
+is slower than the same run without tones. The spheres' near-field phase error is logged, not
+corrected. Refused, naming why: `--no-spectral`, `--db_cutoff`, `--buildings` and `--gpu`,
+`--export_sphere` and `--export_aam` (which would leave the tones out), a sync group whose rotors
+turn at different rates, a `--sync_group` or `--rotor_azimuth` naming a rotor the database does
+not carry, and a `--sync_group` member whose phases are not tied to its azimuth.
 
 The loader refuses a source missing from any condition, a tone that is not a whole shaft order of
 its source's shaft rate, a source without `phase_reference` (`rotor_azimuth`, `relative` or
 `none`), tones beside bands with no `band_content`, a format above 2, and multirotor condition
 axes (`condition_axes = multirotor`), which are not read yet. A tone whose phase steps more than
 90° between neighboring grid cells within 20 dB of its peak is reported: the grid does not resolve
-it, and it will be summed in energy.
+it, and it is summed in energy.
 
 ### Speed reference
 

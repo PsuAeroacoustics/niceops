@@ -115,6 +115,15 @@ helicopter noise abatement flight test [6]. Measured levels are propagated back 
 microphones to $R_s$ ("depropagated") through each run's own atmosphere. The received spectra
 keep their Doppler shift (§11).
 
+A format 2 database may also carry pure-tone sources, one per rotor, in every condition: each a
+hub position in the sphere frame, a signed shaft rate, shaft-order tones whose amplitude and phase
+are given over the same grid, and a `phase_reference`. Under `rotor_azimuth` the stored amplitude
+is the far-field directivity with the rotor's azimuth removed, $\hat{A} = A\,e^{-im\psi_\mathrm{ref}}$,
+so rotors on one shaft rate combine coherently; `relative` phases are known between directions
+only, and `none` carries amplitude alone. Rotors held at a fixed phase to each other share a
+`sync_group`. A predicted sphere is centered on its rotor's hub and carries no absorption to its
+radius (`sphere_levels_lossless`). §4.4 evaluates the tones.
+
 ### 2.3 Blending the spheres
 
 The conditions are normalized into the unit cube,
@@ -451,6 +460,87 @@ $[z_o, z_s]$, a first-order approximation; the ray's own arc length is what it m
 Pressure in the profile, when not given, is hydrostatic for dry air:
 $p(z) = p(0) \exp\!\left(-\frac{g}{R_d}\int_0^z \frac{dz'}{T}\right)$, with
 $R_d = 287.05$ J/(kg K), from the surface pressure of the vehicle file or `--pressure`.
+
+### 4.4 Pure tones (format 2)
+
+A format 2 database may carry pure-tone sources beside its spheres, one per rotor (§2.2). When
+its band spectrum leaves the tones out (`band_content = broadband`), every tone of every source
+is evaluated at each of its arrivals at an observer, with its phase, and added to the bands in
+energy. When the bands already hold the tones (`total`), the bands are used alone.
+
+**The source at a state.** Each source's hub, shaft rate $\Omega_r$ and tone frequencies are
+the blend-weighted means of its conditions' (the weights of §2.3); the hub, stored in the sphere
+frame, is placed at $\mathbf{x}_r = \mathbf{x}_c + c_f\,\hat{\mathbf{n}} + c_s\,\hat{\mathbf{s}}
++ c_u\,\hat{\mathbf{u}}$ about the state's position, with the frame of §2.4. The tones are shaft
+orders $m$ in the emission frame, $f_e = m\lvert\Omega_r\rvert/2\pi$, so unlike the bands they
+are Doppler-shifted below.
+
+**An arrival.** Each hub reaches a point $\mathbf{x}_p$ (the observer, or its image in the
+ground plane) along a straight path. With the hub moving at the state's velocity $\mathbf{V}$
+and every arrival of the state received at one time, $T = \lvert\mathbf{x}_o - \mathbf{x}_c\rvert/c$
+after the state's, its emission time $\delta$ (relative to the state's) solves
+
+$$
+c\,(T - \delta) = \left\lvert \mathbf{x}_p - (\mathbf{x}_r + \mathbf{V}\delta) \right\rvert ,
+$$
+
+the root before reception of $(c^2 - V^2)\delta^2 - 2(c^2T - \mathbf{d}\cdot\mathbf{V})\delta +
+(c^2T^2 - d^2) = 0$, $\mathbf{d} = \mathbf{x}_p - \mathbf{x}_r$. The path length is
+$L = c(T - \delta)$, the direction leaving the hub $\hat{\mathbf{k}}$, and the received frequency
+$f = f_e/D$, $D = 1 - \mathbf{V}\cdot\hat{\mathbf{k}}/c$.
+
+**Its phasor**, in the $e^{+i\omega t}$ convention the spheres are written in ($p \propto A\,
+e^{-ikR}/R$ at reception):
+
+$$
+a = 10^{(L_A(\hat{\mathbf{k}}) - \alpha(f)\,\ell)/20}\, \frac{R_s}{\max(L, R_s)}\,
+  e^{\,i\left(\varphi_A(\hat{\mathbf{k}}) + m\psi_r + 2\pi f_e \delta\right)},
+\qquad \ell = \max(L - R_a,\ R_s [\text{lossless}],\ 0).
+$$
+
+$L_A$ is the tone's level at the sphere radius $R_s$, interpolated in dB over the grid cell and
+the conditions with the band spectrum's weights (empty entries dropped as there), with the
+blend's load-factor correction; $\varphi_A$ is the argument of the complex amplitudes summed with
+the same weights, which needs no unwrapping and does not dip where neighbors' phases differ.
+$\psi_r$ is the rotor's azimuth offset (`--rotor_azimuth`, in its own sense of rotation; zero
+keeps the stored rotor-locked phase). $\alpha(f)$ is the path's absorption (§4.3) at the received
+frequency, interpolated between the band centers linearly in $\lg f$ and $\lg\alpha$. $R_a$ is
+where absorption starts, the sphere radius or, for lossless spheres, 0 (§2.2).
+
+Between two hubs a distance $\mathbf{d}$ apart the emission times differ, in the far field, by
+$\hat{\mathbf{k}}\cdot\mathbf{d}/(c(1 - \mathbf{M}\cdot\hat{\mathbf{k}}))$, so their phasors by
+$e^{+i\omega\,\hat{\mathbf{k}}\cdot\mathbf{d}/(c(1-\mathbf{M}\cdot\hat{\mathbf{k}}))}$: the
+whole-vehicle form PSU-WOPWOP's per-rotor spheres sum to.
+
+**Over the ground** (`--tone_ground frequency`, the default), the image arrival also carries the
+reflection coefficient of §5.2 at its own frequency and grazing angle,
+$a_r \leftarrow a_r\,\overline{Q(f_r)}\,e^{-2(k\sigma_r\cos\vartheta)^2}$: $Q$ is written for
+$e^{-i\omega t}$, so it enters conjugated. The admittance is the ground model's, tabulated at
+96 points per octave and interpolated in $\lg f$. The plane is the observer's height less the
+receiver height, as in §5. A source's direct and reflected arrivals add with the turbulence
+coherence $T(f)$ of §5.3 on their cross term, taken from the state's center as there:
+
+$$
+P = \lvert S_d\rvert^2 + \lvert S_r\rvert^2 + 2\,T(f)\,\mathrm{Re}\left(S_d\,\overline{S_r}\right).
+$$
+
+**Sums.** In a coherent group (§2.2 sync groups of rotor-locked sources, or `--sync_group`) $S_d$
+and $S_r$ are the members' direct and reflected phasors summed harmonic by harmonic, and $f$ is
+the first member's direct received frequency. A run-time group holds its members at their mean
+shaft rate. Every other source sums alone, and sources add in energy. A tone without phase
+(`phase_reference = none`, or one whose phase the grid does not resolve) drops the cross term.
+Each $P$ is filed into the band whose edges (halfway between centers in $\lg f$) hold $f$, and
+counts in the A-weighted level as $P\,10^{A(f)/10}$, weighted at its own frequency, where that
+band is inside the band limits. A tone received outside every band is not counted.
+
+**The band fallback.** Plate microphones, propagation tables, terrain, screening, refraction and
+urban tables have no per-frequency form: there the tones are evaluated in free field (direct
+arrivals only) and each band's tone power is multiplied by the band path's own ratio
+$G_b = 10^{(L_b - L_b^{\mathrm{free}})/10}$ of its level with every term to its straight-ray
+free-field level. `--tone_ground band` takes the fallback everywhere.
+
+The spheres' first-order near-field phase error, $(m+1)c/(2\lvert\Omega\rvert R_s)$ for a rotor
+centered on its hub (§2.2), is logged, not corrected.
 
 ## 5. Ground effect
 
@@ -2935,9 +3025,15 @@ than for SEL.
 
 ## 11. What is not modeled
 
-- **Doppler frequency shift.** The spheres carry the measured, Doppler-shifted spectra, and
-  NICEOPS applies no shift. A database whose spheres have had the shift removed is refused. The
-  source's motion enters only through the reception-time factor $1 + \dot r/c$ (§10.2).
+- **Doppler frequency shift of the bands.** The spheres carry the measured, Doppler-shifted
+  spectra, and NICEOPS applies no shift to them. A database whose spheres have had the shift
+  removed is refused. The source's motion enters only through the reception-time factor
+  $1 + \dot r/c$ (§10.2). A format 2 database's pure tones are the exception: they are emission
+  shaft orders, and each arrival is shifted (§4.4).
+- **Pure tones off the straight, level-ground path, and the spheres' near field.** Tones over
+  plates, tables, terrain, screening, refraction and urban tables take the band path's
+  correction (§4.4), and `--buildings` is refused with tones. The first-order near-field phase
+  error of a finite-radius sphere is logged, not corrected.
 - **Buildings**, except through an urban table at its microphones or `--buildings` (§6.5). The
   rays among buildings leave out what §6.5 lists ("What the rays leave out"); they are straight,
   in uniform air over a level floor, so `--buildings` is refused with `--refraction`,

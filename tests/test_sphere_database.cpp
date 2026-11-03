@@ -25,6 +25,7 @@
 #include "atmosphere.hpp"
 #include "sphere_database.hpp"
 #include "state_condition.hpp"
+#include "tones.hpp"
 #include "trajectory.hpp"
 #include "weighting.hpp"
 #include "util/logger.hpp"
@@ -2523,11 +2524,20 @@ struct ToneFixture
     int version = 2;
     // Leave the second source out of the second condition.
     bool drop_rear_from_condition_1 = false;
+    // The band centers of the spectrum beside the tones.
+    std::vector<double> bands = {500.0, 2000.0};
+    // The level (dB) of tone k of source s at grid cell (m, n); unset, a slope over
+    // the grid, the same for every source.
+    std::function<double(std::size_t, std::size_t, std::size_t, std::size_t)> amplitude;
+    // Each source's hub (forward, starboard, up), m; unset, +-1.5 m fore and aft,
+    // 0.3 m up.
+    std::function<std::array<double, 3>(std::size_t)> center;
 };
 
 std::string write_tone_test_database(const std::string& name, const ToneFixture& f)
 {
-    const auto path = write_shared_grid_test_database(name, fixed_load_factor_conditions, false, true);
+    const auto path = write_shared_grid_test_database(name, fixed_load_factor_conditions, false, true, 30.48, {},
+            false, f.bands);
     int ncid = 0;
     REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
     REQUIRE(nc_redef(ncid) == NC_NOERR);
@@ -2590,7 +2600,8 @@ std::string write_tone_test_database(const std::string& name, const ToneFixture&
     REQUIRE(nc_put_var_int(ncid, version_var, &f.version) == NC_NOERR);
     for (const auto& v : vars)
     {
-        const double center[3] = {v.s == 0 ? 1.5 : -1.5, 0.0, 0.3};
+        const std::array<double, 3> hub = f.center ? f.center(v.s) : std::array<double, 3> {v.s == 0 ? 1.5 : -1.5, 0.0, 0.3};
+        const double center[3] = {hub[0], hub[1], hub[2]};
         REQUIRE(nc_put_var_double(v.group, v.center, center) == NC_NOERR);
         REQUIRE(nc_put_var_double(v.group, v.shaft_rate, &f.shaft_rates[v.s]) == NC_NOERR);
         REQUIRE(nc_put_var_int(v.group, v.harmonic, f.harmonics.data()) == NC_NOERR);
@@ -2604,8 +2615,9 @@ std::string write_tone_test_database(const std::string& name, const ToneFixture&
             for (std::size_t n = 0; n < 4; n++)
                 for (std::size_t k = 0; k < n_tones; k++)
                 {
-                    amplitude.push_back(80.0 + 2.0 * static_cast<double>(m) - static_cast<double>(n)
-                            - 3.0 * static_cast<double>(k));
+                    amplitude.push_back(f.amplitude ? f.amplitude(v.s, m, n, k)
+                                                    : 80.0 + 2.0 * static_cast<double>(m) - static_cast<double>(n)
+                                    - 3.0 * static_cast<double>(k));
                     phase.push_back(f.phase(m, n, k));
                 }
         REQUIRE(nc_put_var_double(v.group, v.amplitude, amplitude.data()) == NC_NOERR);
@@ -2885,7 +2897,7 @@ TEST_CASE("a format 2 database that cannot be read as written is refused, naming
     // Bands that leave the tones out cannot run until tones are evaluated ...
     ToneFixture broadband;
     broadband.band_content = "broadband";
-    refused(broadband, "NICEOPS does not evaluate pure tones yet");
+    refused(broadband, "this caller does not evaluate pure tones");
     // ... and load for a caller that evaluates them.
     const auto path = write_tone_test_database("niceops_tones_broadband.nod", broadband);
     DatabaseLoadOptions evaluated;
@@ -2896,4 +2908,267 @@ TEST_CASE("a format 2 database that cannot be read as written is refused, naming
     ToneFixture version_one;
     version_one.version = 1;
     refused(version_one, "a database with sources is format 2");
+}
+
+// ---- Format 2 tones in a run (milestone 2): tones.hpp.
+
+namespace {
+
+// One omnidirectional tone per source (shaft order 4 at 250 Hz, 80 dB and zero
+// phase everywhere), over bands that hold it.
+ToneFixture omni_tones(std::vector<std::string> tags, const std::string& sync_group = "main")
+{
+    ToneFixture f;
+    f.tags = std::move(tags);
+    f.harmonics = {4};
+    const double rate = 2.0 * pi * 62.5;
+    f.shaft_rates.clear();
+    for (std::size_t s = 0; s < f.tags.size(); s++)
+        f.shaft_rates.push_back(s % 2 == 0 ? rate : -rate);
+    f.bands = {125.0, 250.0, 500.0, 1000.0, 2000.0};
+    f.band_content = "broadband";
+    f.sync_group = sync_group;
+    f.amplitude = [](std::size_t, std::size_t, std::size_t, std::size_t) { return 80.0; };
+    f.phase = [](std::size_t, std::size_t, std::size_t) { return 0.0; };
+    f.center = [](std::size_t s) { return std::array<double, 3> {s == 0 ? 1.5 : -1.5, 0.0, 0.0}; };
+    return f;
+}
+
+struct ToneRun
+{
+    std::string path;
+    Database database;
+    ToneEvaluator tones;
+    Database::SourceState state;
+
+    ToneRun(const std::string& name, const ToneFixture& f, const ToneRunOptions& options = {},
+            Vec3 position = Vec3(0.0, 0.0, 100.0))
+        : path(write_tone_test_database(name, f)), database(path, evaluated()),
+          tones(database, options, a_weighting_gains(database.band_centers(), BandLimits {}), 343.2),
+          state(database.source_state(position, Vec3(1.0, 0.0, 0.0), Vec3(0.0, 0.0, 1.0), 0.2, 0.2,
+                  test_ct_reference))
+    {
+    }
+    ~ToneRun()
+    {
+        std::filesystem::remove(path);
+    }
+    static DatabaseLoadOptions evaluated()
+    {
+        DatabaseLoadOptions o;
+        o.tones_evaluated = true;
+        return o;
+    }
+    // Total tone power at an observer (p_ref^2), and the per-band arrays.
+    double power(const Vec3& observer, const ToneEvaluator::Ground* ground = nullptr, double plane = 0.0,
+            std::vector<double>* bands = nullptr, std::vector<double>* weighted = nullptr,
+            Vec3 velocity = Vec3(0.0, 0.0, 0.0)) const
+    {
+        const std::size_t n = database.band_centers().size();
+        std::vector<double> absorption(n, 0.0), p(n, 0.0), w(n, 0.0);
+        const auto prepared = tones.prepare(state, velocity);
+        tones.evaluate(state, prepared, observer, absorption.data(), ground, plane, p.data(), w.data());
+        if (bands != nullptr)
+            *bands = p;
+        if (weighted != nullptr)
+            *weighted = w;
+        double total = 0.0;
+        for (const double x : p)
+            total += x;
+        return total;
+    }
+};
+
+} // namespace
+
+TEST_CASE("a tone's arrival: its emission time solves the moving hub's light cone, and its Doppler factor",
+        "[tones]")
+{
+    const double c = 343.2;
+    const Vec3 hub(0.0, 0.0, 0.0), velocity(50.0, 0.0, -5.0), point(1000.0, 200.0, -300.0);
+    const double lag = point.norm() / c;
+    const ToneArrival a = tone_arrival(hub, velocity, point, lag, c);
+    const Vec3 emitted = hub + velocity * a.delta;
+    REQUIRE(std::fabs((point - emitted).norm() - c * (lag - a.delta)) < 1e-9);
+    REQUIRE(std::fabs(a.length - (point - emitted).norm()) < 1e-9);
+    const Vec3 n = (point - emitted).normalized();
+    REQUIRE(std::fabs(a.doppler - (1.0 - velocity.dot(n) / c)) < 1e-15);
+    // Approaching, so emitted earlier than a still hub's sound and heard higher.
+    REQUIRE(a.delta < lag - point.norm() / c + 1e-12);
+    REQUIRE(a.doppler < 1.0);
+    // A still hub: the plain delay.
+    const ToneArrival still = tone_arrival(hub, Vec3(0.0, 0.0, 0.0), point, lag, c);
+    REQUIRE(std::fabs(still.delta) < 1e-12);
+    REQUIRE(still.doppler == 1.0);
+}
+
+TEST_CASE("two hubs' relative phase is WOPWOP's far-field e^(+i omega n.d / (c (1 - M.n)))", "[tones]")
+{
+    // The form WOPWOP's tandem test pins: a hub d from another, both moving at V,
+    // leads it by omega n.d / (c (1 - M.n)) at a far observer along n.
+    const double c = 343.2, omega = 2.0 * pi * 500.0;
+    const Vec3 velocity(60.0, 0.0, 0.0), d(1.2, -0.7, 0.4);
+    const Vec3 n = Vec3(0.3, 0.5, -0.8).normalized();
+    const Vec3 point = n * 20000.0;
+    const double lag = point.norm() / c;
+    const ToneArrival a1 = tone_arrival(Vec3(0.0, 0.0, 0.0), velocity, point, lag, c);
+    const ToneArrival a2 = tone_arrival(d, velocity, point, lag, c);
+    const Vec3 m = velocity / c;
+    const double expected = omega * n.dot(d) / (c * (1.0 - m.dot(a1.direction)));
+    REQUIRE(std::fabs(omega * (a2.delta - a1.delta) - expected) < 1e-3);
+}
+
+TEST_CASE("a tone over the ground is the exact two-ray sum with the model's Q at its frequency", "[tones]")
+{
+    auto fixture = omni_tones({"front"});
+    fixture.center = [](std::size_t) { return std::array<double, 3> {0.0, 0.0, 0.0}; };
+    const ToneRun run("niceops_tones_two_ray.nod", fixture, {}, Vec3(0.0, 0.0, 10.0));
+    GroundModel ground;
+    ground.receiver_height = 1.2;
+    const AdmittanceTable admittance(ground, 10.0, 20000.0, 343.2);
+    const ToneEvaluator::Ground g {&ground, &admittance};
+    const double f = 4.0 * 62.5, k = 2.0 * pi * f / 343.2, radius = run.database.sphere_radius();
+    for (const double x : {40.0, 80.0, 200.0, 600.0})
+    {
+        const Vec3 observer(x, 15.0, 1.2), image(x, 15.0, -1.2), hub(0.0, 0.0, 10.0);
+        const double ld = (observer - hub).norm(), lr = (image - hub).norm();
+        const auto q = spherical_reflection_coefficient((10.0 + 1.2) / lr, pi * f * lr / 343.2, admittance.at(f), true);
+        const std::complex<double> direct = std::polar(1e4 * radius / ld, -k * ld);
+        const std::complex<double> reflected
+                = std::complex<double>(q[0], -q[1]) * std::polar(1e4 * radius / lr, -k * lr);
+        const double exact = std::norm(direct + reflected);
+        REQUIRE(std::fabs(run.power(observer, &g) / exact - 1.0) < 1e-9);
+    }
+}
+
+TEST_CASE("two rotors in one sync group: +6 dB in phase, a null in antiphase, +3 dB in energy", "[tones]")
+{
+    // On the plane between the two hubs, below the vehicle: the same path to both.
+    const Vec3 observer(0.0, 0.0, -9900.0);
+    const double one = ToneRun("niceops_tones_one.nod", omni_tones({"front"})).power(observer);
+    REQUIRE(one > 0.0);
+    const double together = ToneRun("niceops_tones_pair.nod", omni_tones({"front", "rear"})).power(observer);
+    REQUIRE(std::fabs(10.0 * std::log10(together / one) - 20.0 * std::log10(2.0)) < 1e-9);
+    // Shaft order 4: 45 degrees of azimuth is half a cycle.
+    ToneRunOptions antiphase;
+    antiphase.rotor_azimuth_deg["rear"] = 45.0;
+    const double null = ToneRun("niceops_tones_null.nod", omni_tones({"front", "rear"}), antiphase).power(observer);
+    REQUIRE(null < 1e-12 * one);
+    ToneRunOptions energy;
+    energy.coherence = ToneCoherence::energy;
+    const double summed = ToneRun("niceops_tones_energy.nod", omni_tones({"front", "rear"}), energy).power(observer);
+    REQUIRE(std::fabs(10.0 * std::log10(summed / one) - 10.0 * std::log10(2.0)) < 1e-9);
+    const double free_running = ToneRun("niceops_tones_free.nod", omni_tones({"front", "rear"}, "")).power(observer);
+    REQUIRE(std::fabs(10.0 * std::log10(free_running / one) - 10.0 * std::log10(2.0)) < 1e-9);
+    // A run-time group makes free-running rotors coherent again.
+    ToneRunOptions declared;
+    declared.sync_groups = {{"front", "rear"}};
+    const double grouped
+            = ToneRun("niceops_tones_declared.nod", omni_tones({"front", "rear"}, ""), declared).power(observer);
+    REQUIRE(std::fabs(10.0 * std::log10(grouped / one) - 20.0 * std::log10(2.0)) < 1e-9);
+}
+
+TEST_CASE("one source sums the same coherently or in energy, to the bit", "[tones]")
+{
+    auto fixture = omni_tones({"front"});
+    fixture.harmonics = {2, 4, 6};
+    fixture.phase = [](std::size_t m, std::size_t n, std::size_t k) {
+        return 10.0 * static_cast<double>(m) + 7.0 * static_cast<double>(n) + 20.0 * static_cast<double>(k);
+    };
+    fixture.amplitude = [](std::size_t, std::size_t m, std::size_t n, std::size_t k) {
+        return 80.0 - static_cast<double>(m) + 0.5 * static_cast<double>(n) - 2.0 * static_cast<double>(k);
+    };
+    ToneRunOptions energy;
+    energy.coherence = ToneCoherence::energy;
+    const ToneRun coherent("niceops_tones_c.nod", fixture), summed("niceops_tones_e.nod", fixture, energy);
+    GroundModel ground;
+    ground.turbulence = 4e-4;
+    const AdmittanceTable admittance(ground, 10.0, 20000.0, 343.2);
+    const ToneEvaluator::Ground g {&ground, &admittance};
+    for (const Vec3 observer : {Vec3(120.0, -40.0, 1.2), Vec3(-300.0, 250.0, 1.2), Vec3(5.0, 5.0, 1.2)})
+    {
+        std::vector<double> a, b, wa, wb;
+        coherent.power(observer, &g, 0.0, &a, &wa, Vec3(30.0, 0.0, 0.0));
+        summed.power(observer, &g, 0.0, &b, &wb, Vec3(30.0, 0.0, 0.0));
+        REQUIRE(a == b);
+        REQUIRE(wa == wb);
+    }
+}
+
+TEST_CASE("a tone is filed into its band, A-weighted at its own frequency", "[tones]")
+{
+    const ToneRun run("niceops_tones_band.nod", omni_tones({"front"}));
+    std::vector<double> bands, weighted;
+    run.power(Vec3(300.0, 0.0, 1.2), nullptr, 0.0, &bands, &weighted);
+    for (std::size_t b = 0; b < bands.size(); b++)
+        REQUIRE((b == 1) == (bands[b] > 0.0));
+    const double f = 4.0 * 62.5;
+    REQUIRE(std::fabs(weighted[1] / (bands[1] * std::pow(10.0, 0.1 * a_weighting(f))) - 1.0) < 1e-12);
+    // Moving toward the observer, the tone is heard higher: f / (1 - M.n).
+    std::vector<double> moving;
+    run.power(Vec3(300.0, 0.0, 1.2), nullptr, 0.0, &moving, nullptr, Vec3(200.0, 0.0, 0.0));
+    REQUIRE(moving[2] > 0.0);
+    REQUIRE(run.tones.band_of(f / (1.0 - 200.0 / 343.2 * 0.95)) == 2);
+}
+
+TEST_CASE("the band fallback is the free-field tones times the band correction, to the bit", "[tones]")
+{
+    const ToneRun run("niceops_tones_fallback.nod", omni_tones({"front", "rear"}));
+    std::vector<double> power, weighted;
+    const Vec3 observer(400.0, 100.0, 1.2);
+    run.power(observer, nullptr, 0.0, &power, &weighted);
+    GroundModel ground;
+    const auto& centers = run.database.band_centers();
+    const auto impedance = ground_impedance(ground, centers);
+    std::vector<double> ratio(centers.size());
+    excess_ground_attenuation(ground, impedance, 100.0, observer.horizontal_norm(), 343.2, centers, ratio.data(), 0,
+            centers.size(), true);
+    std::vector<double> bands(centers.size(), 40.0), expected_bands = bands;
+    const double level = add_tone_power(55.0, power.data(), weighted.data(), ratio.data(), 0, centers.size(),
+            bands.data());
+    double total = std::pow(10.0, 0.1 * 55.0);
+    for (std::size_t b = 0; b < centers.size(); b++)
+    {
+        total += weighted[b] * ratio[b];
+        if (power[b] > 0.0)
+            expected_bands[b] = 10.0 * std::log10(std::pow(10.0, 0.1 * expected_bands[b]) + power[b] * ratio[b]);
+    }
+    REQUIRE(level == 10.0 * std::log10(total));
+    REQUIRE(bands == expected_bands);
+}
+
+TEST_CASE("tone groups refuse what cannot add coherently, naming why", "[tones]")
+{
+    auto unequal = omni_tones({"front", "rear"});
+    unequal.shaft_rates = {2.0 * pi * 62.5, -2.0 * pi * 60.0};
+    unequal.frequency = [&](std::size_t s, std::size_t) { return 4.0 * (s == 0 ? 62.5 : 60.0); };
+    REQUIRE_THROWS_WITH(ToneRun("niceops_tones_unequal.nod", unequal),
+            Catch::Matchers::ContainsSubstring("must share a shaft rate"));
+    // Declared at run time, the same pair is held at its mean rate.
+    ToneRunOptions declared;
+    declared.sync_groups = {{"front", "rear"}};
+    auto free_pair = unequal;
+    free_pair.sync_group = "";
+    const ToneRun held("niceops_tones_held.nod", free_pair, declared);
+    const auto prepared = held.tones.prepare(held.state, Vec3(0.0, 0.0, 0.0));
+    REQUIRE(std::fabs(prepared.group_rates[0] - 2.0 * pi * 61.25) < 1e-9);
+    REQUIRE(prepared.frequencies[0] == prepared.frequencies[1]);
+    REQUIRE(std::fabs(prepared.frequencies[0] - 4.0 * 61.25) < 1e-9);
+    ToneRunOptions unknown;
+    unknown.sync_groups = {{"front", "middle"}};
+    REQUIRE_THROWS_WITH(ToneRun("niceops_tones_unknown.nod", free_pair, unknown),
+            Catch::Matchers::ContainsSubstring("does not carry"));
+    ToneRunOptions azimuth;
+    azimuth.rotor_azimuth_deg["tail"] = 10.0;
+    REQUIRE_THROWS_WITH(ToneRun("niceops_tones_azimuth.nod", free_pair, azimuth),
+            Catch::Matchers::ContainsSubstring("--rotor_azimuth names source tail"));
+    auto relative = omni_tones({"front", "rear"}, "");
+    relative.phase_reference = "relative";
+    REQUIRE_THROWS_WITH(ToneRun("niceops_tones_relative.nod", relative, declared),
+            Catch::Matchers::ContainsSubstring("cannot add coherently with another rotor"));
+    std::map<std::string, double> parsed;
+    parse_rotor_azimuths("front=10, rear=-22.5", parsed);
+    REQUIRE(parsed.at("rear") == -22.5);
+    REQUIRE_THROWS_WITH(parse_rotor_azimuths("front", parsed), Catch::Matchers::ContainsSubstring("tag=degrees"));
+    REQUIRE(parse_sync_group("a, b ,c") == std::vector<std::string> {"a", "b", "c"});
 }

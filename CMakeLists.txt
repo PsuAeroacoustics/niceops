@@ -244,6 +244,7 @@ add_library(niceops_core STATIC
   src/airy.cpp
   src/exact_solutions.cpp
   src/weighting.cpp
+  src/tones.cpp
   src/pnl.cpp
   src/band_frames.cpp
   src/faddeeva.cpp
@@ -424,6 +425,9 @@ add_executable(golden_compare tests/golden_compare.cpp)
 # What --epnl_file and --band_frames wrote, checked against each other and the SEL.
 add_executable(check_band_frames tests/check_band_frames.cpp)
 target_link_libraries(check_band_frames niceops_core)
+# Format 2 databases for the tone runs (tones_*): pure-tone rotors added to a spectral database.
+add_executable(make_tone_database tests/make_tone_database.cpp)
+target_link_libraries(make_tone_database niceops_core)
 # What --raster_file wrote, against the grid files the same run wrote.
 add_executable(check_raster tests/check_raster.cpp)
 target_link_libraries(check_raster niceops_core)
@@ -1812,6 +1816,46 @@ add_test(NAME condition_density_vehicle_is_golden COMMAND ${CMAKE_COMMAND} -E co
 add_test(NAME condition_density_same_air_is_vehicle COMMAND ${CMAKE_COMMAND} -E compare_files integrated/condition_density_atmosphere.csv integrated/demo_coarse.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME condition_density_cold_moves_footprint COMMAND golden_compare integrated/condition_density_cold_atmosphere.csv integrated/condition_density_cold_vehicle.csv 0.001 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(condition_density_cold_moves_footprint PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+# A format 2 database's pure tones in a run (tones.hpp).  make_tone_database adds rotors to the B407
+# database: two in one sync group, one alone, and two whose bands already hold their tones.
+add_test(NAME tones_database COMMAND make_tone_database databases/B407_fixed_load_factor.nod integrated/tones_b407.nod WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME tones_database_one COMMAND make_tone_database databases/B407_fixed_load_factor.nod integrated/tones_b407_one.nod --sources 1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME tones_database_total COMMAND make_tone_database databases/B407_fixed_load_factor.nod integrated/tones_b407_total.nod --band_content total WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_database tones_database_one tones_database_total PROPERTIES FIXTURES_SETUP tone_databases)
+set(TONE_RUN -v databases/B407.json --humidity 20 --gridstep 4000 -L warn)
+add_test(NAME tones_run COMMAND niceops -d integrated/tones_b407.nod ${TONE_RUN} -o integrated/tones_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME tones_run_band COMMAND niceops -d integrated/tones_b407.nod ${TONE_RUN} --tone_ground band -o integrated/tones_run_band.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME tones_run_bands_alone COMMAND niceops -d databases/B407_fixed_load_factor.nod ${TONE_RUN} -o integrated/tones_run_bands_alone.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME tones_one_coherent COMMAND niceops -d integrated/tones_b407_one.nod ${TONE_RUN} -o integrated/tones_one_coherent.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME tones_one_energy COMMAND niceops -d integrated/tones_b407_one.nod ${TONE_RUN} --tone_coherence energy -o integrated/tones_one_energy.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME tones_antiphase COMMAND niceops -d integrated/tones_b407.nod ${TONE_RUN} --rotor_azimuth right0=11.25 -o integrated/tones_antiphase.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_run tones_run_band tones_one_coherent tones_one_energy tones_antiphase PROPERTIES FIXTURES_REQUIRED tone_databases)
+set_tests_properties(tones_run tones_run_band tones_run_bands_alone tones_one_coherent tones_one_energy tones_antiphase PROPERTIES FIXTURES_SETUP tone_runs)
+# One source: coherent and energy are the same sum, to the byte.  The tones add to the bands' levels
+# (a footprint above the bands alone), and turning one rotor of the pair half a cycle of shaft order 4
+# moves it.
+add_test(NAME tones_one_coherent_is_energy COMMAND ${CMAKE_COMMAND} -E compare_files integrated/tones_one_coherent.csv integrated/tones_one_energy.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME tones_add_to_the_bands COMMAND golden_compare integrated/tones_run.csv integrated/tones_run_bands_alone.csv 0.001 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_add_to_the_bands PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+add_test(NAME tones_azimuth_moves_footprint COMMAND golden_compare integrated/tones_antiphase.csv integrated/tones_run.csv 0.001 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_azimuth_moves_footprint PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+set_tests_properties(tones_one_coherent_is_energy tones_add_to_the_bands tones_azimuth_moves_footprint PROPERTIES FIXTURES_REQUIRED tone_runs)
+# Bands that hold the tones run alone, saying so; what the tones cannot go through is refused, naming why.
+add_test(NAME tones_total_runs_on_bands COMMAND niceops -d integrated/tones_b407_total.nod ${TONE_RUN} -o integrated/tones_total.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_total_runs_on_bands PROPERTIES PASS_REGULAR_EXPRESSION "the tones are not added")
+add_test(NAME tones_refuse_no_spectral COMMAND niceops -d integrated/tones_b407.nod ${TONE_RUN} --no-spectral -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_refuse_no_spectral PROPERTIES PASS_REGULAR_EXPRESSION "pure tones need the spectral path")
+add_test(NAME tones_refuse_db_cutoff COMMAND niceops -d integrated/tones_b407.nod ${TONE_RUN} --db_cutoff 40 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_refuse_db_cutoff PROPERTIES PASS_REGULAR_EXPRESSION "--db_cutoff does not combine with a database's pure tones")
+add_test(NAME tones_refuse_buildings COMMAND niceops -d integrated/tones_b407.nod -v databases/B407.json --humidity 20 --frame_bearing 210 -L warn --buildings tests/data/urban_buildings.csv -b tests/data/urban_observers.csv -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_refuse_buildings PROPERTIES PASS_REGULAR_EXPRESSION "--buildings does not evaluate pure tones")
+add_test(NAME tones_refuse_export COMMAND niceops -d integrated/tones_b407.nod --export_sphere integrated/never.nod --sphere_condition 0.1 0 0.006 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_refuse_export PROPERTIES PASS_REGULAR_EXPRESSION "would leave the rotor tones out")
+add_test(NAME tones_refuse_unknown_group COMMAND niceops -d integrated/tones_b407.nod ${TONE_RUN} --sync_group left0,tail -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_refuse_unknown_group PROPERTIES PASS_REGULAR_EXPRESSION "--sync_group names source tail, which the database does not carry")
+add_test(NAME tones_refuse_bad_azimuth COMMAND niceops -d integrated/tones_b407.nod ${TONE_RUN} --rotor_azimuth left0 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_refuse_bad_azimuth PROPERTIES PASS_REGULAR_EXPRESSION "give each source as tag=degrees")
+set_tests_properties(tones_total_runs_on_bands tones_refuse_no_spectral tones_refuse_db_cutoff tones_refuse_buildings tones_refuse_export tones_refuse_unknown_group tones_refuse_bad_azimuth PROPERTIES FIXTURES_REQUIRED tone_databases)
 set_tests_properties(condition_density_vehicle_is_golden condition_density_same_air_is_vehicle condition_density_cold_moves_footprint PROPERTIES FIXTURES_REQUIRED "condition_density_runs;demo_coarse_run")
 # The same over arrays/coyle_approach.csv, whose microphones stand at different
 # heights.  A grid's observers share one, so their mean coefficients are formed

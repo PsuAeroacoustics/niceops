@@ -1777,17 +1777,18 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
     else if (read_root_text(file_ncid, "sources"))
         input_error("Database ", datafile_path, " lists pure-tone sources but has database_version ",
                 database_version_, "; a database with sources is format 2.");
-    // Nothing evaluates the tones yet.  A band spectrum without them would run a
-    // footprint that leaves them out, so that is refused; one that holds them
-    // runs on its bands, as any database before format 2, and says so.
+    // A caller that does not evaluate the tones (every tool but niceops's run,
+    // tones.hpp): a band spectrum without them would run a footprint that leaves
+    // them out, so that is refused; one that holds them runs on its bands, as any
+    // database before format 2, and says so.
     if (has_tones() && !load.tones_evaluated)
     {
         if (band_content_ == BandContent::broadband)
             input_error("Database ", datafile_path, " carries ", tone_sources_.size(), " pure-tone sources beside a "
-                    "band spectrum that leaves them out (band_content broadband), and NICEOPS does not evaluate "
-                    "pure tones yet: its bands alone would leave the rotor tones out of every level. Refused.");
-        warn("Database ", datafile_path, " carries ", tone_sources_.size(), " pure-tone sources, which NICEOPS "
-                "does not evaluate yet: the run uses its band spectrum and dBA, which hold the tones "
+                    "band spectrum that leaves them out (band_content broadband), and this caller does not evaluate "
+                    "pure tones: its bands alone would leave the rotor tones out of every level. Refused.");
+        warn("Database ", datafile_path, " carries ", tone_sources_.size(), " pure-tone sources, which this caller "
+                "does not evaluate: it uses the band spectrum and dBA, which hold the tones "
                 "(band_content total), with no rotor phase.");
     }
     screen_suspect_cells(datafile_path, load, reached_cells);
@@ -2646,6 +2647,89 @@ void Database::spectrum_along(const SourceState& state, const Vec3& direction, d
     none.assign(frequencies_.size(), 0.0);
     eval_spectrum(sphere_radius_, sphere_radius_, angles[0], angles[1], state.blend, none.data(), levels, first_band,
             last_band, packed);
+}
+
+void Database::tone_directivity(std::size_t source, const SourceState& state, const Vec3& direction,
+        ToneLookup* out) const
+{
+    assert(source < tone_sources_.size());
+    const ToneSource& s = tone_sources_[source];
+    const std::size_t tones = s.tone_count();
+    const auto angles = lookup_angles(state.frame, direction, !upper_hemisphere_measured_);
+    assert(std::isfinite(angles[0]) && std::isfinite(angles[1]));
+    // eval_spectrum()'s cell and weights, so a tone and the bands beside it are
+    // read at the same point of the sphere.
+    const auto stencil = cell_stencil(phis.locate(angles[0]), thetas.locate(angles[1]), thetas.size());
+    const std::size_t n_cells = phis.size() * thetas.size();
+    const Blend& blend = state.blend;
+    const double* w = blend.weights.data();
+    const double* sw = stencil.weight;
+    for (std::size_t k = 0; k < tones; k++)
+    {
+        // Each corner's conditions blended in dB, empty entries dropped
+        // (blend_present), then the corners by their bilinear weights the same
+        // way: the bands' rule, applied to the tone's level.  The phase is the
+        // argument of the complex amplitudes under the same weights, which needs
+        // no unwrapping and does not dip where neighbors' phases differ.
+        double corner_level[4];
+        std::complex<double> sum(0.0, 0.0);
+        for (std::size_t corner = 0; corner < 4; corner++)
+        {
+            double v[4];
+            std::complex<double> corner_sum(0.0, 0.0);
+            for (std::size_t c = 0; c < 4; c++)
+            {
+                const std::complex<float> a = s.amplitudes[(blend.indices[c] * n_cells + stencil.corner[corner]) * tones + k];
+                const double magnitude = std::abs(std::complex<double>(a.real(), a.imag()));
+                v[c] = magnitude > 0.0 ? 20.0 * std::log10(magnitude) : no_energy_floor_db;
+                corner_sum += w[c] * std::complex<double>(a.real(), a.imag());
+            }
+            corner_level[corner] = (is_empty(v[0], w[0]) || is_empty(v[1], w[1]) || is_empty(v[2], w[2])
+                                           || is_empty(v[3], w[3]))
+                    ? blend_present(v, w)
+                    : w[0] * v[0] + w[1] * v[1] + w[2] * v[2] + w[3] * v[3];
+            sum += sw[corner] * corner_sum;
+        }
+        const double level = (is_empty(corner_level[0], sw[0]) || is_empty(corner_level[1], sw[1])
+                                     || is_empty(corner_level[2], sw[2]) || is_empty(corner_level[3], sw[3]))
+                ? blend_present(corner_level, sw)
+                : sw[0] * corner_level[0] + sw[1] * corner_level[1] + sw[2] * corner_level[2]
+                        + sw[3] * corner_level[3];
+        out[k].level_db = level <= empty_level_db ? no_energy_floor_db : level + blend.level_correction_db;
+        out[k].phase = s.phase_reference == PhaseReference::none || std::abs(sum) == 0.0 ? 0.0 : std::arg(sum);
+    }
+}
+
+std::array<double, 3> Database::tone_center(std::size_t source, const Blend& blend) const
+{
+    const ToneSource& s = tone_sources_[source];
+    std::array<double, 3> c {0.0, 0.0, 0.0};
+    for (std::size_t k = 0; k < blend.weights.size(); k++)
+        for (std::size_t j = 0; j < 3; j++)
+            c[j] += blend.weights[k] * s.centers[blend.indices[k]][j];
+    return c;
+}
+
+double Database::tone_shaft_rate(std::size_t source, const Blend& blend) const
+{
+    const ToneSource& s = tone_sources_[source];
+    double rate = 0.0;
+    for (std::size_t k = 0; k < blend.weights.size(); k++)
+        rate += blend.weights[k] * s.shaft_rates[blend.indices[k]];
+    return rate;
+}
+
+void Database::tone_frequencies(std::size_t source, const Blend& blend, double* frequencies) const
+{
+    const ToneSource& s = tone_sources_[source];
+    const std::size_t tones = s.tone_count();
+    for (std::size_t t = 0; t < tones; t++)
+    {
+        double f = 0.0;
+        for (std::size_t k = 0; k < blend.weights.size(); k++)
+            f += blend.weights[k] * s.frequencies[blend.indices[k] * tones + t];
+        frequencies[t] = f;
+    }
 }
 
 // The body both spectral_level_at_observer and spectral_level_along share,
