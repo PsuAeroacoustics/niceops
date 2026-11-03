@@ -221,6 +221,44 @@ Two consequences worth knowing:
 Regenerating the database with the current builder (panam, `DATABASE_FORMAT_VERSION = 1`) makes
 the fix-up unnecessary; the loader then trusts the file as written.
 
+## Format 2: frames, lossless spheres, density and pure-tone sources
+
+The first step of the multisphere and phase plan. The root attributes are read in any version;
+the sources only in format 2. Things to keep:
+
+- **The frame is chosen once, in `source_state`** (`sphere_frame_kind_`), so every path that
+  reads a sphere (the hot loop, the bounds, buildings, the GPU) gets the right frame through
+  `SourceState::frame`. `flight_path_sphere_frame` takes the nose as given, climb included,
+  which is what `nose_direction` already returns: the heading at hover, with its weighted climb.
+  Degenerate cases fall back to `sphere_frame`'s whole frame, not a half-built one. A level
+  flight-path database matches the same data labeled level to 1e-9, not to the bit: the two
+  frames normalize in a different order.
+- **Lossless absorption is one member, `absorption_start_`** (the sphere radius, or 0), used by
+  `eval` and `eval_spectrum`. For the default it is the radius, so the expressions are the old
+  ones to the bit. Inside the sphere a lossless level is the surface's absorbed over the radius,
+  in both paths, which is why `eval_spectrum` floors the path at the radius there. The urban
+  model's rays absorb over their whole length and add back the part inside the sphere; for a
+  lossless sphere they add back nothing (`absorbed_inside` in `urban_point.cpp`). The bounds stay
+  bounds: absorbing from the hub only lowers levels, and a gaining EAA already declines to bound.
+- **`--condition_density atmosphere` in the vehicle file's own air takes the density that file
+  states**, not one recomputed from the pressure the file derived from it, so the
+  `condition_density_same_air_is_vehicle` CTest is byte-identical. The ratio is applied only when
+  it is not 1. Only niceops forms states, so `state_condition` takes the ratio rather than a
+  profile.
+- **The sources are gridded over the sorted unique angles**, as a band amplitude is; format 2 has
+  no unsorted legacy to permute. Each source must be in every condition, keep its harmonics,
+  `phase_reference` and `sync_group`, and have every tone an integer order of its shaft rate
+  (relative 1e-5). Stored as complex float, pressure relative to the reference, in
+  `[(condition * cells + cell) * tones + tone]`, the layout the tone evaluation will read.
+- **The phase-resolution check** (`unresolved_tones`) flags a tone at load if any condition has
+  a step of more than 90° between neighbors (phi, across the seam when phi spans the circle, and
+  theta) both within 20 dB of its peak. It warns, marks the tone energy-only, and refuses
+  nothing: decision 3 of the plan.
+- **Nothing evaluates tones yet**, so the constructor refuses `band_content = broadband` with
+  tones unless `DatabaseLoadOptions::tones_evaluated`, and warns for `total`. Putting the refusal
+  in the constructor covers every tool that loads a database. The tone evaluation sets the flag.
+- `condition_axes = multirotor` is refused until the multirotor axes are decided.
+
 ## Broadband and spectral propagation
 
 - **There is no 4x EAA multiplier.** `eval` applies EAA exactly as panam wrote it. The D

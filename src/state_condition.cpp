@@ -10,8 +10,22 @@
 
 namespace niceops {
 
+std::optional<ConditionDensity> parse_condition_density(const std::string& name)
+{
+    if (name == "vehicle")
+        return ConditionDensity::vehicle;
+    if (name == "atmosphere")
+        return ConditionDensity::atmosphere;
+    return std::nullopt;
+}
+
+const char* to_string(ConditionDensity density)
+{
+    return density == ConditionDensity::atmosphere ? "atmosphere" : "vehicle";
+}
+
 StateCondition state_condition(const State& state, const Database& database, bool qsam,
-        double max_load_factor, const BlendOptions& blend)
+        double max_load_factor, const BlendOptions& blend, double density_ratio)
 {
     StateCondition condition;
     condition.advance_ratio = state.mu;
@@ -20,7 +34,10 @@ StateCondition state_condition(const State& state, const Database& database, boo
     // correction 20 lg(C_T / C_T,ref), an extrapolation above the load
     // factors its source supports.  It is held at --max_load_factor, and
     // two-sided at --min_load_factor below (blend_at() applies that floor).
-    condition.thrust_coefficient = state.CT;
+    // C_T = n W / (rho V_tip^2 pi R^2) is inverse in the density, so another
+    // density is a ratio on the trajectory's.  Not multiplied at all when the
+    // ratio is 1, so the vehicle file's C_T reaches the blend as it was.
+    condition.thrust_coefficient = density_ratio == 1.0 ? state.CT : state.CT * density_ratio;
     if (database.fixed_load_factor())
     {
         const double ceiling = max_load_factor * database.reference_thrust_coefficient();

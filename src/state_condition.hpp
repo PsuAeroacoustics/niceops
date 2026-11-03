@@ -7,6 +7,7 @@
 // procedure tool's envelope check (niceops_procedure --check) cannot map a
 // state differently.
 
+#include <optional>
 #include <string>
 
 #include "condition_selection.hpp"
@@ -16,6 +17,20 @@ namespace niceops {
 class Database;
 struct State;
 struct dimensional_data;
+
+// Which air density C_T is formed with (--condition_density): the vehicle
+// file's, which every database has been built and run with, or the run
+// atmosphere's at each state's height.  A database records which its C_T axis
+// used (root attribute thrust_coefficient_density, vehicle or run).
+enum class ConditionDensity
+{
+    vehicle,
+    atmosphere,
+};
+
+// "vehicle" or "atmosphere"; nullopt for anything else.
+std::optional<ConditionDensity> parse_condition_density(const std::string& name);
+const char* to_string(ConditionDensity density);
 
 struct StateCondition
 {
@@ -29,8 +44,12 @@ struct StateCondition
     bool load_floored = false;
 };
 
+// density_ratio is the vehicle file's density over the one C_T is to be
+// formed with (--condition_density atmosphere: the run's air at the state); the
+// trajectory's C_T, formed with the vehicle file's, is scaled by it.  1, the
+// default, leaves C_T untouched.
 StateCondition state_condition(const State& state, const Database& database, bool qsam,
-        double max_load_factor, const BlendOptions& blend);
+        double max_load_factor, const BlendOptions& blend, double density_ratio = 1.0);
 
 // The ways a state's lookup is not its own condition, as bits: niceops's
 // --provenance_file shares and niceops_procedure --check's report.

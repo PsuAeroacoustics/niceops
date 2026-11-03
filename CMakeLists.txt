@@ -1798,6 +1798,21 @@ add_test(NAME min_load_factor_needs_two_sided COMMAND niceops --min_load_factor 
 set_tests_properties(min_load_factor_needs_two_sided PROPERTIES PASS_REGULAR_EXPRESSION "needs --load_factor_correction two_sided")
 add_test(NAME two_sided_needs_fixed_load_factor COMMAND niceops --no-spectral --no-ground_effect --load_factor_correction two_sided --gridstep 2000 -L warn -o integrated/two_sided_needs_fixed_load_factor.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(two_sided_needs_fixed_load_factor PROPERTIES PASS_REGULAR_EXPRESSION "is not one: its load factors are spheres")
+# --condition_density (state_condition.hpp).  Naming vehicle, the default, is the demo run to the
+# byte.  atmosphere in the vehicle file's own air takes the density that file states, so it is the
+# vehicle run to the byte too, and warns that the database's C_T was formed with the vehicle file's.
+# In colder air atmosphere moves the footprint (a denser air lowers every C_T), which vehicle does not.
+add_test(NAME condition_density_vehicle COMMAND niceops --no-spectral --no-ground_effect --condition_density vehicle ${DEMO_COARSE} -L warn -o integrated/condition_density_vehicle.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME condition_density_atmosphere COMMAND niceops --no-spectral --no-ground_effect --condition_density atmosphere ${DEMO_COARSE} -L warn -o integrated/condition_density_atmosphere.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(condition_density_atmosphere PROPERTIES PASS_REGULAR_EXPRESSION "the database records that its C_T axis used the vehicle file's")
+add_test(NAME condition_density_cold_vehicle COMMAND niceops --no-spectral --no-ground_effect --condition_density vehicle --temperature 253.15 ${DEMO_COARSE} -L warn -o integrated/condition_density_cold_vehicle.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME condition_density_cold_atmosphere COMMAND niceops --no-spectral --no-ground_effect --condition_density atmosphere --temperature 253.15 ${DEMO_COARSE} -L warn -o integrated/condition_density_cold_atmosphere.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(condition_density_vehicle condition_density_atmosphere condition_density_cold_vehicle condition_density_cold_atmosphere PROPERTIES FIXTURES_SETUP condition_density_runs)
+add_test(NAME condition_density_vehicle_is_golden COMMAND ${CMAKE_COMMAND} -E compare_files integrated/condition_density_vehicle.csv integrated/demo_coarse.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME condition_density_same_air_is_vehicle COMMAND ${CMAKE_COMMAND} -E compare_files integrated/condition_density_atmosphere.csv integrated/demo_coarse.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME condition_density_cold_moves_footprint COMMAND golden_compare integrated/condition_density_cold_atmosphere.csv integrated/condition_density_cold_vehicle.csv 0.001 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(condition_density_cold_moves_footprint PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+set_tests_properties(condition_density_vehicle_is_golden condition_density_same_air_is_vehicle condition_density_cold_moves_footprint PROPERTIES FIXTURES_REQUIRED "condition_density_runs;demo_coarse_run")
 # The same over arrays/coyle_approach.csv, whose microphones stand at different
 # heights.  A grid's observers share one, so their mean coefficients are formed
 # once per state; these take the per-pair path the grid never reaches.

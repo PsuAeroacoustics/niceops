@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <limits>
 #include <map>
@@ -847,6 +848,8 @@ struct RunOptions
     // Which velocity the flight conditions are taken from (--speed_reference).
     // Unset follows each database's own speed_reference attribute.
     std::optional<SpeedReference> speed_reference;
+    // Which air density C_T is formed with (--condition_density).
+    ConditionDensity condition_density = ConditionDensity::vehicle;
     // Where the sphere's nose comes from (--nose).  Unset follows each
     // database's own azimuth_reference attribute.
     std::optional<NoseSource> nose;
@@ -1514,6 +1517,50 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     double last_unmeasured = -std::numeric_limits<double>::infinity();
     constexpr double hover_itself = 0.99;
     std::array<std::size_t, 4> spheres_blended {};
+    // --condition_density atmosphere: C_T formed with the run's air at each
+    // state's height, not the vehicle file's density.  Where the run's air is the
+    // vehicle file's own (no profile, no --temperature or --pressure), the density
+    // it states is that air's, rather than one recomputed from the pressure the
+    // file derived from it, so the run is the vehicle-density run to the bit.
+    const double vehicle_density = trajectory.vehicle.rho;
+    std::function<double(double)> run_density;
+    if (options.condition_density == ConditionDensity::atmosphere)
+    {
+        Atmosphere air = trajectory.vehicle.atmosphere;
+        if (!std::isnan(options.temperature_override))
+            air.temperature = options.temperature_override;
+        if (!std::isnan(options.pressure_override))
+            air.pressure = options.pressure_override;
+        if (atmosphere)
+        {
+            // A profile without pressure takes the surface pressure, as the
+            // propagation's does below.
+            const AtmosphereProfile layered = atmosphere->has_pressure()
+                    ? *atmosphere
+                    : atmosphere->with_hydrostatic_pressure(air.pressure);
+            run_density = [layered](double z) { return layered.at(z).density(); };
+        }
+        else if (std::isnan(options.temperature_override) && std::isnan(options.pressure_override))
+        {
+            run_density = [vehicle_density](double) { return vehicle_density; };
+        }
+        else
+        {
+            const double density = air.density();
+            run_density = [density](double) { return density; };
+        }
+    }
+    {
+        const bool built_with_run = database.thrust_coefficient_density() == ThrustCoefficientDensity::run;
+        if (built_with_run != (options.condition_density == ConditionDensity::atmosphere))
+            warn("--condition_density ", to_string(options.condition_density), " forms C_T with ",
+                    run_density ? "the run's air density" : "the vehicle file's density",
+                    ", but the database records that its C_T axis used ",
+                    built_with_run ? "the run's (thrust_coefficient_density run)" : "the vehicle file's",
+                    ": states and spheres disagree about C_T by the ratio of the two densities.");
+    }
+    double density_low = std::numeric_limits<double>::infinity();
+    double density_high = -std::numeric_limits<double>::infinity();
     std::vector<Database::SourceState> source_states;
     source_states.reserve(nt);
     // Per state, for --provenance_file: its ConditionFlag bits.
@@ -1542,8 +1589,19 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             if (nose != velocity)
                 by_heading++;
         }
+        double density_ratio = 1.0;
+        if (run_density)
+        {
+            const double density = run_density(state.z);
+            if (!(density > 0.0) || !std::isfinite(density))
+                input_error("--condition_density atmosphere: the run's air density at ", state.z, " m (t = ",
+                        state.t, " s) is ", density, " kg/m^3; check the temperature and pressure.");
+            density_low = std::min(density_low, density);
+            density_high = std::max(density_high, density);
+            density_ratio = vehicle_density / density;
+        }
         const auto condition = state_condition(state, database, options.qsam, options.max_load_factor,
-                blend_options);
+                blend_options, density_ratio);
         if (condition.load_capped)
             load_capped++;
         if (condition.load_floored)
@@ -1585,6 +1643,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         log("--blend aam over ", nt, " states: 4 spheres at ", spheres_blended[3], ", 3 at ",
                 spheres_blended[2], ", 2 at ", spheres_blended[1], ", 1 at ", spheres_blended[0], ".");
     }
+    if (run_density)
+        log("--condition_density atmosphere: C_T formed with ", density_low, " to ", density_high,
+                " kg/m^3 over the states, against the vehicle file's ", vehicle_density, ".");
     log("Source axis coverage over ", nt, " states: advance ratio clamped ", mu_clamped,
             ", flight-path angle clamped ", fpa_clamped, ", thrust coefficient clamped ", ct_clamped,
             "; analytic load-factor correction applied ", load_scaled,
@@ -5092,6 +5153,7 @@ int run(int argc, char* argv[])
     double scattering = 0.0;
     // Empty follows the database's speed_reference attribute.
     std::string speed_reference;
+    std::string condition_density = "vehicle";
     // Empty follows the database's azimuth_reference attribute.
     std::string nose;
     // WGS84 input and output.  An unset origin is taken from the first geodetic
@@ -5461,6 +5523,13 @@ int run(int argc, char* argv[])
             "aircraft, from --atmosphere or --wind). Default: what the database records it was built with; ground if it "
             "records nothing.")
             ->check(CLI::IsMember({"ground", "air"}));
+    app.add_option("--condition_density", condition_density,
+            "Which air density the thrust coefficient C_T = n W / (rho V_tip^2 pi R^2) is formed with: "
+            "vehicle (default), the vehicle file's; or atmosphere, the run's air at each state's height "
+            "(the --atmosphere profile's, else --temperature and --pressure, else the vehicle file's). "
+            "A database records which its C_T used (thrust_coefficient_density), and the run warns "
+            "when the two differ.")
+            ->check(CLI::IsMember({"vehicle", "atmosphere"}));
     auto* ground_elevation_option = app.add_option("--ground_elevation", ground_elevation,
             "Elevation of the observer plane above mean sea level, in --units. Subtracted "
             "from a geodetic track's altitude column to give height above the observers "
@@ -6931,6 +7000,7 @@ int run(int argc, char* argv[])
     options.frame_bearing = frame_bearing;
     if (!speed_reference.empty())
         options.speed_reference = parse_speed_reference(speed_reference);
+    options.condition_density = *parse_condition_density(condition_density);
     if (!nose.empty())
         options.nose = parse_nose_source(nose);
     // Each distinct --wind and --atmosphere is parsed once, and its warnings

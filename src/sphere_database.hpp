@@ -84,6 +84,62 @@ inline constexpr std::size_t condition_origin_count = 3;
 std::optional<ConditionOrigin> parse_condition_origin(const std::string& name);
 const char* to_string(ConditionOrigin origin);
 
+// The frame a database's spheres are written in (root attribute sphere_frame;
+// absent means level).  Level is NICEOPS's, PANAM's and NORAH2's: theta from
+// the velocity projected into the tip-path plane, which is horizontal in steady
+// flight.  Flight path is AAM's and WOPWOP's: theta from the velocity itself,
+// with the sphere's up perpendicular to it in the plane of the velocity and the
+// tip-path plane normal, so a climbing sphere is pitched nose-up by its flight
+// path angle.  See flight_path_sphere_frame.
+enum class SphereFrameKind
+{
+    level,
+    flight_path,
+};
+
+// "level" or "flight_path"; nullopt for anything else.
+std::optional<SphereFrameKind> parse_sphere_frame(const std::string& name);
+const char* to_string(SphereFrameKind frame);
+
+// Whether a database's band spectrum (and dBA) already holds its pure tones
+// (root attribute band_content; absent means total, as every database before
+// format 2), or holds only the broadband the tones were separated from.
+enum class BandContent
+{
+    total,
+    broadband,
+};
+
+std::optional<BandContent> parse_band_content(const std::string& name);
+const char* to_string(BandContent content);
+
+// Which density a database's thrust coefficient axis was formed with (root
+// attribute thrust_coefficient_density; absent means vehicle): the vehicle
+// file's, or each run's own air (--condition_density atmosphere).
+enum class ThrustCoefficientDensity
+{
+    vehicle,
+    run,
+};
+
+std::optional<ThrustCoefficientDensity> parse_thrust_coefficient_density(const std::string& name);
+const char* to_string(ThrustCoefficientDensity density);
+
+// How a pure-tone source's phase is referenced (each source subgroup's
+// attribute phase_reference, format 2): to its rotor's azimuth, the stored
+// value being A e^(-i m psi_ref), so sources on one shaft rate combine
+// coherently; between directions only, up to one constant per tone; or not at
+// all (amplitudes only).
+enum class PhaseReference
+{
+    rotor_azimuth,
+    relative,
+    none,
+};
+
+std::optional<PhaseReference> parse_phase_reference(const std::string& name);
+const char* to_string(PhaseReference reference);
+
 
 // Bilinear interpolation on the sphere grid.  A cell whose knots come in
 // decreasing order wraps the seam of a periodic axis: with `x_period` set, its
@@ -174,9 +230,11 @@ double clamp01(double x);
 double acosc(double x);
 
 // The sphere's orientation at one instant: the unit TPP normal, the "nose"
-// (velocity projected into the TPP) and starboard.  None of it depends on
-// where the observer is, so it is built once per trajectory state and reused
-// across the whole observer grid.
+// (velocity projected into the TPP) and starboard; in a flight-path frame
+// (flight_path_sphere_frame) the nose is the velocity itself and `normal` the
+// TPP normal's part perpendicular to it.  None of it depends on where the
+// observer is, so it is built once per trajectory state and reused across the
+// whole observer grid.
 struct SphereFrame
 {
     Vec3 normal;    // n, unit TPP normal
@@ -185,6 +243,14 @@ struct SphereFrame
 };
 
 SphereFrame sphere_frame(const Vec3& velocity, const Vec3& normal);
+
+// The frame of a flight-path sphere (SphereFrameKind::flight_path): the nose is
+// the velocity itself, climb included, and the sphere's up (`normal`) the TPP
+// normal's part perpendicular to it.  In level flight with a level TPP that is
+// sphere_frame's frame.  With no velocity, or one along the TPP normal (a
+// vertical climb), it is sphere_frame's, which falls back the same way; a run's
+// nose at hover is already the heading (nose_direction).
+SphereFrame flight_path_sphere_frame(const Vec3& velocity, const Vec3& normal);
 
 // Sphere angles (phi, theta in degrees) of an already-normalized propagation
 // direction.  phi runs over the whole circle: a direction above the tip-path
@@ -339,6 +405,45 @@ struct DatabaseLoadOptions
     // Drop the suspect entries, as gating drops a direction, instead of only
     // warning about them.
     bool mask_suspect_cells = false;
+    // Whether the caller evaluates a format 2 database's pure tones.  None does
+    // yet, so a database whose tones are not in its band spectrum (band_content
+    // broadband) is refused, and one whose are (total) warns that it runs on its
+    // bands alone.
+    bool tones_evaluated = false;
+};
+
+// One pure-tone source of a format 2 database (a rotor): a subgroup of every
+// condition group, named by its tag, holding its shaft-order tones over the
+// database's (phi, theta) grid.
+struct ToneSource
+{
+    std::string tag;
+    // Sources held at a fixed phase to each other share a group; empty is a
+    // free-running source, which adds in energy with every other.
+    std::string sync_group;
+    PhaseReference phase_reference = PhaseReference::none;
+    // Each tone's shaft order m, the same at every condition.
+    std::vector<int> harmonics;
+    // Per condition: the hub (m, in the sphere frame: forward, starboard, up)
+    // and the shaft rate (rad/s, signed by the sense of rotation).
+    std::vector<std::array<double, 3>> centers;
+    std::vector<double> shaft_rates;
+    // The tones' emission-frame frequencies, Hz: [condition * tones + tone].
+    std::vector<double> frequencies;
+    // The complex pressure amplitude of each tone in each grid cell, relative to
+    // the reference pressure at the sphere radius: 10^(dB/20) e^(i phase), zero
+    // where the file holds no level.  [(condition * cells + cell) * tones +
+    // tone], cell = i_phi * n_theta + i_theta over the database's sorted grid.
+    std::vector<std::complex<float>> amplitudes;
+    // Per tone, 1 where the grid does not resolve its phase (a step of more than
+    // 90 degrees between neighboring cells within 20 dB of its peak, at any
+    // condition): such a tone is to be summed in energy.
+    std::vector<char> energy_only;
+
+    std::size_t tone_count() const
+    {
+        return harmonics.size();
+    }
 };
 
 class Database
@@ -654,6 +759,14 @@ public:
         // database carries no spectra.
         std::vector<double> frequencies;
         std::vector<double> amplitudes;
+        // The frame the sphere is written in and whether its levels are the
+        // source's without absorption to the sphere (the database's root
+        // attributes sphere_frame and sphere_levels_lossless), carried so an
+        // export reloads as it was.
+        SphereFrameKind sphere_frame = SphereFrameKind::level;
+        bool levels_lossless = false;
+        // Which density the condition's C_T was formed with.
+        ThrustCoefficientDensity thrust_coefficient_density = ThrustCoefficientDensity::vehicle;
     };
 
     // Main rotor tip speed in m/s as recorded at the root of the database, or
@@ -736,6 +849,45 @@ public:
     bool has_spectra() const
     {
         return !frequencies_.empty();
+    }
+
+    // The root database_version: 0 (absent) for files before the versioned
+    // builder, 1, or 2 (pure-tone sources beside the spheres).
+    int database_version() const
+    {
+        return database_version_;
+    }
+    // The frame the spheres are in (root attribute sphere_frame), which
+    // source_state builds each state's frame for.
+    SphereFrameKind sphere_frame_kind() const
+    {
+        return sphere_frame_kind_;
+    }
+    // Whether the spheres' levels are the source's with no absorption to the
+    // sphere radius (root attribute sphere_levels_lossless = 1, which predicted
+    // spheres carry): absorption then runs from the hub, over the whole range,
+    // rather than from the sphere's surface.
+    bool sphere_levels_lossless() const
+    {
+        return levels_lossless_;
+    }
+    BandContent band_content() const
+    {
+        return band_content_;
+    }
+    ThrustCoefficientDensity thrust_coefficient_density() const
+    {
+        return thrust_coefficient_density_;
+    }
+    // A format 2 database's pure-tone sources, in the order of the root
+    // attribute sources; empty otherwise.
+    const std::vector<ToneSource>& tone_sources() const
+    {
+        return tone_sources_;
+    }
+    bool has_tones() const
+    {
+        return !tone_sources_.empty();
     }
 
     // Whether this is a fixed_load_factor build, and the thrust coefficient of
@@ -956,6 +1108,18 @@ private:
     // the sphere, so it is one value per sphere rather than per channel.
     std::vector<double> shaft_power_;
     double min_excess_factor_ = 0.0;
+
+    int database_version_ = 0;
+    SphereFrameKind sphere_frame_kind_ = SphereFrameKind::level;
+    bool levels_lossless_ = false;
+    // Where absorption starts along a path, m: the sphere radius, or 0 for
+    // lossless spheres, whose levels carry no absorption to the radius.
+    double absorption_start_ = 0.0;
+    BandContent band_content_ = BandContent::total;
+    ThrustCoefficientDensity thrust_coefficient_density_ = ThrustCoefficientDensity::vehicle;
+    std::vector<ToneSource> tone_sources_;
+    // The constructor's reading of a format 2 database's source subgroups.
+    void load_tone_sources(int file_ncid, const std::vector<int>& group_ids, const std::string& datafile_path);
 };
 
 // Write a single interpolated sphere as a one-group .nod database, the same
@@ -969,7 +1133,8 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path);
 // The sphere type is BB where aam_third_octave_bands, else NB.
 // AMPLITUDE is in AAM's frame, pitched nose-up by the flight path angle from
 // NICEOPS's level one (root attribute sphere_frame = "flight_path"), so a deck
-// flown with AOA 0 orients it as NICEOPS does.
+// flown with AOA 0 orients it as NICEOPS does.  A sphere from a flight-path
+// database is in that frame already and is written as it is.
 void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, double tip_speed);
 
 // Whether every band center is a distinct one-third octave band of AAM's, numbers

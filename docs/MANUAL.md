@@ -17,8 +17,9 @@ the code, start with the [README](../README.md); developers start at
   file](#vehicle-file) · [Observers](#observers)
 - [Noise databases](#noise-databases): [Source coherence](#source-coherence) · [Shipped databases](#shipped-databases) · [Spectra](#spectra) · [Screening a database](#screening-a-database)
   · [Choosing spheres: blending and `--blend`](#choosing-spheres-blending-and---blend) · [The
-  load-factor law below 1 g](#the-load-factor-law-below-1-g) · [Speed reference](#speed-reference) ·
-  [The sphere's nose](#the-spheres-nose) · [Reading the sphere's
+  load-factor law below 1 g](#the-load-factor-law-below-1-g) · [Pure-tone sources (format
+  2)](#pure-tone-sources-format-2) · [Speed reference](#speed-reference) · [The density in
+  C<sub>T</sub>](#the-density-in-ct) · [The sphere's nose](#the-spheres-nose) · [Reading the sphere's
   angles](#reading-the-spheres-angles)
 - [Propagation](#propagation): [Broadband and spectral paths](#broadband-and-spectral-paths) ·
   [Stratified atmosphere](#stratified-atmosphere) · [A profile from the surface
@@ -133,6 +134,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--load_factor_correction` | `one_sided` (default): the law applies above 1 g only. `two_sided`: below 1 g too ([The load-factor law below 1 g](#the-load-factor-law-below-1-g)). |
 | `--min_load_factor` | With `two_sided`, the smallest load factor, g, the law is taken to. Default 0.5; at most 1. Refused without `two_sided`. |
 | `--speed_reference` | `ground` or `air`: which velocity sets μ, the path angle and the `velocity` nose. Default: what the database records, ground if nothing ([Speed reference](#speed-reference)). |
+| `--condition_density` | `vehicle` (default) or `atmosphere`: which air density C<sub>T</sub> is formed with, the vehicle file's or the run's air at each state's height ([The density in C<sub>T</sub>](#the-density-in-ct)). |
 | `--nose` | `velocity`, `ground_velocity` or `heading`. Default: what the database's `azimuth_reference` records, `velocity` if nothing ([The sphere's nose](#the-spheres-nose)). |
 | `--accept_vehicle_mismatch` | Warn, rather than refuse, when the vehicle file disagrees with the database by more than 2 percent ([Vehicle file](#vehicle-file)). |
 | `--screen_database` | Write every entry the load-time screen finds suspect to this CSV ([Screening a database](#screening-a-database)). One database per run. |
@@ -298,7 +300,8 @@ two states is refused, naming where the track's crop ends. An observer file must
 width and yield at least one observer. An `--atmosphere` file must be finite, reach every state,
 and name its wind units. A database must vary in μ, γ and (unless `fixed_load_factor`)
 C<sub>T</sub>, with no two spheres at one condition, and no group may hold the netCDF fill value
-(a group the builder never wrote). Air must be plausible: a temperature in °C,
+(a group the builder never wrote). A format 2 database's pure-tone sources are checked as
+[Pure-tone sources](#pure-tone-sources-format-2) describes. Air must be plausible: a temperature in °C,
 a pressure in Pa or a humidity fraction is refused. The vehicle file must agree with the
 database ([Vehicle file](#vehicle-file)).
 
@@ -509,7 +512,11 @@ the AAM/RNM hemisphere format, whose payload is `AMPLITUDE(PHI, THETA, FREQUENCY
 spectra. AAM fixes its sphere to the body, pitched by the deck's angle of attack plus the flight
 path angle, so the export is pitched nose-up by the condition's flight path angle from NICEOPS's
 level sphere, and records `sphere_frame = flight_path`: an AAM deck flown at AOA 0 then hears
-what NICEOPS hears. A database is level; one that records another `sphere_frame` is refused.
+what NICEOPS hears. A database is level unless it records `sphere_frame = flight_path` (WOPWOP's
+predicted spheres, kept in their own frame); NICEOPS then reads it in that frame, its nose the
+velocity climb included, and exports it unrotated. Any other `sphere_frame` is refused.
+A database that records `sphere_levels_lossless = 1` (predicted spheres, with no absorption
+between the hub and the sphere) is absorbed from the hub rather than from the sphere's surface.
 Third-octave bands (10 Hz to 10 kHz) are written as AAM's broadband sphere type (`BB`), any
 other band set as narrowband (`NB`). The export is a lower hemisphere, `PHI` -90° to 90°, as
 AAM's spheres are, with an empty band written as AAM's missing level, -999. Of the shipped databases, the six `_fixed_load_factor`
@@ -578,6 +585,26 @@ spheres there is no law, and `two_sided` is refused. The evidence for the law be
 and mixed ([FIDELITY](FIDELITY.md#source-options-blend-and-load-factor-law)), so the default
 stays one-sided.
 
+### Pure-tone sources (format 2)
+
+A database of format 2 (`database_version = 2`) may carry pure-tone sources beside its spheres:
+one subgroup per source (a rotor) in every condition group, named in the root attribute
+`sources`, each holding its hub position, shaft rate, sync group and shaft-order tones, with
+their amplitude and phase over the sphere grid. NICEOPS reads and checks them, but **does not
+evaluate the tones yet**, so:
+
+- **`band_content = total`**: the band spectrum and dBA already hold the tones; the run uses them,
+  as for any other database, and warns that the tones' phase is not modeled.
+- **`band_content = broadband`**: the bands leave the tones out, and the run is refused rather
+  than predict without them.
+
+The loader refuses a source missing from any condition, a tone that is not a whole shaft order of
+its source's shaft rate, a source without `phase_reference` (`rotor_azimuth`, `relative` or
+`none`), tones beside bands with no `band_content`, a format above 2, and multirotor condition
+axes (`condition_axes = multirotor`), which are not read yet. A tone whose phase steps more than
+90° between neighboring grid cells within 20 dB of its peak is reported: the grid does not resolve
+it, and it will be summed in energy.
+
 ### Speed reference
 
 The flight condition (μ, the path angle and, under `--nose velocity`, the nose) comes from a
@@ -595,6 +622,22 @@ inertial either way.
 Matching a ground-built database with an air-referenced run mixes the two references, so change
 both together. On a 15 kt day air reference moves μ by 5–10% and the nose by 8–15°
 ([FIDELITY](FIDELITY.md#speed-reference)).
+
+### The density in C<sub>T</sub>
+
+C<sub>T</sub> is formed with the vehicle file's density by default. `--condition_density
+atmosphere` forms it with the run's air at each state's height instead: the `--atmosphere`
+profile's, or else the air `--temperature` and `--pressure` set over the vehicle file's. With
+neither, the run's air is the vehicle file's own, and the result is the default's to the bit.
+The air is taken as dry.
+
+- **A database records which density its C<sub>T</sub> axis used**, in the root attribute
+  `thrust_coefficient_density` (`vehicle`, or absent, or `run`). The run warns when its choice
+  differs, since states and spheres then disagree about C<sub>T</sub> by the ratio of the two
+  densities.
+- **Use it when the database was built that way**, or to see what a hot or high day does to the
+  operating condition: a lighter air raises C<sub>T</sub>.
+- The log gives the densities the states took.
 
 ### The sphere's nose
 

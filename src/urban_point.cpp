@@ -789,6 +789,12 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     }
     const double radius = database.sphere_radius();
     const double at_one_metre = 20.0 * std::log10(radius);
+    // The part of a ray inside the sphere that the sphere's levels have not
+    // already absorbed over: none for a measured sphere, depropagated to its
+    // surface, all of it for a lossless (predicted) one, which absorbs from the
+    // hub.  The rays carry the air's absorption over their whole length.
+    const bool lossless = database.sphere_levels_lossless();
+    const auto absorbed_inside = [lossless](double inside) { return lossless ? 0.0 : inside; };
     // The interval's percentiles, as fractions.
     const double low_q = interval != nullptr ? 0.5 - interval->percent / 200.0 : 0.0, high_q = 1.0 - low_q;
 
@@ -936,7 +942,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
                 const double level = w.spectrum[first_band + b];
                 if (std::isfinite(level))
                     w.weights[r * nb + b] = std::pow(10.0, (level + at_one_metre) / 20.0) * (inside / radius)
-                            * std::exp(nepers[b] * inside);
+                            * std::exp(nepers[b] * absorbed_inside(inside));
             }
         }
     };
@@ -953,7 +959,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
             {
                 const double level = w.lighting[first_band + b];
                 sent[b] = std::isfinite(level) ? std::pow(10.0, (level + at_one_metre) / 10.0) * (inside / radius)
-                                * (inside / radius) * std::exp(2.0 * nepers[b] * inside)
+                                * (inside / radius) * std::exp(2.0 * nepers[b] * absorbed_inside(inside))
                                                : 0.0;
             }
         };
@@ -991,7 +997,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
             if (!std::isfinite(level))
                 continue;
             const double free = std::pow(10.0, (level + at_one_metre) / 10.0) * (inside / radius) * (inside / radius)
-                    * std::exp(-2.0 * nepers[b] * (r - inside)) / (r * r);
+                    * std::exp(-2.0 * nepers[b] * (r - absorbed_inside(inside))) / (r * r);
             const double floor = floor_energy[m][b], receiver = receiver_energy[m][b];
             out[b] = free * 0.25 * (1.0 + floor) * (1.0 + receiver)
                     * std::pow(10.0, 0.1 * scattered_level(screen.h, screen.d_s, screen.d_r, bands[b], turbulence_cv2));
@@ -1078,7 +1084,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
             const double level = w.lighting[first_band + b];
             const double inside = std::min(rays[i].length, radius);
             power[i] = std::isfinite(level) ? std::pow(10.0, (level + at_one_metre) / 10.0) * (inside / radius)
-                            * (inside / radius) * std::exp(2.0 * nepers[b] * inside)
+                            * (inside / radius) * std::exp(2.0 * nepers[b] * absorbed_inside(inside))
                                             : 0.0;
         }
         if (out.empty())
@@ -1353,7 +1359,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         {
             const double level = w.spectrum[first_band + b];
             out[b] = std::isfinite(level) ? level + at_one_metre + 20.0 * std::log10(inside / radius)
-                            - 20.0 * std::log10(r) - 20.0 / std::log(10.0) * nepers[b] * (r - inside)
+                            - 20.0 * std::log10(r) - 20.0 / std::log(10.0) * nepers[b] * (r - absorbed_inside(inside))
                                           : silence;
             top = std::max(top, out[b]);
         }

@@ -76,8 +76,24 @@ $$
 The Q-SAM path angle is the velocity's angle to the tip-path plane. It is the angle at which a
 steady flight condition presents the same rotor inflow, which is what lets steady-flight spheres
 represent a maneuvering state. At $\lvert\mathbf{u}\rvert = 0$ both path angles are taken as zero
-(§3). $\rho$ is the vehicle file's density in every case, including when `--temperature` or
-`--pressure` sets the propagation atmosphere.
+(§3).
+
+**The density.** By default (`--condition_density vehicle`) $\rho$ is the vehicle file's density
+in every case, including when `--temperature` or `--pressure` sets the propagation atmosphere.
+`--condition_density atmosphere` forms $C_T$ with the run's air at the state's height $z$
+instead, the trajectory's $C_T$ scaled by the ratio of the two densities:
+
+$$
+C_T = \frac{n\,W}{\rho(z)\,V_\mathrm{tip}^2\,\pi R^2}, \qquad
+\rho(z) = \frac{p(z)}{R_d\,T(z)}, \qquad R_d = 287.05\ \mathrm{J/(kg\,K)},
+$$
+
+with $p$ and $T$ from the `--atmosphere` profile at $z$ (its pressure hydrostatic from the surface
+when it gives none, §4.3), or else uniform: `--temperature` and `--pressure` over the vehicle
+file's. Where neither is given the run's air is the vehicle file's own, and $\rho(z)$ is the
+density that file states. The air is taken as dry; humidity lowers the density by under 1
+percent at flight-test conditions. A database's root attribute `thrust_coefficient_density`
+records which density its $C_T$ axis was formed with (`vehicle`, absent, or `run`).
 
 **The speed reference.** $\mathbf{u}$ is taken in the reference the database records it was
 built with, over the ground if it records none; `--speed_reference` overrides it, and an
@@ -245,18 +261,34 @@ and the other corners' weights are renormalized.
 **The frame.** In steady flight $\hat{\mathbf{n}}$ is vertical and the nose horizontal, so the
 sphere is level, as PANAM's spheres and NORAH2's hemispheres are. AAM's sphere is fixed to the
 body, whose pitch is the deck's angle of attack plus the flight path angle; with AOA 0 its
-nose is the velocity, the level frame pitched nose-up by $\gamma$. PANAM pitches such spheres to
-level as it builds, and a database whose root `sphere_frame` is anything but `level` is
-refused. `--export_aam` writes the other way: each cell of the exported grid is a direction in
-the flight-path frame at the exported $\gamma$, $(f, s, d)$ (forward, starboard, down), read at
-its level direction
+nose is the velocity, the level frame pitched nose-up by $\gamma$. PANAM pitches measured spheres
+to level as it builds. A database whose root `sphere_frame` is `flight_path` (WOPWOP's predicted
+spheres, kept in their own frame so their phase is not re-interpolated) is read in that frame
+instead. Its nose is $\mathbf{v}$ itself, climb included, and its up the part of $\hat{\mathbf{n}}$
+perpendicular to it:
+
+$$
+\hat{\mathbf{e}} = \frac{\mathbf{v}}{\lvert\mathbf{v}\rvert}, \qquad
+\hat{\mathbf{n}}' = \frac{\hat{\mathbf{n}} - (\hat{\mathbf{n}}\cdot\hat{\mathbf{e}})\,\hat{\mathbf{e}}}
+  {\lvert\hat{\mathbf{n}} - (\hat{\mathbf{n}}\cdot\hat{\mathbf{e}})\,\hat{\mathbf{e}}\rvert}, \qquad
+\hat{\mathbf{s}} = \hat{\mathbf{e}} \times \hat{\mathbf{n}}' ,
+$$
+
+with the angles as above on $(\hat{\mathbf{e}}, \hat{\mathbf{n}}', \hat{\mathbf{s}})$. In level flight
+($\mathbf{v} \perp \hat{\mathbf{n}}$) this is the level frame. With no velocity, or one along
+$\hat{\mathbf{n}}$ (a vertical climb), the frame is the level one with its fallback; near hover
+$\mathbf{v}$ is already the heading (the nose, above). Any other `sphere_frame` is refused.
+`--export_aam` writes a level database the other way: each cell of the exported grid is a
+direction in the flight-path frame at the exported $\gamma$, $(f, s, d)$ (forward, starboard,
+down), read at its level direction
 
 $$
 f_\ell = f\cos\gamma + d\sin\gamma, \qquad s_\ell = s, \qquad d_\ell = -f\sin\gamma + d\cos\gamma
 $$
 
 with the stencil above. AAM pitches it back by the track's $\gamma$, so a deck flown at AOA 0
-hears the levels NICEOPS hears. At $\gamma = 0$ the export is the sphere's own grid.
+hears the levels NICEOPS hears. At $\gamma = 0$, or from a flight-path database, the export is the
+sphere's own grid.
 
 ## 3. Trajectories
 
@@ -352,6 +384,14 @@ EAA is the A-weighted atmospheric attenuation over 1000 m in the database's buil
 PANAM writes it as the difference between the A-weighted level with and without absorption over
 that distance. Spreading is capped at the sphere surface: inside $R_s$ the sphere level is
 taken as is.
+
+**Lossless spheres.** A measured sphere is depropagated to $R_s$, so its levels already carry the
+absorption from the hub to the sphere, and absorption runs from $R_s$ outward. A predicted sphere
+(root attribute `sphere_levels_lossless = 1`) has none, and absorption runs from the hub: the
+excess attenuation above becomes $\mathrm{EAA}\,\max(r, R_s)/1000\ \mathrm{m}$, and $\max(\ell - R_s, 0)$
+in §4.2 becomes $\max(\ell, R_s)$. Inside $R_s$ the level is the surface's, absorbed over the
+radius. Rays among buildings (§6.5) absorb over their whole length and so add back the part
+inside the sphere for measured spheres only.
 
 ### 4.2 The spectral path
 
