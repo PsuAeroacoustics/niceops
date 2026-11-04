@@ -1267,7 +1267,11 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path);
 // NICEOPS's level one (root attribute sphere_frame = "flight_path"), so a deck
 // flown with AOA 0 orients it as NICEOPS does.  A sphere from a flight-path
 // database is in that frame already and is written as it is.
-void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, double tip_speed);
+// `absorption` (dB/m per band): the air's, which a lossless sphere's levels
+// (Sphere::levels_lossless) take out to the sphere radius, as AAM's carry it;
+// required for one, unused otherwise.
+void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, double tip_speed,
+        const std::vector<double>* absorption = nullptr);
 
 // Whether every band center is a distinct one-third octave band of AAM's, numbers
 // 10 to 40 (10 Hz to 10 kHz): nominal, base-10 or base-2 centers.  AAM's BB sphere

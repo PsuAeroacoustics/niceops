@@ -1875,6 +1875,47 @@ TEST_CASE("an AAM export lays out its axes and amplitudes as the format says", "
     std::filesystem::remove(path);
 }
 
+TEST_CASE("an AAM export of a lossless sphere carries the absorption out to its radius", "[sphere_database][export]")
+{
+    // AAM's levels at the radius are absorbed out to it, and AAM absorbs only
+    // beyond: a lossless sphere (sphere_levels_lossless) takes alpha(f) R on the
+    // way out, or it reads loud at high frequency.  Level flight, so the payload
+    // is otherwise the sphere's own.
+    const Database& source = test::demo_database();
+    auto sphere = source.interpolate_sphere(0.15, 0.0, 0.006);
+    const std::size_t bands = 3;
+    sphere.frequencies = {125.0, 2000.0, 8000.0};
+    sphere.amplitudes.resize(sphere.cells.size() * bands);
+    for (std::size_t cell = 0; cell < sphere.cells.size(); cell++)
+        for (std::size_t band = 0; band < bands; band++)
+            sphere.amplitudes[cell * bands + band] = 60.0 + 0.25 * static_cast<double>(cell % 31) + 5.0 * band;
+    sphere.levels_lossless = true;
+    const std::vector<double> absorption = {0.0004, 0.009, 0.1};
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_aam_lossless.nc").string();
+    REQUIRE_THROWS_WITH(write_aam_sphere(sphere, path, 213.0),
+            Catch::Matchers::ContainsSubstring("needs the air's absorption"));
+    write_aam_sphere(sphere, path, 213.0, &absorption);
+    int ncid = 0, var = 0;
+    REQUIRE(nc_open(path.c_str(), NC_NOWRITE, &ncid) == NC_NOERR);
+    std::vector<std::size_t> rows;
+    for (std::size_t m = 0; m < sphere.phis.size(); m++)
+        if (std::fabs(sphere.phis[m]) <= 90.0)
+            rows.push_back(m);
+    std::vector<float> amplitude(rows.size() * sphere.thetas.size() * bands);
+    REQUIRE(nc_inq_varid(ncid, "AMPLITUDE", &var) == NC_NOERR);
+    REQUIRE(nc_get_var_float(ncid, var, amplitude.data()) == NC_NOERR);
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+    std::size_t k = 0;
+    for (const auto m : rows)
+        for (std::size_t n = 0; n < sphere.thetas.size(); n++)
+            for (std::size_t band = 0; band < bands; band++, k++)
+            {
+                const double lossless = sphere.amplitudes[(m * sphere.thetas.size() + n) * bands + band];
+                REQUIRE(amplitude[k] == static_cast<float>(lossless - absorption[band] * sphere.radius));
+            }
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("AAM's sphere type follows the band set", "[sphere_database][export]")
 {
     // BB is one-third octave bands 10-40 (TR Table 4-37), nominal or exact centers.

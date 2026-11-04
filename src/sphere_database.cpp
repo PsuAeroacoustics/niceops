@@ -4357,7 +4357,8 @@ bool aam_third_octave_bands(const std::vector<double>& frequencies)
     return true;
 }
 
-void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, double tip_speed)
+void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, double tip_speed,
+        const std::vector<double>* absorption)
 {
     if (sphere.frequencies.empty())
     {
@@ -4494,8 +4495,23 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
 
     // The lower rows of the pitched sphere, an empty band as AAM's missing level.
     // A sphere already in the flight-path frame is AAM's as it stands.
-    const auto flight_path = sphere.sphere_frame == SphereFrameKind::flight_path ? sphere.amplitudes
-                                                                                : flight_path_frame_amplitudes(sphere);
+    auto flight_path = sphere.sphere_frame == SphereFrameKind::flight_path ? sphere.amplitudes
+                                                                          : flight_path_frame_amplitudes(sphere);
+    // AAM's levels at the sphere radius carry the absorption out to it, and AAM
+    // absorbs only beyond.  A lossless sphere (sphere_levels_lossless) has none
+    // yet, so it takes alpha(f) R here, in the air the caller gives.
+    if (sphere.levels_lossless)
+    {
+        if (absorption == nullptr || absorption->size() != sphere.frequencies.size())
+            input_error("Cannot write ", path, " in AAM format: its levels are lossless (no absorption to the sphere "
+                    "radius), and AAM's carry it, so the writer needs the air's absorption at each band.");
+        const std::size_t n_bands = sphere.frequencies.size();
+        for (std::size_t k = 0; k < flight_path.size(); k++)
+        {
+            if (flight_path[k] > empty_level_db)
+                flight_path[k] -= (*absorption)[k % n_bands] * sphere.radius;
+        }
+    }
     const std::size_t row_length = sphere.thetas.size() * sphere.frequencies.size();
     std::vector<float> amplitude;
     amplitude.reserve(rows.size() * row_length);

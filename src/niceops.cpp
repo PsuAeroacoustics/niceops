@@ -6544,7 +6544,27 @@ int run(int argc, char* argv[])
                 const double tip_speed = !std::isnan(database.tip_speed())
                         ? database.tip_speed()
                         : configure_vehicle(vehicle_files.front()).tip_speed;
-                write_aam_sphere(sphere, aam_file, tip_speed);
+                // A lossless sphere carries no absorption to its radius and AAM's
+                // levels do: it takes the air's, the vehicle file's under the first
+                // --temperature, --pressure and --humidity given, as a run would.
+                std::vector<double> export_absorption;
+                if (sphere.levels_lossless)
+                {
+                    const auto vehicle = configure_vehicle(vehicle_files.front());
+                    Atmosphere export_air = vehicle.atmosphere;
+                    if (!temperature_overrides.empty() && !std::isnan(temperature_overrides.front()))
+                        export_air.temperature = temperature_overrides.front();
+                    if (!pressure_overrides.empty() && !std::isnan(pressure_overrides.front()))
+                        export_air.pressure = pressure_overrides.front();
+                    if (!humidity_overrides.empty() && !std::isnan(humidity_overrides.front()))
+                        export_air.relative_humidity = humidity_overrides.front();
+                    export_absorption = absorption_coefficients(export_air, sphere.frequencies);
+                    log("--export_aam: ", front_database, "'s levels are lossless, so the AAM sphere takes "
+                            "absorption out to its radius (", sphere.radius, " m) in ", export_air.temperature,
+                            " K, ", export_air.pressure, " kPa, ", export_air.relative_humidity, " % RH (",
+                            vehicle_files.front(), " under --temperature/--pressure/--humidity).");
+                }
+                write_aam_sphere(sphere, aam_file, tip_speed, sphere.levels_lossless ? &export_absorption : nullptr);
             }
             return 0;
         }

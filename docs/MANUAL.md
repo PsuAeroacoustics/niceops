@@ -515,7 +515,11 @@ path angle, so the export is pitched nose-up by the condition's flight path angl
 level sphere, and records `sphere_frame = flight_path`: an AAM deck flown at AOA 0 then hears
 what NICEOPS hears. A database is level unless it records `sphere_frame = flight_path` (WOPWOP's
 predicted spheres, kept in their own frame); NICEOPS then reads it in that frame, its nose the
-velocity climb included, and exports it unrotated. Any other `sphere_frame` is refused.
+velocity climb included, and exports it unrotated. Any other `sphere_frame` is refused. AAM's
+levels at the sphere radius carry the absorption out to it, so a lossless database
+(`sphere_levels_lossless = 1`) is exported with α(f) times the radius taken off each band, in the
+vehicle file's air under the first `--temperature`, `--pressure` and `--humidity` given; the log
+names that air.
 A database that records `sphere_levels_lossless = 1` (predicted spheres, with no absorption
 between the hub and the sphere) is absorbed from the hub rather than from the sphere's surface.
 Third-octave bands (10 Hz to 10 kHz) are written as AAM's broadband sphere type (`BB`), any
