@@ -3051,6 +3051,47 @@ TEST_CASE("a tone over the ground is the exact two-ray sum with the model's Q at
     }
 }
 
+TEST_CASE("a caller's tone counts are the evaluator's own, handed over once", "[tones]")
+{
+    // The run keeps its counts per thread and adds them once (no shared
+    // counter per tone in the hot loop); the totals must be the same as the
+    // evaluator's own counting.
+    // A fixture whose levels and phases vary over the sphere, with the
+    // near-field term on, so there is something to count.
+    const auto path = write_tone_test_database("niceops_tones_counts.nod", ToneFixture {});
+    DatabaseLoadOptions load;
+    load.tones_evaluated = true;
+    load.tone_near_field = true;
+    const Database database(path, load);
+    ToneRunOptions options;
+    options.near_field = true;
+    const ToneEvaluator tones(database, options, a_weighting_gains(database.band_centers(), BandLimits {}), 343.2);
+    const auto state = database.source_state(Vec3(0.0, 0.0, 100.0), Vec3(1.0, 0.0, 0.0), Vec3(0.0, 0.0, 1.0), 0.2,
+            0.2, test_ct_reference);
+    struct
+    {
+        const Database& database;
+        const ToneEvaluator& tones;
+        const Database::SourceState& state;
+    } run {database, tones, state};
+    const std::size_t n = run.database.band_centers().size();
+    std::vector<double> absorption(n, 0.0), p(n, 0.0), w(n, 0.0), q(n, 0.0), v(n, 0.0);
+    const auto prepared = run.tones.prepare(run.state, Vec3(0.0, 0.0, 0.0));
+    const Vec3 observer(300.0, 50.0, 0.0);
+    run.tones.evaluate(run.state, prepared, observer, absorption.data(), nullptr, 0.0, p.data(), w.data());
+    const std::size_t own = run.tones.near_field_evaluations();
+    REQUIRE(own > 0);
+    ToneEvaluator::Counts kept;
+    run.tones.evaluate(run.state, prepared, observer, absorption.data(), nullptr, 0.0, q.data(), v.data(), &kept);
+    REQUIRE(run.tones.near_field_evaluations() == own);
+    REQUIRE(kept.near_field_evaluations == own);
+    run.tones.add_counts(kept);
+    REQUIRE(run.tones.near_field_evaluations() == 2 * own);
+    REQUIRE(p == q);
+    REQUIRE(w == v);
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("two rotors in one sync group: +6 dB in phase, a null in antiphase, +3 dB in energy", "[tones]")
 {
     // On the plane between the two hubs, below the vehicle: the same path to both.

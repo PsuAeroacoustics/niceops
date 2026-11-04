@@ -3798,6 +3798,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         std::vector<double> tone_bands_with(tone_band_count), tone_bands_free(tone_band_count);
         std::vector<double> tone_ratio(tone_band_count, 1.0);
         std::size_t tone_frequency_here = 0, tone_band_here = 0;
+        ToneEvaluator::Counts tone_counts_here;
         for (std::size_t index = begin; index < end; index++)
         {
             // Evaluated at the microphone, with this observer's receiver.
@@ -4214,13 +4215,13 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     tone_evaluator->evaluate(source_states[it], tone_states[it], observer, path_absorption_here,
                             grounded ? &tone_ground_here : nullptr,
                             grounded ? observer.z - ground_here->receiver_height : 0.0, tone_power.data(),
-                            tone_weighted.data());
+                            tone_weighted.data(), &tone_counts_here);
                     return add_tone_power(level, tone_power.data(), tone_weighted.data(), nullptr, first_band,
                             last_band, bands_out);
                 }
                 tone_band_here++;
                 tone_evaluator->evaluate(source_states[it], tone_states[it], observer, path_absorption_here, nullptr,
-                        0.0, tone_power.data(), tone_weighted.data());
+                        0.0, tone_power.data(), tone_weighted.data(), &tone_counts_here);
                 database.spectral_level_at_observer(observer, source_states[it], absorption_for(it, observer),
                         band_gains, nullptr, nullptr, sound_speed, first_band, last_band, packed_of_state[it],
                         nullptr, 0.0, nullptr, tone_bands_free.data());
@@ -4718,6 +4719,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         culled_samples += culled_here;
         tone_frequency_evaluations += tone_frequency_here;
         tone_band_evaluations += tone_band_here;
+        if (tone_evaluator)
+            tone_evaluator->add_counts(tone_counts_here);
         evaluated_samples += evaluated_here;
         shadowed_samples += shadowed_here;
         table_samples += tabled_here;

@@ -163,14 +163,43 @@ public:
         const AdmittanceTable* admittance = nullptr;
     };
 
+    // What evaluate() counts (see the getters below).  A caller in the run's
+    // loop keeps its own and hands them over once (add_counts), so no thread
+    // touches shared counters per tone.
+    struct Counts
+    {
+        std::size_t outside_bands = 0;
+        std::size_t near_field_evaluations = 0;
+        std::size_t near_field_large = 0;
+        std::size_t near_field_capped = 0;
+        Counts& operator+=(const Counts& o)
+        {
+            outside_bands += o.outside_bands;
+            near_field_evaluations += o.near_field_evaluations;
+            near_field_large += o.near_field_large;
+            near_field_capped += o.near_field_capped;
+            return *this;
+        }
+    };
+
     // Every tone's power at `observer`, added into `power` (unweighted, p_ref^2)
     // and `weighted` (A-weighted at the tone's own received frequency) by band;
     // both hold the database's band count.  `absorption` is the path's dB/m per
     // band, read at each tone's received frequency by interpolation in log
     // frequency.  `ground_plane` is the ground's height under the observer.
+    // `counts`: where this call's counts go; null, straight into the evaluator's
+    // own (once per call).
     void evaluate(const Database::SourceState& state, const StateTones& tones, const Vec3& observer,
             const double* absorption, const Ground* ground, double ground_plane, double* power,
-            double* weighted) const;
+            double* weighted, Counts* counts = nullptr) const;
+    // Adds counts a caller kept (evaluate's `counts`) to the evaluator's own.
+    void add_counts(const Counts& counts) const
+    {
+        outside_bands_.fetch_add(counts.outside_bands, std::memory_order_relaxed);
+        near_field_evaluations_.fetch_add(counts.near_field_evaluations, std::memory_order_relaxed);
+        near_field_large_.fetch_add(counts.near_field_large, std::memory_order_relaxed);
+        near_field_capped_.fetch_add(counts.near_field_capped, std::memory_order_relaxed);
+    }
 
     const std::vector<Group>& groups() const
     {

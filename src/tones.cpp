@@ -377,8 +377,10 @@ ToneEvaluator::StateTones ToneEvaluator::prepare(const Database::SourceState& st
 }
 
 void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTones& tones, const Vec3& observer,
-        const double* absorption, const Ground* ground, double ground_plane, double* power, double* weighted) const
+        const double* absorption, const Ground* ground, double ground_plane, double* power, double* weighted,
+        Counts* counts) const
 {
+    Counts local;
     const auto& sources = database_.tone_sources();
     const double c = sound_speed_;
     const double radius = database_.sphere_radius();
@@ -401,7 +403,7 @@ void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTone
         const std::size_t band = band_of(frequency);
         if (band == no_band)
         {
-            outside_bands_.fetch_add(1, std::memory_order_relaxed);
+            local.outside_bands++;
             return;
         }
         power[band] += p;
@@ -444,13 +446,13 @@ void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTone
                 : std::polar(std::pow(10.0, look.level_db / 20.0), look.phase);
         const double k = 2.0 * pi * frequency_e / c;
         std::complex<double> term = std::complex<double>(0.0, 1.0 / (2.0 * k * range)) * look.near_field;
-        near_field_evaluations_.fetch_add(1, std::memory_order_relaxed);
+        local.near_field_evaluations++;
         if (std::abs(term) > 0.5 * std::abs(far))
-            near_field_large_.fetch_add(1, std::memory_order_relaxed);
+            local.near_field_large++;
         if (std::abs(term) > 2.0 * look.peak_amplitude)
         {
             term *= 2.0 * look.peak_amplitude / std::abs(term);
-            near_field_capped_.fetch_add(1, std::memory_order_relaxed);
+            local.near_field_capped++;
         }
         return (far + term) * loss * std::polar(1.0, turn);
     };
@@ -521,6 +523,10 @@ void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTone
         for (const Sum& x : sums)
             file(combine(x.d, x.r, coherence(x.frequency), true), x.frequency);
     }
+    if (counts != nullptr)
+        *counts += local;
+    else
+        add_counts(local);
 }
 
 } // namespace niceops
