@@ -389,9 +389,19 @@ void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTone
     const bool with_ground = ground != nullptr && ground->model != nullptr;
     // One reception time for every arrival: the state's center's direct lag.
     const double lag = (observer - state.position).norm() / c;
+    // The ground as the band model takes it (excess_ground_attenuation along
+    // straight_ray): the plane z = ground_plane, the source's height above it,
+    // the model's receiver height, and the horizontal separation.  The direct
+    // arrival is the observer's own, as the band path's direct level is; the
+    // reflected one goes to the image of a receiver at the model's height and is
+    // carried onto the observer's direct arrival by the ratio of their fields there
+    // (THEORY 4.4).  An observer at the model's height is that receiver.
+    const double receiver_height = with_ground ? ground->model->receiver_height : 0.0;
+    Vec3 receiver = observer;
+    receiver.z = ground_plane + receiver_height;
     Vec3 image = observer;
-    image.z = 2.0 * ground_plane - observer.z;
-    const double receiver_height = observer.z - ground_plane;
+    image.z = ground_plane - receiver_height;
+    const bool off_receiver = with_ground && receiver.z != observer.z;
     // The turbulence coherence from the state's center, the geometry the band
     // model takes, so every source of one state shares it.
     const double center_height = state.position.z - ground_plane;
@@ -467,9 +477,10 @@ void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTone
         return p * std::complex<double>(q[0], -q[1]) * rough;
     };
 
-    thread_local std::vector<Database::ToneLookup> direct, reflected;
+    thread_local std::vector<Database::ToneLookup> direct, reflected, at_receiver;
     direct.resize(max_tones_);
     reflected.resize(max_tones_);
+    at_receiver.resize(max_tones_);
     struct Sum
     {
         int order;
@@ -486,11 +497,16 @@ void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTone
             const Vec3& hub = tones.hubs[s];
             const ToneArrival d_arrival = tone_arrival(hub, tones.velocity, observer, lag, c, tones.wind);
             database_.tone_directivity(s, state, d_arrival.direction, direct.data());
-            ToneArrival r_arrival;
+            ToneArrival r_arrival, v_arrival;
             if (with_ground)
             {
                 r_arrival = tone_arrival(hub, tones.velocity, image, lag, c, tones.wind);
                 database_.tone_directivity(s, state, r_arrival.direction, reflected.data());
+            }
+            if (off_receiver)
+            {
+                v_arrival = tone_arrival(hub, tones.velocity, receiver, lag, c, tones.wind);
+                database_.tone_directivity(s, state, v_arrival.direction, at_receiver.data());
             }
             for (std::size_t t = 0; t < src.tone_count(); t++)
             {
@@ -502,6 +518,15 @@ void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTone
                 std::complex<double> pr(0.0, 0.0);
                 if (with_ground)
                     pr = reflect(phasor(reflected[t], r_arrival, fe, psi, fr), r_arrival, hub, fr);
+                if (off_receiver)
+                {
+                    // The reflection relative to the direct field at the model's
+                    // receiver, carried onto the observer's direct arrival.
+                    double fv = 0.0;
+                    const std::complex<double> pv = phasor(at_receiver[t], v_arrival, fe, psi, fv);
+                    if (pv != std::complex<double>(0.0, 0.0))
+                        pr = pd * (pr / pv);
+                }
                 // A tone whose phase is known adds its own arrivals coherently;
                 // one without (none, or the grid does not resolve it) in energy.
                 const bool phased = src.phase_reference != PhaseReference::none && !src.energy_only[t];

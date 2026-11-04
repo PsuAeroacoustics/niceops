@@ -3120,6 +3120,40 @@ TEST_CASE("a tone over the ground is the exact two-ray sum with the model's Q at
     }
 }
 
+TEST_CASE("a tone's ground is the band model's at any observer height", "[tones]")
+{
+    // The band model (excess_ground_attenuation on straight_ray) takes the plane
+    // z = 0, the source's height above it, its own receiver height and the
+    // horizontal separation, and puts the ratio on the direct level at the
+    // observer itself.  The tone path must describe the same two rays wherever the
+    // observer file puts the microphone: at one frequency, its ground is
+    // |1 + Q (R1/R2) e^{-ik(R2 - R1)}|^2 of that geometry times the free field at
+    // the observer.
+    auto fixture = omni_tones({"front"});
+    fixture.center = [](std::size_t) { return std::array<double, 3> {0.0, 0.0, 0.0}; };
+    const ToneRun run("niceops_tones_band_geometry.nod", fixture, {}, Vec3(0.0, 0.0, 10.0));
+    GroundModel ground;
+    ground.receiver_height = 1.2;
+    const AdmittanceTable admittance(ground, 10.0, 20000.0, 343.2);
+    const ToneEvaluator::Ground g {&ground, &admittance};
+    const double f = 4.0 * 62.5, k = 2.0 * pi * f / 343.2, radius = run.database.sphere_radius();
+    const double hs = 10.0, hr = 1.2;
+    for (const double z : {0.0, 1.2, 5.0})
+        for (const double x : {40.0, 80.0, 200.0, 600.0})
+        {
+            const Vec3 observer(x, 15.0, z), hub(0.0, 0.0, hs);
+            const double d = std::hypot(x, 15.0);
+            const double r1 = std::hypot(d, hs - hr), r2 = std::hypot(d, hs + hr);
+            const auto q = spherical_reflection_coefficient((hs + hr) / r2, pi * f * r2 / 343.2, admittance.at(f),
+                    true);
+            const std::complex<double> ratio
+                    = 1.0 + std::complex<double>(q[0], -q[1]) * (r1 / r2) * std::polar(1.0, -k * (r2 - r1));
+            const double free = std::pow(1e4 * radius / (observer - hub).norm(), 2.0);
+            const double exact = free * std::norm(ratio);
+            REQUIRE(std::fabs(run.power(observer, &g) / exact - 1.0) < 1e-9);
+        }
+}
+
 TEST_CASE("a caller's tone counts are the evaluator's own, handed over once", "[tones]")
 {
     // The run keeps its counts per thread and adds them once (no shared

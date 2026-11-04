@@ -4214,7 +4214,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     const bool grounded = ground_here != nullptr;
                     tone_evaluator->evaluate(source_states[it], tone_states[it], observer, path_absorption_here,
                             grounded ? &tone_ground_here : nullptr,
-                            grounded ? observer.z - ground_here->receiver_height : 0.0, tone_power.data(),
+                            0.0, tone_power.data(),
                             tone_weighted.data(), &tone_counts_here);
                     return add_tone_power(level, tone_power.data(), tone_weighted.data(), nullptr, first_band,
                             last_band, bands_out);

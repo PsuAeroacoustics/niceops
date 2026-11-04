@@ -186,7 +186,10 @@ public:
     // and `weighted` (A-weighted at the tone's own received frequency) by band;
     // both hold the database's band count.  `absorption` is the path's dB/m per
     // band, read at each tone's received frequency by interpolation in log
-    // frequency.  `ground_plane` is the ground's height under the observer.
+    // frequency.  `ground_plane` is the height of the plane the ground model
+    // stands on (the run's is z = 0, the band model's); the receiver is the
+    // model's receiver height above it, the reflection carried onto the
+    // observer's own direct arrival (THEORY 4.4).
     // `counts`: where this call's counts go; null, straight into the evaluator's
     // own (once per call).
     void evaluate(const Database::SourceState& state, const StateTones& tones, const Vec3& observer,

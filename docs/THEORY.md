@@ -575,8 +575,15 @@ whole-vehicle form PSU-WOPWOP's per-rotor spheres sum to.
 reflection coefficient of §5.2 at its own frequency and grazing angle,
 $a_r \leftarrow a_r\,\overline{Q(f_r)}\,e^{-2(k\sigma_r\cos\vartheta)^2}$: $Q$ is written for
 $e^{-i\omega t}$, so it enters conjugated. The admittance is the ground model's, tabulated at
-96 points per octave and interpolated in $\lg f$. The plane is the observer's height less the
-receiver height, as in §5. A source's direct and reflected arrivals add with the turbulence
+96 points per octave and interpolated in $\lg f$. The geometry is the band model's (§5): the
+plane $z = 0$, the hub's height above it, the model's receiver height $h_r$ and the horizontal
+separation. The direct arrival is the observer's own, as the band path's direct level is; the
+image arrival goes to the image of a receiver $h_r$ up at the observer's horizontal position, and
+is carried onto the observer's direct arrival by the ratio of the two fields there,
+$a_r \leftarrow a_d\,a_r/a_v$, with $a_v$ the direct arrival at that receiver. An observer at
+$h_r$ is that receiver, and $a_r$ stands as it is. So at one frequency the tone's ground is
+$\lvert 1 + Q\,(R_1/R_2)\,e^{-ik(R_2-R_1)}\rvert^2$ of the band model's own $R_1$, $R_2$ for any
+observer height. A source's direct and reflected arrivals add with the turbulence
 coherence $T(f)$ of §5.3 on their cross term, taken from the state's center as there:
 
 $$
