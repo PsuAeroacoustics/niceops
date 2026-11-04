@@ -1283,6 +1283,13 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
         if (fixed_load_factor_)
             input_error("Database ", datafile_path, " is fixed_load_factor in multirotor axes: its load-factor law "
                     "is in C_T, which a multirotor's axes do not carry.");
+        // Multirotor axes scale by each condition's own air (v_h and M_h follow
+        // the density), so a database must say it was built that way.
+        if (thrust_coefficient_density_ != ThrustCoefficientDensity::run)
+            input_error("Database ", datafile_path, " gives its conditions in multirotor axes but its "
+                    "thrust_coefficient_density is not 'run'", read_root_text(file_ncid, "thrust_coefficient_density")
+                    ? "" : " (it has none)", ": multirotor axes are formed with each condition's own air density, "
+                    "and the database must record that (thrust_coefficient_density = run).");
         info("Database conditions are in multirotor axes: ", rotor_count_, " rotors of radius ", multirotor_radius_,
                 " m, hover thrust coefficient ", hover_thrust_coefficient_, ".");
     }

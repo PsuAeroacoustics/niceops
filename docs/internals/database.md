@@ -293,7 +293,7 @@ What a builder writes, and the loader checks:
 | root attribute | `rotor_count` | N, a whole number |
 | root attribute | `rotor_radius_m` | R, m |
 | root attribute | `hover_thrust_coefficient` | C_T,h per rotor, T / (rho pi R^2 (Omega R)^2), at hover |
-| root attribute | `thrust_coefficient_density` | `run`: the axes were formed with each condition's own air |
+| root attribute | `thrust_coefficient_density` | `run`: the axes were formed with each condition's own air; anything else (or absent) is refused |
 | root variable | `fixed_load_factor` | 0 or absent; set, the database is refused |
 | condition group, scalar | `inplane_speed_ratio` | x >= 0, the in-plane air speed over v_h |
 | condition group, scalar | `axial_speed_ratio` | z, the air speed along the thrust over v_h, positive in climb |

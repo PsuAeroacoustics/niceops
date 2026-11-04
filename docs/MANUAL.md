@@ -662,7 +662,10 @@ the state's own hover rotor speed, as the share of it the database records.
   `--export_sphere` and `--export_aam`, whose condition is μ, γ and C<sub>T</sub>;
   `niceops_procedure --check`; a vehicle file without a weight; and a database without
   `rotor_count`, `rotor_radius_m` or `hover_thrust_coefficient`, with `fixed_load_factor` set, with
-  every condition the same, or with a rotor that lacks its `speed_ratio`.
+  every condition the same, with a rotor that lacks its `speed_ratio`, or without
+  `thrust_coefficient_density = run` (its axes are formed with each condition's own air).
+- `--condition_density vehicle` places the states with the vehicle file's density and warns that
+  v_h and M_h then move by the ratio of the two densities.
 
 ### Speed reference
 
@@ -692,9 +695,9 @@ neither, the run's air is the vehicle file's own, and the result is the default'
 The air is taken as dry.
 
 - **A database records which density its C<sub>T</sub> axis used**, in the root attribute
-  `thrust_coefficient_density` (`vehicle`, or absent, or `run`). The run warns when its choice
-  differs, since states and spheres then disagree about C<sub>T</sub> by the ratio of the two
-  densities.
+  `thrust_coefficient_density` (`vehicle`, or absent, or `run`). On a helicopter database the run
+  warns when its choice differs, since states and spheres then disagree about C<sub>T</sub> by the
+  ratio of the two densities; a multirotor database must say `run`.
 - **Use it when the database was built that way**, or to see what a hot or high day does to the
   operating condition: a lighter air raises C<sub>T</sub>.
 - The log gives the densities the states took.

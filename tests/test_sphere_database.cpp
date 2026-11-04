@@ -3253,6 +3253,8 @@ struct MultirotorFixture
         return 1.0 + 0.1 * static_cast<double>(i) + 0.01 * static_cast<double>(s);
     };
     bool rotor_count = true, rotor_radius = true, hover_ct = true, speed_ratios = true;
+    // thrust_coefficient_density = run, which a multirotor database must record.
+    bool run_density = true;
     bool keep_fixed_load_factor = false;
 };
 
@@ -3275,6 +3277,8 @@ std::string write_multirotor_test_database(const std::string& name, ToneFixture 
     if (m.hover_ct)
         REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, "hover_thrust_coefficient", NC_DOUBLE, 1, &test_hover_ct)
                 == NC_NOERR);
+    if (m.run_density)
+        REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, "thrust_coefficient_density", 3, "run") == NC_NOERR);
     int n = 0;
     REQUIRE(nc_inq_grps(ncid, &n, nullptr) == NC_NOERR);
     std::vector<int> groups(static_cast<std::size_t>(n));
@@ -3488,6 +3492,11 @@ TEST_CASE("a multirotor database refuses what it cannot place a state with", "[m
     m = {};
     m.conditions[1][0] = -0.5;
     refused("niceops_multirotor_negative_x.nod", m, "expected x >= 0");
+    // Multirotor axes are formed with each condition's own air: a database that
+    // does not record thrust_coefficient_density = run is refused.
+    m = {};
+    m.run_density = false;
+    refused("niceops_multirotor_vehicle_density.nod", m, "thrust_coefficient_density is not 'run' (it has none)");
 }
 
 TEST_CASE("a shaft-order tone is interpolated with its phase unwound about the shaft", "[multirotor][tones]")
