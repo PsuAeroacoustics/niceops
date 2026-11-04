@@ -2535,12 +2535,15 @@ struct ToneFixture
     // The rotor azimuth (deg) source s's phases were locked to at condition i
     // (the optional azimuth); unset, none written.
     std::function<double(std::size_t, std::size_t)> azimuth;
+    // Rows (channels) with phi descending, as write_shared_grid_test_database's
+    // reverse_phi_rows lays them out; the tones follow the same rows.
+    bool reverse_phi_rows = false;
 };
 
 std::string write_tone_test_database(const std::string& name, const ToneFixture& f)
 {
     const auto path = write_shared_grid_test_database(name, fixed_load_factor_conditions, false, true, 30.48, {},
-            false, f.bands);
+            f.reverse_phi_rows, f.bands);
     int ncid = 0;
     REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
     REQUIRE(nc_redef(ncid) == NC_NOERR);
@@ -2621,10 +2624,12 @@ std::string write_tone_test_database(const std::string& name, const ToneFixture&
                                        : f.harmonics[k] * std::fabs(f.shaft_rates[v.s]) / (2.0 * pi);
         REQUIRE(nc_put_var_double(v.group, v.frequency, frequency.data()) == NC_NOERR);
         std::vector<double> amplitude, phase;
-        for (std::size_t m = 0; m < 4; m++)
+        for (std::size_t row = 0; row < 4; row++)
             for (std::size_t n = 0; n < 4; n++)
                 for (std::size_t k = 0; k < n_tones; k++)
                 {
+                    // The file's row `row` is sorted phi index m.
+                    const std::size_t m = f.reverse_phi_rows ? 3 - row : row;
                     amplitude.push_back(f.amplitude ? f.amplitude(v.s, m, n, k)
                                                     : 80.0 + 2.0 * static_cast<double>(m) - static_cast<double>(n)
                                     - 3.0 * static_cast<double>(k));
@@ -2638,6 +2643,29 @@ std::string write_tone_test_database(const std::string& name, const ToneFixture&
 }
 
 } // namespace
+
+TEST_CASE("tones land in the direction their rows name, as the bands beside them do", "[sphere_database][format2]")
+{
+    // A file whose rows are not in sorted (phi, theta) order: the bands are put in
+    // their cells by the channels' own angles, and the tones beside them must be
+    // too, or each tone sits in another direction than its bands.
+    ToneFixture sorted;
+    ToneFixture reversed;
+    reversed.reverse_phi_rows = true;
+    DatabaseLoadOptions evaluated;
+    evaluated.tones_evaluated = true;
+    const auto a_path = write_tone_test_database("niceops_tones_sorted_rows.nod", sorted);
+    const auto b_path = write_tone_test_database("niceops_tones_reversed_rows.nod", reversed);
+    const Database a(a_path, evaluated), b(b_path, evaluated);
+    REQUIRE(a.tone_sources().size() == b.tone_sources().size());
+    for (std::size_t s = 0; s < a.tone_sources().size(); s++)
+    {
+        REQUIRE(a.tone_sources()[s].amplitudes.size() == b.tone_sources()[s].amplitudes.size());
+        REQUIRE(a.tone_sources()[s].amplitudes == b.tone_sources()[s].amplitudes);
+    }
+    std::filesystem::remove(a_path);
+    std::filesystem::remove(b_path);
+}
 
 TEST_CASE("the flight-path frame's nose is the velocity, and level flight is the level frame",
         "[sphere_database][format2]")

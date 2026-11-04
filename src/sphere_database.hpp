@@ -1240,6 +1240,9 @@ private:
     // starboard (rad): what a tone's phase is unwound by (ToneSource::unwind_order).
     std::vector<double> cell_shaft_azimuth_;
     std::vector<ToneSource> tone_sources_;
+    // Per condition group of a format 2 file: the sorted cell of each of its
+    // channel rows (the remap the band amplitude takes), which its tones take too.
+    std::vector<std::vector<std::size_t>> tone_cell_of_;
     bool tone_near_field_ = false;
     // Per condition, the flight speed (m/s) and climb angle (rad) a multirotor
     // condition group records (airspeed, climb_rate), NaN where it does not: the

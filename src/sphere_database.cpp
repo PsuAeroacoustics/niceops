@@ -1674,6 +1674,10 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
                 }
                 cached_cell_of_valid = true;
             }
+            // A format 2 file's tones are laid out over the same rows as its
+            // amplitude, so they take the same remap (load_tone_sources).
+            if (database_version_ >= 2)
+                tone_cell_of_.push_back(cell_of);
             // Grid-shaped coverage, laid out as amplitude is, so the same cell_of
             // permutation applies.  A cell takes the share of its own A-weighted
             // band energy, at the sphere, that the builder measured: a band the
@@ -2279,6 +2283,9 @@ void Database::load_tone_sources(int file_ncid, const std::vector<int>& group_id
                         "keeps them at every condition.");
             }
             const std::size_t tones = harmonics.size();
+            // The file's rows are its sphere's channels; cell_of puts each in its
+            // sorted cell, as the band amplitude beside it is.
+            const std::vector<std::size_t>* cell_of = i < tone_cell_of_.size() ? &tone_cell_of_[i] : nullptr;
             const auto amplitude = read_exact(sid, "amplitude", n_cells * tones, what);
             refuse_fill_values(datafile_path, i, ("amplitude of source " + tags[s]).c_str(), amplitude);
             std::vector<double> phase(n_cells * tones, 0.0);
@@ -2315,18 +2322,22 @@ void Database::load_tone_sources(int file_ncid, const std::vector<int>& group_id
             source.frequencies.insert(source.frequencies.end(), frequencies.begin(), frequencies.end());
             // Gridded over the sorted unique angles, as a band amplitude is; an
             // empty (non-finite) level is no pressure.
-            for (std::size_t slot = 0; slot < n_cells * tones; slot++)
+            const std::size_t offset = source.amplitudes.size();
+            source.amplitudes.resize(offset + n_cells * tones, std::complex<float>(0.0F, 0.0F));
+            for (std::size_t row = 0; row < n_cells; row++)
             {
-                const double level = amplitude[slot];
-                if (!std::isfinite(level))
+                const std::size_t cell = cell_of != nullptr && cell_of->size() == n_cells ? (*cell_of)[row] : row;
+                for (std::size_t k = 0; k < tones; k++)
                 {
-                    source.amplitudes.emplace_back(0.0F, 0.0F);
-                    continue;
+                    const std::size_t slot = row * tones + k;
+                    const double level = amplitude[slot];
+                    if (!std::isfinite(level))
+                        continue;
+                    if (!std::isfinite(phase[slot]))
+                        input_error(what, " has a non-finite phase where its amplitude is finite.");
+                    source.amplitudes[offset + cell * tones + k] = std::polar(
+                            static_cast<float>(std::pow(10.0, level / 20.0)), static_cast<float>(phase[slot] * pi / 180.0));
                 }
-                if (!std::isfinite(phase[slot]))
-                    input_error(what, " has a non-finite phase where its amplitude is finite.");
-                source.amplitudes.push_back(std::polar(static_cast<float>(std::pow(10.0, level / 20.0)),
-                        static_cast<float>(phase[slot] * pi / 180.0)));
             }
         }
     }
