@@ -1974,35 +1974,18 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
         }
     }
 
-    // Normalize operating conditions
-    if (condition_axes_ == ConditionAxes::multirotor)
+    // Normalize operating conditions: each axis the triangulation uses to [0, 1]
+    // (active_axes_: a helicopter's mu and gamma, and C_T unless the database is
+    // fixed_load_factor, whose C_T is one constant; a multirotor's varying axes).
     {
-        // Each varying axis to [0, 1]; a constant one is left out below.
         std::vector<double>* slots[3] = {&advance_ratios, &flight_path_angles, &thrust_coefficients};
         const double lows[3] = {advance_ratio_min, flight_path_angle_min, thrust_coefficient_min};
         const double highs[3] = {advance_ratio_max, flight_path_angle_max, thrust_coefficient_max};
         for (std::size_t a = 0; a < 3; a++)
-            if (active_axes_[a] && highs[a] > lows[a])
+            if (active_axes_[a])
                 for (auto& x : *slots[a])
                     x = unit_interval(x, lows[a], highs[a]);
-    }
-    else
-    {
-        for (auto& x : advance_ratios)
-            x = unit_interval(x, advance_ratio_min, advance_ratio_max);
-        trace("Normalized μ   = ", advance_ratios);
-        for (auto& x : flight_path_angles)
-            x = unit_interval(x, flight_path_angle_min, flight_path_angle_max);
-        trace("Normalized γ   = ", flight_path_angles);
-        // A fixed_load_factor database has thrust_coefficient_min == max, so this
-        // would divide by zero -- and there is nothing to normalize anyway, since
-        // CT plays no part in a triangulation that does not include it.
-        if (!fixed_load_factor_)
-        {
-            for (auto& x : thrust_coefficients)
-                x = unit_interval(x, thrust_coefficient_min, thrust_coefficient_max);
-            trace("Normalized CT  = ", thrust_coefficients);
-        }
+        trace("Normalized conditions = ", advance_ratios, ", ", flight_path_angles, ", ", thrust_coefficients);
     }
 
     // Pack the normalized axes into the row-major point array the
@@ -2016,26 +1999,13 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
         input_error("The database attribute coherence_tonal_fraction holds ", coherence_record_.tonal_fraction.size(),
                 " values; it needs one per band of the database's spectra, ", frequencies_.size(), ".");
     std::vector<double> conditions(advance_ratios.size() * active_condition_dims_);
-    if (condition_axes_ == ConditionAxes::multirotor)
+    for (std::size_t i = 0; i < advance_ratios.size(); i++)
     {
-        for (std::size_t i = 0; i < advance_ratios.size(); i++)
-        {
-            const double values[3] = {advance_ratios[i], flight_path_angles[i], thrust_coefficients[i]};
-            std::size_t column = 0;
-            for (std::size_t a = 0; a < 3; a++)
-                if (active_axes_[a])
-                    conditions[i * active_condition_dims_ + column++] = values[a];
-        }
-    }
-    else
-    {
-        for (std::size_t i = 0; i < advance_ratios.size(); i++)
-        {
-            conditions[i * active_condition_dims_ + 0] = advance_ratios[i];
-            conditions[i * active_condition_dims_ + 1] = flight_path_angles[i];
-            if (!fixed_load_factor_)
-                conditions[i * active_condition_dims_ + 2] = thrust_coefficients[i];
-        }
+        const double values[3] = {advance_ratios[i], flight_path_angles[i], thrust_coefficients[i]};
+        std::size_t column = 0;
+        for (std::size_t a = 0; a < 3; a++)
+            if (active_axes_[a])
+                conditions[i * active_condition_dims_ + column++] = values[a];
     }
     normalized_conditions_ = conditions;
     // The triangulation touches no netCDF state, and nc_close takes about as long:
@@ -2494,41 +2464,48 @@ void Database::compute_tone_near_fields(const std::string& datafile_path)
 Database::Blend Database::blend_at(double advance_ratio, double flight_path_angle,
         double thrust_coefficient, const BlendOptions& options) const
 {
-    // The raw query CT, kept before it is normalized below (or, for a
-    // fixed_load_factor database, not used for normalization at all): the
-    // analytic load-factor correction compares it against
-    // reference_thrust_coefficient_ in physical units, not normalized ones.
+    // One path for both kinds of axes: a helicopter's (mu, gamma, C_T) and a
+    // multirotor's (x, z, M_h) in the same three slots.  Each axis the
+    // triangulation uses (active_axes_) is normalized and clamped into its range;
+    // the rest stay out.  The raw query C_T is kept for the analytic load-factor
+    // correction, which compares it with reference_thrust_coefficient_ in
+    // physical units.
+    const bool multirotor = condition_axes_ == ConditionAxes::multirotor;
     const double raw_thrust_coefficient = thrust_coefficient;
-    if (condition_axes_ == ConditionAxes::multirotor)
-        return blend_multirotor(advance_ratio, flight_path_angle, thrust_coefficient, options);
     Blend blend;
-    blend.advance_ratio_clamped = advance_ratio < advance_ratio_min || advance_ratio > advance_ratio_max;
-    blend.flight_path_angle_clamped = flight_path_angle < flight_path_angle_min || flight_path_angle > flight_path_angle_max;
-    blend.thrust_coefficient_clamped = !fixed_load_factor_
-            && (thrust_coefficient < thrust_coefficient_min || thrust_coefficient > thrust_coefficient_max);
+    const double query[3] = {advance_ratio, flight_path_angle, thrust_coefficient};
+    const double lows[3] = {advance_ratio_min, flight_path_angle_min, thrust_coefficient_min};
+    const double highs[3] = {advance_ratio_max, flight_path_angle_max, thrust_coefficient_max};
+    // A helicopter's clamp is strict and leaves a fixed_load_factor C_T out (its
+    // law carries it); a multirotor's allows rounding, and reports a query off a
+    // constant axis too, since the spheres say nothing else there.
+    const double slack = multirotor ? 1e-12 : 0.0;
+    bool clamped[3];
+    for (std::size_t a = 0; a < 3; a++)
+        clamped[a] = (multirotor || active_axes_[a])
+                && (query[a] < lows[a] * (1.0 - slack) - slack || query[a] > highs[a] * (1.0 + slack) + slack);
+    blend.advance_ratio_clamped = clamped[0];
+    blend.flight_path_angle_clamped = clamped[1];
+    blend.thrust_coefficient_clamped = clamped[2];
 
     if (options.policy == BlendPolicy::aam)
     {
+        if (multirotor)
+            input_error("--blend aam brackets in airspeed and flight path angle, and this database's conditions are "
+                    "in multirotor axes (x, z, M_h). Refused.");
         blend_aam(advance_ratio, flight_path_angle, thrust_coefficient, options, blend);
     }
     else
     {
-        // Normalize flight condition and limit range to [0.0,1.0]
-        advance_ratio = clamp01(unit_interval(advance_ratio, advance_ratio_min, advance_ratio_max));
-        flight_path_angle = clamp01(
-                unit_interval(flight_path_angle, flight_path_angle_min, flight_path_angle_max));
-        if (!fixed_load_factor_)
-        {
-            thrust_coefficient = clamp01(
-                    unit_interval(thrust_coefficient, thrust_coefficient_min, thrust_coefficient_max));
-            trace("Normalized operating condition is: ", "μ  = ", advance_ratio, ", γ  = ", flight_path_angle,
-                    ", CT = ", thrust_coefficient);
-        }
-        // CT is not part of a fixed_load_factor triangulation -- see the member
-        // comment on fixed_load_factor_ -- so the query is (mu, gamma) there.
-        const double condition[condition_dims] = {advance_ratio, flight_path_angle, thrust_coefficient};
+        double normalized[condition_dims] = {0.0, 0.0, 0.0};
+        std::size_t column = 0;
+        for (std::size_t a = 0; a < 3; a++)
+            if (active_axes_[a])
+                normalized[column++] = clamp01(unit_interval(query[a], lows[a], highs[a]));
+        trace("Normalized operating condition: ", normalized[0], ", ", normalized[1], ", ", normalized[2]);
 
-        if (options.policy == BlendPolicy::nearest)
+        // A multirotor database of one condition has no triangulation to ask.
+        if (options.policy == BlendPolicy::nearest || (multirotor && n_conditions == 1))
         {
             // The stored condition nearest the state in the space the
             // triangulation is built in, taken whole.  The padding repeats it,
@@ -2536,22 +2513,21 @@ Database::Blend Database::blend_at(double advance_ratio, double flight_path_angl
             // blend does, so the bounds group it with itself alone.
             const std::size_t count = normalized_conditions_.size() / active_condition_dims_;
             const std::size_t nearest = nearest_point(active_condition_dims_, count,
-                    normalized_conditions_.data(), condition);
+                    normalized_conditions_.data(), normalized);
             blend.weights.fill(0.0);
             blend.weights[0] = 1.0;
             blend.indices.fill(nearest);
         }
         else
         {
-            interpolator_.barycentric(condition, blend.weights.data(), blend.indices.data());
-            if (fixed_load_factor_)
+            interpolator_.barycentric(normalized, blend.weights.data(), blend.indices.data());
+            // The interpolator writes active_condition_dims_ + 1 entries; the
+            // rest is padding, weight 0 on the first sphere, the convention for
+            // a degenerate blend (see cull_range's comment on "Skip the padding").
+            for (std::size_t k = active_condition_dims_ + 1; k < blend.weights.size(); k++)
             {
-                // The interpolator only ever sees (mu, gamma) and writes 3 of
-                // Blend's 4 slots; the 4th is padding, weight 0, matching the
-                // existing convention for a degenerate blend (see cull_range's
-                // comment on "Skip the padding").
-                blend.weights[3] = 0.0;
-                blend.indices[3] = blend.indices[0];
+                blend.weights[k] = 0.0;
+                blend.indices[k] = blend.indices[0];
             }
         }
         trace("Barycentric weights: ", blend.weights, " and indicies ", blend.indices);
@@ -2580,52 +2556,6 @@ Database::Blend Database::blend_at(double advance_ratio, double flight_path_angl
                     : 0.0;
         }
         trace("Load factor correction (dB): ", blend.level_correction_db);
-    }
-    return blend;
-}
-
-Database::Blend Database::blend_multirotor(double x, double z, double hover_tip_mach,
-        const BlendOptions& options) const
-{
-    // The multirotor axes (x, z, M_h) in the helicopter's three slots.  Every
-    // axis the database varies is normalized and clamped into its range; one it
-    // holds constant is out of the triangulation, and a query off its value is
-    // reported as clamped there, since the spheres say nothing else.
-    Blend blend;
-    const double query[3] = {x, z, hover_tip_mach};
-    const double lows[3] = {advance_ratio_min, flight_path_angle_min, thrust_coefficient_min};
-    const double highs[3] = {advance_ratio_max, flight_path_angle_max, thrust_coefficient_max};
-    bool clamped[3];
-    for (std::size_t a = 0; a < 3; a++)
-        clamped[a] = query[a] < lows[a] * (1.0 - 1e-12) - 1e-12 || query[a] > highs[a] * (1.0 + 1e-12) + 1e-12;
-    blend.advance_ratio_clamped = clamped[0];
-    blend.flight_path_angle_clamped = clamped[1];
-    blend.thrust_coefficient_clamped = clamped[2];
-    if (options.policy == BlendPolicy::aam)
-        input_error("--blend aam brackets in airspeed and flight path angle, and this database's conditions are in "
-                "multirotor axes (x, z, M_h). Refused.");
-    double normalized[condition_dims] = {0.0, 0.0, 0.0};
-    std::size_t column = 0;
-    for (std::size_t a = 0; a < 3; a++)
-        if (active_axes_[a])
-            normalized[column++] = clamp01(unit_interval(query[a], lows[a], highs[a]));
-    if (options.policy == BlendPolicy::nearest || n_conditions == 1)
-    {
-        const std::size_t count = normalized_conditions_.size() / active_condition_dims_;
-        const std::size_t nearest = nearest_point(active_condition_dims_, count, normalized_conditions_.data(),
-                normalized);
-        blend.weights.fill(0.0);
-        blend.weights[0] = 1.0;
-        blend.indices.fill(nearest);
-        return blend;
-    }
-    interpolator_.barycentric(normalized, blend.weights.data(), blend.indices.data());
-    // The interpolator writes active_condition_dims_ + 1 entries; the rest is
-    // padding, weight 0 on the first sphere (the fixed_load_factor convention).
-    for (std::size_t k = active_condition_dims_ + 1; k < blend.weights.size(); k++)
-    {
-        blend.weights[k] = 0.0;
-        blend.indices[k] = blend.indices[0];
     }
     return blend;
 }

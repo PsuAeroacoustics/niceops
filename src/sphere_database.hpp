@@ -1117,8 +1117,6 @@ private:
 
     // Blend the four bracketing operating conditions at one grid cell.
     Sample blend_cell(std::size_t i_phi, std::size_t i_theta, const Blend& blend) const;
-    // blend_at() for a multirotor database: the query is (x, z, M_h).
-    Blend blend_multirotor(double x, double z, double hover_tip_mach, const BlendOptions& options) const;
     // BlendPolicy::aam's selection into `blend` (weights and indices only).
     void blend_aam(double advance_ratio, double flight_path_angle, double thrust_coefficient,
             const BlendOptions& options, Blend& blend) const;
