@@ -5808,9 +5808,10 @@ int run(int argc, char* argv[])
             "when the two differ.")
             ->check(CLI::IsMember({"vehicle", "atmosphere"}));
     app.add_option("--rotor_azimuth", rotor_azimuth_args,
-            "A format 2 database's rotors: tag=degrees,... advances each named source by that angle in its own "
-            "sense of rotation, multiplying its shaft order m by e^(i m angle). Repeatable. Default: the stored "
-            "rotor-locked phases as they are.");
+            "A format 2 database's rotors: tag=degrees,... sets each named rotor's azimuth, in degrees in its own "
+            "sense of rotation (shaft order m takes e^(i m azimuth)). Repeatable. Default: the azimuth each rotor's "
+            "phases were locked to, as the database records it (the stored phases as they are where it records "
+            "none).");
     app.add_option("--sync_group", sync_group_args,
             "A format 2 database's rotors: tag,tag,... adds the named sources coherently, replacing their database "
             "groups, at the group's mean shaft rate. Repeatable, one group each.");

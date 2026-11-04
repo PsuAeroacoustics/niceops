@@ -626,8 +626,8 @@ for a small fast rotor). With `--tone_near_field on`, the default, each tone tak
 correction, computed once per tone and condition when the database loads (about 0.2 s for 700 of
 them on a 5° grid) and costing a tone run about a third more time. It is good while the term is
 small against the far field: the log counts the arrivals where it exceeds half of it, and warns
-when they pass a tenth of all. It does not fill a rotor's axial null directly overhead. `off` is
-the far field alone, as before this option.
+when they pass a tenth of all. It does not fill a rotor's axial null directly overhead. `off` takes
+the far field alone.
 
 **Limits.** A tone run evaluates every state (the quick peak search covers the bands only), so it
 is slower than the same run without tones. The near field is corrected to first order only. Refused, naming why: `--no-spectral`, `--db_cutoff`, `--buildings` and `--gpu`,
