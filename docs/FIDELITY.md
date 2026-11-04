@@ -2315,9 +2315,26 @@ PT build. Harness `tones/`: `wopwop_tandem.py` and `wopwop_flyover.py`.
 | A flyover past 15 ground microphones (150 m start, x ±300 m, y ±200 m), ground off: each band's level over the pass against PSU-WOPWOP's direct prediction (bands to 100 Hz within 30 dB of the microphone's loudest) | front rotor alone: mean −0.58 dB, rms 1.1; tandem: −0.63, 1.3; rear turned 60°: −0.61, 1.1 |
 | The same flyover, turning the rear rotor 60° (half a cycle of the blade-passage tone): the change in each band, mean over the microphones | 50 Hz: PSU-WOPWOP +4.59 dB, NICEOPS +4.86; 79 Hz: −4.39, −3.93; 40 Hz: −0.75, −1.53; 25, 32, 63, 100 Hz: within 0.5 dB |
 
-- **Phase resolution.** On the case's own 15° grid only the blade-passage tone resolves (the
-  others step more than 90° between cells and are summed in energy, as designed); 2.5° resolves
-  shaft orders to 33.
+- **Phase resolution.** Read as stored, the case's own 15° grid resolves only the blade-passage
+  tone (the others step more than 90° between cells and are summed in energy, as designed), and
+  2.5° resolves shaft orders to 33. Unwound about the shaft before it is interpolated (THEORY
+  4.4), the 15° grid resolves 18 of each rotor's 21-22 tones, every order to 54.
+- **Interpolation between nodes** (`tones/unwind_check.py`): the 15° database read by NICEOPS
+  at the 2.5° spheres' nodes, against those spheres, cells within 20 dB of each tone's peak.
+  Levels are the same either way (rms 0.12 dB at order 3 to 1.6 dB at 54).
+
+  | Shaft order | Phase error rms, stored | Unwound | Complex error rms, stored | Unwound |
+  | --- | --- | --- | --- | --- |
+  | 3 (blade passage) | 1.5° | 0.2° | 0.03 | 0.01 |
+  | 9 | 15° | 0.5° | 0.26 | 0.04 |
+  | 15 | 77° | 0.8° | 1.06 | 0.06 |
+  | 30 | 95° | 1.3° | 1.25 | 0.10 |
+  | 48 | 94° | 1.8° | 1.26 | 0.13 |
+  | 54 | 96° | 4.3° | 1.28 | 0.18 |
+  | 57-66 | 23-39° (unresolved either way) | the same | 0.33-0.55 | the same |
+
+  Over all 43 tones the median phase error rms falls from 94° to 1.4°, and the median complex
+  error from 1.23 to 0.10.
 - **The near field.** In 2 s windows NICEOPS falls below PSU-WOPWOP by a mean of 6 dB (rms 13)
   at 150-250 m from the vehicle, 3 dB (rms 6-8) at 250-400 m, 2 dB (rms 5-6) at 400-600 m and
   under 1 dB (rms 1.5-2.8) beyond, and by much more below 150 m, all overhead, where the

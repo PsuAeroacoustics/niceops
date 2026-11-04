@@ -1856,6 +1856,21 @@ set_tests_properties(tones_refuse_unknown_group PROPERTIES PASS_REGULAR_EXPRESSI
 add_test(NAME tones_refuse_bad_azimuth COMMAND niceops -d integrated/tones_b407.nod ${TONE_RUN} --rotor_azimuth left0 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(tones_refuse_bad_azimuth PROPERTIES PASS_REGULAR_EXPRESSION "give each source as tag=degrees")
 set_tests_properties(tones_total_runs_on_bands tones_refuse_no_spectral tones_refuse_db_cutoff tones_refuse_buildings tones_refuse_export tones_refuse_unknown_group tones_refuse_bad_azimuth PROPERTIES FIXTURES_REQUIRED tone_databases)
+# A multirotor database (condition_axes multirotor): the tone fixture restated in momentum similarity's axes,
+# run with a hexacopter's vehicle file; its axes take the run's air by default, and what cannot place a state is
+# refused.
+set(MULTIROTOR_RUN -d integrated/tones_multirotor.nod -v tests/data/hexacopter.json --humidity 20 --gridstep 4000 -L warn)
+add_test(NAME multirotor_database COMMAND make_tone_database databases/B407_fixed_load_factor.nod integrated/tones_multirotor.nod --multirotor 1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(multirotor_database PROPERTIES FIXTURES_SETUP multirotor_databases)
+add_test(NAME multirotor_run COMMAND niceops ${MULTIROTOR_RUN} -o integrated/multirotor_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(multirotor_run PROPERTIES PASS_REGULAR_EXPRESSION "hover tip Mach number M_h [0-9]+ of [0-9]+ states")
+add_test(NAME multirotor_refuse_aam COMMAND niceops ${MULTIROTOR_RUN} --blend aam -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(multirotor_refuse_aam PROPERTIES PASS_REGULAR_EXPRESSION "is in multirotor axes \\(x, z, M_h\\). Refused")
+add_test(NAME multirotor_refuse_export COMMAND niceops -d integrated/tones_multirotor.nod --export_sphere integrated/never.nod --sphere_condition 0.1 0 0.25 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(multirotor_refuse_export PROPERTIES PASS_REGULAR_EXPRESSION "take an operating condition as advance ratio")
+add_test(NAME multirotor_refuse_no_weight COMMAND niceops -d integrated/tones_multirotor.nod -v tests/data/hexacopter_no_weight.json --humidity 20 --gridstep 4000 -L warn -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(multirotor_refuse_no_weight PROPERTIES PASS_REGULAR_EXPRESSION "which scale by the vehicle's weight")
+set_tests_properties(multirotor_run multirotor_refuse_aam multirotor_refuse_export multirotor_refuse_no_weight PROPERTIES FIXTURES_REQUIRED multirotor_databases)
 set_tests_properties(condition_density_vehicle_is_golden condition_density_same_air_is_vehicle condition_density_cold_moves_footprint PROPERTIES FIXTURES_REQUIRED "condition_density_runs;demo_coarse_run")
 # The same over arrays/coyle_approach.csv, whose microphones stand at different
 # heights.  A grid's observers share one, so their mean coefficients are formed

@@ -250,15 +250,71 @@ the sources only in format 2. Things to keep:
   `phase_reference` and `sync_group`, and have every tone an integer order of its shaft rate
   (relative 1e-5). Stored as complex float, pressure relative to the reference, in
   `[(condition * cells + cell) * tones + tone]`, the layout the tone evaluation will read.
-- **The phase-resolution check** (`unresolved_tones`) flags a tone at load if any condition has
+- **The phase-resolution check** (`widest_phase_steps`) flags a tone at load if any condition has
   a step of more than 90° between neighbors (phi, across the seam when phi spans the circle, and
   theta) both within 20 dB of its peak. It warns, marks the tone energy-only, and refuses
-  nothing: decision 3 of the plan.
+  nothing: decision 3 of the plan. It judges the phase as it will be interpolated: unwound about
+  the shaft where that is the smoother (below).
+- **A shaft-order tone is interpolated unwound** (`ToneSource::unwind_order`,
+  `cell_shaft_azimuth_`, `shaft_azimuth`). Harmonic m of a rotor winds its phase m times around
+  the shaft, which is what a coarse grid cannot follow: on PSU-WOPWOP's 15° tandem the widest
+  neighbor step ran 65-180° for orders 3-66. Multiplied by exp(-i sigma m alpha), sigma the sign
+  of the shaft rate and alpha the cell's azimuth about the sphere frame's up axis toward
+  starboard, the same spheres step at most 5-17° through order 36. The convention is pinned on
+  that tandem: PSU-WOPWOP's rotors turn at +30.05 rad/s about +z (counterclockwise seen from
+  above), their stored phase winds as exp(+i m alpha), and the other sign makes every order worse.
+  `tone_directivity` sums the unwound corners under the same weights and multiplies the result by
+  exp(+i sigma m alpha) at the direction itself, so the nodes give back the stored phase and the
+  level is untouched. Each tone takes the unwound phase only where its widest step is the smaller
+  (a strongly mixed harmonic, or a fixture whose phase does not wind, stays wound). What it buys
+  on the tandem is in [FIDELITY](../FIDELITY.md#pure-tones-against-psu-wopwop). Tests: `a shaft-order
+  tone is interpolated with its phase unwound about the shaft` (both senses, exact between nodes,
+  a non-winding phase left wound).
 - **Only niceops's run evaluates tones** (below), so the constructor refuses `band_content =
   broadband` with tones unless `DatabaseLoadOptions::tones_evaluated`, and warns for `total`.
   Putting the refusal in the constructor covers every other tool that loads a database; `run()`
   sets the flag.
-- `condition_axes = multirotor` is refused until the multirotor axes are decided.
+- **Multirotor axes share the helicopter's three slots** (`ConditionAxes`, THEORY 2.1):
+  `condition(i)` is (x, z, M_h) there, `blend_at` hands the query to `blend_multirotor`, and the
+  helicopter code is untouched, branch for branch, so its blends are the old ones to the bit.
+  `active_axes_` names the axes the database varies; only those are normalized and triangulated
+  (a database at one weight and air holds one M_h, and blends over (x, z), as a
+  fixed_load_factor one does over (mu, gamma)), and the blend pads the unused barycentric slots
+  with weight 0 on the first sphere, as before. A query off a constant axis sets that axis's
+  clamped flag. `--blend aam` is refused in `blend_multirotor` and in `run()`.
+
+### The multirotor schema (format 2, `condition_axes = multirotor`)
+
+What a builder writes, and the loader checks:
+
+| Where | Name | Meaning |
+| --- | --- | --- |
+| root attribute | `condition_axes` | `multirotor` |
+| root attribute | `rotor_count` | N, a whole number |
+| root attribute | `rotor_radius_m` | R, m |
+| root attribute | `hover_thrust_coefficient` | C_T,h per rotor, T / (rho pi R^2 (Omega R)^2), at hover |
+| root attribute | `thrust_coefficient_density` | `run`: the axes were formed with each condition's own air |
+| root variable | `fixed_load_factor` | 0 or absent; set, the database is refused |
+| condition group, scalar | `inplane_speed_ratio` | x >= 0, the in-plane air speed over v_h |
+| condition group, scalar | `axial_speed_ratio` | z, the air speed along the thrust over v_h, positive in climb |
+| condition group, scalar | `hover_tip_mach` | M_h = Omega_h R / c, > 0 |
+| condition group, scalars (optional) | `air_density`, `weight_n`, `airspeed`, `climb_rate` | informative; not read |
+| source subgroup, scalar | `speed_ratio` | the rotor's \|shaft_rate\| over Omega_h at that condition, > 0 |
+| source subgroup, scalar | `shaft_rate` | rad/s, signed: > 0 counterclockwise seen from above (the sphere frame's up axis); one sense at every condition |
+
+The helicopter scalars (`advance_ratio`, `flight_path_angle`, `thrust_coefficient`) are not read.
+Every other format 2 rule holds (sources, tones as whole shaft orders of `shaft_rate`, phase
+references, `band_content`). At a state, `multirotor_condition` (state_condition.cpp) forms
+v_h, Omega_h, x, z and M_h from the vehicle file's weight times the load factor (held at 0.1
+below it), the density `--condition_density` names (the run's air by default for these
+databases) and the run's sound speed at the state's height; `run()` writes Omega_h into the
+state's `Blend::hover_rotor_speed`, and `tone_shaft_rate` and `tone_frequencies` scale the
+blended speed ratios by it. `check_vehicle` compares only the rotor radius: the axes are
+normalized by weight, and no tip speed indexes them. Tests: `a multirotor state's x, z and M_h
+are momentum similarity's` (hover, level, climb, descent, a 1.5 g turn, a tilted disk, wind, the
+load-factor floor against hand values), `a multirotor database blends over the axes it varies; a
+node is its condition`, `a multirotor database refuses what it cannot place a state with`, and
+the CTests `multirotor_*`.
 
 ## Pure tones in a run (`src/tones.hpp`, THEORY 4.4)
 

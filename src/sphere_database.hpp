@@ -113,6 +113,19 @@ enum class BandContent
 std::optional<BandContent> parse_band_content(const std::string& name);
 const char* to_string(BandContent content);
 
+// The axes a database's operating conditions are given in (root attribute
+// condition_axes; absent means helicopter).  A helicopter's are advance ratio,
+// flight path angle and thrust coefficient.  A multirotor's are momentum
+// similarity's (THEORY 2.1): the in-plane and axial air speed over the hover
+// induced velocity, x and z, and the hover tip Mach number M_h.  Database keeps
+// either in the same three slots: condition(i)[0..2] is (mu, gamma, C_T) or
+// (x, z, M_h).
+enum class ConditionAxes
+{
+    helicopter,
+    multirotor,
+};
+
 // Which density a database's thrust coefficient axis was formed with (root
 // attribute thrust_coefficient_density; absent means vehicle): the vehicle
 // file's, or each run's own air (--condition_density atmosphere).
@@ -444,6 +457,17 @@ struct ToneSource
     // 90 degrees between neighboring cells within 20 dB of its peak, at any
     // condition): such a tone is to be summed in energy.
     std::vector<char> energy_only;
+    // Per tone, the order n its phase is unwound by before it is interpolated:
+    // the stored amplitude times exp(-i n alpha), alpha the grid direction's
+    // azimuth about the sphere frame's up axis toward starboard, and the result
+    // times exp(+i n alpha) at the direction evaluated.  n = sign(shaft rate) m,
+    // a shaft-order tone's winding about its own shaft, or 0 where the wound
+    // phase is the smoother of the two on this grid (Database::load_tone_sources).
+    std::vector<int> unwind_order;
+    // Per condition, a multirotor database's |shaft rate| over the hover tip
+    // speed's shaft rate Omega_h at that condition (speed_ratio); empty for a
+    // helicopter database.
+    std::vector<double> speed_ratios;
 
     std::size_t tone_count() const
     {
@@ -489,6 +513,12 @@ public:
         bool advance_ratio_clamped = false;
         bool flight_path_angle_clamped = false;
         bool thrust_coefficient_clamped = false;
+        // A multirotor database's hover shaft rate Omega_h at the state, rad/s,
+        // which turns the conditions' speed ratios into the state's rotor speeds
+        // (tone_shaft_rate); NaN for a helicopter database.  Set by the caller
+        // from the state's weight and air (multirotor_condition), since the
+        // blend itself sees only the normalized axes.
+        double hover_rotor_speed = std::numeric_limits<double>::quiet_NaN();
     };
 
     // Everything about one trajectory state that every observer shares: where
@@ -880,6 +910,36 @@ public:
     {
         return band_content_;
     }
+    // The axes the conditions are given in, and a multirotor database's
+    // momentum constants: its rotor count N, rotor radius R (m) and hover
+    // thrust coefficient C_T,h (per rotor, T / (rho pi R^2 (Omega R)^2)).  NaN
+    // or 0 for a helicopter database.
+    ConditionAxes condition_axes() const
+    {
+        return condition_axes_;
+    }
+    bool multirotor() const
+    {
+        return condition_axes_ == ConditionAxes::multirotor;
+    }
+    int rotor_count() const
+    {
+        return rotor_count_;
+    }
+    double multirotor_rotor_radius() const
+    {
+        return multirotor_radius_;
+    }
+    double hover_thrust_coefficient() const
+    {
+        return hover_thrust_coefficient_;
+    }
+    // Which of the three condition slots vary across the database and so take
+    // part in the triangulation (a multirotor database drops a constant axis).
+    const std::array<bool, 3>& active_condition_axes() const
+    {
+        return active_axes_;
+    }
     ThrustCoefficientDensity thrust_coefficient_density() const
     {
         return thrust_coefficient_density_;
@@ -1039,6 +1099,8 @@ private:
 
     // Blend the four bracketing operating conditions at one grid cell.
     Sample blend_cell(std::size_t i_phi, std::size_t i_theta, const Blend& blend) const;
+    // blend_at() for a multirotor database: the query is (x, z, M_h).
+    Blend blend_multirotor(double x, double z, double hover_tip_mach, const BlendOptions& options) const;
     // BlendPolicy::aam's selection into `blend` (weights and indices only).
     void blend_aam(double advance_ratio, double flight_path_angle, double thrust_coefficient,
             const BlendOptions& options, Blend& blend) const;
@@ -1151,6 +1213,14 @@ private:
     double absorption_start_ = 0.0;
     BandContent band_content_ = BandContent::total;
     ThrustCoefficientDensity thrust_coefficient_density_ = ThrustCoefficientDensity::vehicle;
+    ConditionAxes condition_axes_ = ConditionAxes::helicopter;
+    int rotor_count_ = 0;
+    double multirotor_radius_ = std::numeric_limits<double>::quiet_NaN();
+    double hover_thrust_coefficient_ = std::numeric_limits<double>::quiet_NaN();
+    std::array<bool, 3> active_axes_ {true, true, true};
+    // Per grid cell, its azimuth about the sphere frame's up axis toward
+    // starboard (rad): what a tone's phase is unwound by (ToneSource::unwind_order).
+    std::vector<double> cell_shaft_azimuth_;
     std::vector<ToneSource> tone_sources_;
     // The constructor's reading of a format 2 database's source subgroups.
     void load_tone_sources(int file_ncid, const std::vector<int>& group_ids, const std::string& datafile_path);

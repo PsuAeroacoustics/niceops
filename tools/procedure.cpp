@@ -61,6 +61,9 @@ void check_envelope(const std::string& track, LengthUnit unit, const std::string
     geodetic.resample_dt = 0.5;
     Trajectory trajectory(track, vehicle_file, geodetic, unit);
     const Database database(database_file);
+    if (database.multirotor())
+        input_error("niceops_procedure --check maps states to advance ratio, flight path angle and C_T, and ",
+                database_file, " is in multirotor axes (x, z, M_h). Refused.");
     check_vehicle(trajectory.vehicle, database, vehicle_file, accept_vehicle_mismatch);
     BlendOptions blend;
     blend.tip_speed = trajectory.vehicle.tip_speed;

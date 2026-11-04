@@ -4,12 +4,18 @@
 //
 //   make_tone_database IN.nod OUT.nod [--sources N] [--sync_group NAME|none]
 //                      [--phase_reference rotor_azimuth|relative|none]
-//                      [--band_content broadband|total]
+//                      [--band_content broadband|total] [--multirotor 1]
 //
 // Each source is a rotor at 43.2 rad/s (shaft orders 16 and 32: 110 and 220 Hz),
 // its hub 1.5 m to either side, with a smooth directivity (95 dB less 6 cos^2 of
 // the polar angle, the phase turning with azimuth) and alternate senses of
 // rotation.  Exits nonzero with the first failure on stderr.
+//
+// --multirotor 1 restates the conditions in multirotor axes (condition_axes
+// multirotor): six rotors of radius 0.3556 m at a hover thrust coefficient of
+// 0.009, each condition's x = 12 mu and z = gamma / 6 deg, one hover tip Mach
+// number of 0.25 (an axis the triangulation then drops), and each source's
+// speed ratio 1 + 0.05 s.
 
 #include <netcdf.h>
 
@@ -52,6 +58,7 @@ int main(int argc, char* argv[])
     const std::string in = argv[1], out = argv[2];
     int n_sources = 2;
     std::string sync_group = "main", phase_reference = "rotor_azimuth", band_content = "broadband";
+    bool multirotor = false;
     for (int i = 3; i + 1 < argc; i += 2)
     {
         const std::string key = argv[i], value = argv[i + 1];
@@ -63,6 +70,8 @@ int main(int argc, char* argv[])
             phase_reference = value;
         else if (key == "--band_content")
             band_content = value;
+        else if (key == "--multirotor")
+            multirotor = value == "1";
         else
         {
             std::cerr << "make_tone_database: unknown option " << key << "\n";
@@ -83,6 +92,17 @@ int main(int argc, char* argv[])
     }
     put_text(ncid, NC_GLOBAL, "sources", list);
     put_text(ncid, NC_GLOBAL, "band_content", band_content);
+    if (multirotor)
+    {
+        put_text(ncid, NC_GLOBAL, "condition_axes", "multirotor");
+        put_text(ncid, NC_GLOBAL, "thrust_coefficient_density", "run");
+        const int rotors = 6;
+        const double radius = 0.3556, hover_ct = 0.009;
+        check(nc_put_att_int(ncid, NC_GLOBAL, "rotor_count", NC_INT, 1, &rotors), "rotor_count");
+        check(nc_put_att_double(ncid, NC_GLOBAL, "rotor_radius_m", NC_DOUBLE, 1, &radius), "rotor_radius_m");
+        check(nc_put_att_double(ncid, NC_GLOBAL, "hover_thrust_coefficient", NC_DOUBLE, 1, &hover_ct),
+                "hover_thrust_coefficient");
+    }
     int n_groups = 0;
     check(nc_inq_grps(ncid, &n_groups, nullptr), "groups");
     std::vector<int> groups(static_cast<std::size_t>(n_groups));
@@ -90,11 +110,16 @@ int main(int argc, char* argv[])
 
     struct Vars
     {
-        int group, center, rate, harmonic, frequency, amplitude, phase;
+        int group, center, rate, harmonic, frequency, amplitude, phase, ratio;
         int s;
         std::size_t n_phi, n_theta;
     };
     std::vector<Vars> vars;
+    struct Axes
+    {
+        int group, x, z, mach;
+    };
+    std::vector<Axes> axes;
     const std::vector<int> harmonics = {16, 32};
     for (const int g : groups)
     {
@@ -104,6 +129,14 @@ int main(int argc, char* argv[])
         std::size_t n_phi = 0, n_theta = 0;
         check(nc_inq_dimlen(g, phi_dim, &n_phi), "PHI length");
         check(nc_inq_dimlen(g, theta_dim, &n_theta), "THETA length");
+        if (multirotor)
+        {
+            Axes a {g, 0, 0, 0};
+            check(nc_def_var(g, "inplane_speed_ratio", NC_DOUBLE, 0, nullptr, &a.x), "inplane_speed_ratio");
+            check(nc_def_var(g, "axial_speed_ratio", NC_DOUBLE, 0, nullptr, &a.z), "axial_speed_ratio");
+            check(nc_def_var(g, "hover_tip_mach", NC_DOUBLE, 0, nullptr, &a.mach), "hover_tip_mach");
+            axes.push_back(a);
+        }
         for (int s = 0; s < n_sources; s++)
         {
             Vars v {};
@@ -121,6 +154,8 @@ int main(int argc, char* argv[])
             const int dims[3] = {phi_dim, theta_dim, tone_dim};
             check(nc_def_var(v.group, "amplitude", NC_DOUBLE, 3, dims, &v.amplitude), "amplitude");
             check(nc_def_var(v.group, "phase", NC_DOUBLE, 3, dims, &v.phase), "phase");
+            if (multirotor)
+                check(nc_def_var(v.group, "speed_ratio", NC_DOUBLE, 0, nullptr, &v.ratio), "speed_ratio");
             put_text(v.group, NC_GLOBAL, "phase_reference", phase_reference);
             if (!sync_group.empty())
                 put_text(v.group, NC_GLOBAL, "sync_group", sync_group);
@@ -132,12 +167,41 @@ int main(int argc, char* argv[])
     check(nc_inq_varid(ncid, "database_version", &version_var), "database_version");
     const int version = 2;
     check(nc_put_var_int(ncid, version_var, &version), "database_version");
+    if (multirotor)
+    {
+        // The source database is fixed_load_factor; in multirotor axes its
+        // constant C_T is no law, and M_h takes the third slot.
+        int fixed_var = 0;
+        if (nc_inq_varid(ncid, "fixed_load_factor", &fixed_var) == NC_NOERR)
+        {
+            const short off = 0;
+            check(nc_put_var_short(ncid, fixed_var, &off), "fixed_load_factor");
+        }
+        for (const auto& a : axes)
+        {
+            int mu_var = 0, gamma_var = 0;
+            double mu = 0.0, gamma = 0.0;
+            check(nc_inq_varid(a.group, "advance_ratio", &mu_var), "advance_ratio");
+            check(nc_inq_varid(a.group, "flight_path_angle", &gamma_var), "flight_path_angle");
+            check(nc_get_var_double(a.group, mu_var, &mu), "advance_ratio");
+            check(nc_get_var_double(a.group, gamma_var, &gamma), "flight_path_angle");
+            const double x = 12.0 * mu, z = gamma / 6.0, mach = 0.25;
+            check(nc_put_var_double(a.group, a.x, &x), "inplane_speed_ratio");
+            check(nc_put_var_double(a.group, a.z, &z), "axial_speed_ratio");
+            check(nc_put_var_double(a.group, a.mach, &mach), "hover_tip_mach");
+        }
+    }
     for (const auto& v : vars)
     {
         const double rate = (v.s % 2 == 0 ? 1.0 : -1.0) * 43.2;
         const double center[3] = {0.0, v.s % 2 == 0 ? -1.5 : 1.5, 0.0};
         check(nc_put_var_double(v.group, v.center, center), "center");
         check(nc_put_var_double(v.group, v.rate, &rate), "shaft_rate");
+        if (multirotor)
+        {
+            const double ratio = 1.0 + 0.05 * v.s;
+            check(nc_put_var_double(v.group, v.ratio, &ratio), "speed_ratio");
+        }
         check(nc_put_var_int(v.group, v.harmonic, harmonics.data()), "harmonic");
         std::vector<double> frequency;
         for (const int m : harmonics)

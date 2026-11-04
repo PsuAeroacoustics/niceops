@@ -134,7 +134,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--load_factor_correction` | `one_sided` (default): the law applies above 1 g only. `two_sided`: below 1 g too ([The load-factor law below 1 g](#the-load-factor-law-below-1-g)). |
 | `--min_load_factor` | With `two_sided`, the smallest load factor, g, the law is taken to. Default 0.5; at most 1. Refused without `two_sided`. |
 | `--speed_reference` | `ground` or `air`: which velocity sets μ, the path angle and the `velocity` nose. Default: what the database records, ground if nothing ([Speed reference](#speed-reference)). |
-| `--condition_density` | `vehicle` (default) or `atmosphere`: which air density C<sub>T</sub> is formed with, the vehicle file's or the run's air at each state's height ([The density in C<sub>T</sub>](#the-density-in-ct)). |
+| `--condition_density` | `vehicle` or `atmosphere`: which air density C<sub>T</sub> (or a multirotor database's axes) is formed with, the vehicle file's or the run's air at each state's height. Default: `vehicle` for a helicopter database, `atmosphere` for a multirotor one ([The density in C<sub>T</sub>](#the-density-in-ct)). |
 | `--rotor_azimuth`, `--sync_group`, `--tone_coherence`, `--tone_ground` | A format 2 database's rotor tones: each rotor's azimuth, coherent groups declared for the run, coherent or energy sums, and the ground per tone or per band ([Pure-tone sources](#pure-tone-sources-format-2)). |
 | `--nose` | `velocity`, `ground_velocity` or `heading`. Default: what the database's `azimuth_reference` records, `velocity` if nothing ([The sphere's nose](#the-spheres-nose)). |
 | `--accept_vehicle_mismatch` | Warn, rather than refuse, when the vehicle file disagrees with the database by more than 2 percent ([Vehicle file](#vehicle-file)). |
@@ -626,11 +626,33 @@ turn at different rates, a `--sync_group` or `--rotor_azimuth` naming a rotor th
 not carry, and a `--sync_group` member whose phases are not tied to its azimuth.
 
 The loader refuses a source missing from any condition, a tone that is not a whole shaft order of
-its source's shaft rate, a source without `phase_reference` (`rotor_azimuth`, `relative` or
-`none`), tones beside bands with no `band_content`, a format above 2, and multirotor condition
-axes (`condition_axes = multirotor`), which are not read yet. A tone whose phase steps more than
-90° between neighboring grid cells within 20 dB of its peak is reported: the grid does not resolve
-it, and it is summed in energy.
+its source's shaft rate, a rotor whose sense of rotation changes between conditions, a source
+without `phase_reference` (`rotor_azimuth`, `relative` or `none`), tones beside bands with no
+`band_content`, and a format above 2. A shaft-order tone's phase turns around its rotor's shaft,
+and it is interpolated with that turn taken out, which lets a coarse grid resolve far higher
+orders. A tone whose phase still steps more than 90° between neighboring grid cells within 20 dB
+of its peak is reported: the grid does not resolve it, and it is summed in energy.
+
+### Multirotor databases
+
+A database with `condition_axes = multirotor` gives its operating conditions in momentum
+similarity's axes, not μ, γ and C<sub>T</sub>: the in-plane and axial air speed over the hover
+induced velocity, and the hover tip Mach number. A fixed-pitch multirotor sets its thrust by rotor
+speed, so these are what change with its weight, its air and its flight condition. Each state's
+axes come from the vehicle file's weight times the load factor, the run's air at the state's
+height (`--condition_density atmosphere`, the default here) and the database's rotor count,
+radius and hover thrust coefficient. Each rotor's speed, and so its tones' frequencies, follows
+the state's own hover rotor speed, as the share of it the database records.
+
+- **The vehicle file needs a weight.** Its rotor radius is checked against the database's; its
+  tip speed and weight are not compared, since these axes are scaled by them.
+- **No law in the hover tip Mach number:** a state off the database's range takes the nearest
+  spheres as they are, with the clamped states counted in a warning.
+- **Refused, naming why:** `--blend aam`, whose search is in airspeed and path angle;
+  `--export_sphere` and `--export_aam`, whose condition is μ, γ and C<sub>T</sub>;
+  `niceops_procedure --check`; a vehicle file without a weight; and a database without
+  `rotor_count`, `rotor_radius_m` or `hover_thrust_coefficient`, with `fixed_load_factor` set, with
+  every condition the same, or with a rotor that lacks its `speed_ratio`.
 
 ### Speed reference
 
@@ -652,7 +674,8 @@ both together. On a 15 kt day air reference moves μ by 5–10% and the nose by 
 
 ### The density in C<sub>T</sub>
 
-C<sub>T</sub> is formed with the vehicle file's density by default. `--condition_density
+C<sub>T</sub> is formed with the vehicle file's density by default (a multirotor database's axes,
+the run's air: [Multirotor databases](#multirotor-databases)). `--condition_density
 atmosphere` forms it with the run's air at each state's height instead: the `--atmosphere`
 profile's, or else the air `--temperature` and `--pressure` set over the vehicle file's. With
 neither, the run's air is the vehicle file's own, and the result is the default's to the bit.

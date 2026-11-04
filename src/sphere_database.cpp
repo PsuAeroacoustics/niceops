@@ -1252,16 +1252,38 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
             input_error("Database ", datafile_path, " has band_content '", *text, "'; expected total or broadband.");
         band_content_ = *content;
     }
-    // The axes the conditions are given in.  A multirotor's (speeds over the
-    // hover induced velocity, the hover tip Mach number) are not settled, and
-    // reading them as mu, gamma and C_T would index the wrong spheres.
+    // The axes the conditions are given in: a helicopter's (mu, gamma, C_T), or
+    // a multirotor's momentum similarity (x, z, M_h; THEORY 2.1), which needs
+    // the rotors' count, radius and hover thrust coefficient to place a state.
     if (const auto axes = read_root_text(file_ncid, "condition_axes"); axes && *axes != "helicopter")
     {
-        if (*axes == "multirotor")
-            input_error("Database ", datafile_path, " gives its conditions in multirotor axes "
-                    "(condition_axes multirotor), which this NICEOPS does not read yet: they are not "
-                    "advance ratio, flight path angle and thrust coefficient.");
-        input_error("Database ", datafile_path, " has condition_axes '", *axes, "'; expected helicopter.");
+        if (*axes != "multirotor")
+            input_error("Database ", datafile_path, " has condition_axes '", *axes,
+                    "'; expected helicopter or multirotor.");
+        condition_axes_ = ConditionAxes::multirotor;
+        const auto count = read_double_attribute(file_ncid, "rotor_count");
+        const auto radius = read_double_attribute(file_ncid, "rotor_radius_m");
+        const auto hover_ct = read_double_attribute(file_ncid, "hover_thrust_coefficient");
+        if (!count || !radius || !hover_ct)
+            input_error("Database ", datafile_path, " gives its conditions in multirotor axes but lacks the root "
+                    "attribute", !count ? " rotor_count" : "", !radius ? " rotor_radius_m" : "",
+                    !hover_ct ? " hover_thrust_coefficient" : "", ": a state's speed ratios and hover tip Mach "
+                    "number need the rotors' count, radius and hover thrust coefficient.");
+        if (!(*count >= 1.0) || *count != std::round(*count) || *count > 1000.0)
+            input_error("Database ", datafile_path, " has rotor_count ", *count, "; expected a whole number of rotors.");
+        if (!(*radius > 0.0) || !std::isfinite(*radius))
+            input_error("Database ", datafile_path, " has rotor_radius_m ", *radius, "; expected a positive radius.");
+        if (!(*hover_ct > 0.0) || !std::isfinite(*hover_ct))
+            input_error("Database ", datafile_path, " has hover_thrust_coefficient ", *hover_ct,
+                    "; expected a positive thrust coefficient.");
+        rotor_count_ = static_cast<int>(*count);
+        multirotor_radius_ = *radius;
+        hover_thrust_coefficient_ = *hover_ct;
+        if (fixed_load_factor_)
+            input_error("Database ", datafile_path, " is fixed_load_factor in multirotor axes: its load-factor law "
+                    "is in C_T, which a multirotor's axes do not carry.");
+        info("Database conditions are in multirotor axes: ", rotor_count_, " rotors of radius ", multirotor_radius_,
+                " m, hover thrust coefficient ", hover_thrust_coefficient_, ".");
     }
     // The atmosphere the broadband EAA was built in, when the builder recorded
     // all three of its values; the rotor speed the spheres were built at.
@@ -1343,9 +1365,24 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
     for (std::size_t i = 0; i < group_ids.size(); i++)
     {
         auto group_id = group_ids[i];
-        require_scalar(group_id, "advance_ratio", &advance_ratio);
-        require_scalar(group_id, "flight_path_angle", &flight_path_angle);
-        require_scalar(group_id, "thrust_coefficient", &thrust_coefficient);
+        if (condition_axes_ == ConditionAxes::multirotor)
+        {
+            // The same three slots, holding (x, z, M_h).
+            require_scalar(group_id, "inplane_speed_ratio", &advance_ratio);
+            require_scalar(group_id, "axial_speed_ratio", &flight_path_angle);
+            require_scalar(group_id, "hover_tip_mach", &thrust_coefficient);
+            if (!(advance_ratio >= 0.0) || !std::isfinite(advance_ratio) || !std::isfinite(flight_path_angle)
+                    || !(thrust_coefficient > 0.0) || !std::isfinite(thrust_coefficient))
+                input_error("Database error: sphere ", i, " has inplane_speed_ratio ", advance_ratio,
+                        ", axial_speed_ratio ", flight_path_angle, ", hover_tip_mach ", thrust_coefficient,
+                        "; expected x >= 0, a finite z and M_h > 0.");
+        }
+        else
+        {
+            require_scalar(group_id, "advance_ratio", &advance_ratio);
+            require_scalar(group_id, "flight_path_angle", &flight_path_angle);
+            require_scalar(group_id, "thrust_coefficient", &thrust_coefficient);
+        }
         require_scalar(group_id, "radius", &radius);
         require_scalar(group_id, "rotor_scale", &scale);
         const int group_doppler = get_int_scalar(group_id, "DOPPLER_SHIFT_REMOVED", -1);
@@ -1806,9 +1843,14 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
     flight_path_angle_min = *std::min_element(flight_path_angles.begin(), flight_path_angles.end());
     thrust_coefficient_max = *std::max_element(thrust_coefficients.begin(), thrust_coefficients.end());
     thrust_coefficient_min = *std::min_element(thrust_coefficients.begin(), thrust_coefficients.end());
-    info("Operating condition ranges are:\n", "μ  = [", advance_ratio_min, " , ",
-            advance_ratio_max, "]\n", "γ  = [", flight_path_angle_min, " , ", flight_path_angle_max,
-            "]\n", "CT = [", thrust_coefficient_min, " , ", thrust_coefficient_max, "]\n");
+    if (condition_axes_ == ConditionAxes::multirotor)
+        info("Operating condition ranges are:\n", "x   = [", advance_ratio_min, " , ", advance_ratio_max, "]\n",
+                "z   = [", flight_path_angle_min, " , ", flight_path_angle_max, "]\n", "M_h = [",
+                thrust_coefficient_min, " , ", thrust_coefficient_max, "]\n");
+    else
+        info("Operating condition ranges are:\n", "μ  = [", advance_ratio_min, " , ",
+                advance_ratio_max, "]\n", "γ  = [", flight_path_angle_min, " , ", flight_path_angle_max,
+                "]\n", "CT = [", thrust_coefficient_min, " , ", thrust_coefficient_max, "]\n");
 
     // A fixed_load_factor database's CT is the same constant on every stored
     // sphere by construction (panam writes only the LF=1 reference), which
@@ -1825,6 +1867,29 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
     }
     reference_thrust_coefficient_ = thrust_coefficient_min;
     active_condition_dims_ = fixed_load_factor_ ? 2 : condition_dims;
+    active_axes_ = {true, true, !fixed_load_factor_};
+    if (condition_axes_ == ConditionAxes::multirotor)
+    {
+        // A multirotor database blends over the axes it varies: one built at a
+        // single weight and air holds one M_h, and its triangulation is then
+        // over (x, z) alone, as a fixed_load_factor one is over (mu, gamma).  A
+        // single condition varies none and takes the nearest-condition path.
+        active_axes_ = {advance_ratio_max > advance_ratio_min, flight_path_angle_max > flight_path_angle_min,
+                thrust_coefficient_max > thrust_coefficient_min};
+        active_condition_dims_ = static_cast<std::size_t>(active_axes_[0]) + static_cast<std::size_t>(active_axes_[1])
+                + static_cast<std::size_t>(active_axes_[2]);
+        if (active_condition_dims_ == 0)
+        {
+            if (advance_ratios.size() >= 2)
+                input_error("Database ", datafile_path, ": its ", advance_ratios.size(), " spheres are all at one "
+                        "multirotor condition (x ", advance_ratio_min, ", z ", flight_path_angle_min, ", M_h ",
+                        thrust_coefficient_min, "); there is nothing to interpolate between.");
+            active_axes_ = {true, false, false};
+            active_condition_dims_ = 1;
+        }
+        info("Multirotor conditions blend over", active_axes_[0] ? " x" : "", active_axes_[1] ? " z" : "",
+                active_axes_[2] ? " M_h" : "", ".");
+    }
 
     // An axis that does not vary cannot be scaled to [0, 1]: (x - min) / 0 is 0/0,
     // NaN, and a triangulation built on NaN answered every query with one
@@ -1833,7 +1898,7 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
     // axis it uses to vary, so a database of several spheres that does not is
     // refused here, naming the axis; a single sphere has nothing to triangulate
     // and takes the nearest-condition path, whatever its axes do.
-    if (advance_ratios.size() >= 2)
+    if (advance_ratios.size() >= 2 && condition_axes_ == ConditionAxes::helicopter)
     {
         const auto require_varying = [&](const char* axis, double low, double high) {
             if (!(high > low))
@@ -1855,7 +1920,9 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
     // axis.  On a fixed_load_factor database the law carries C_T and every
     // sphere is in the one layer; otherwise the spheres are grouped by their
     // stored C_T (a database built over load factors stores a few distinct
-    // values), and a state searches the layer nearest its own.
+    // values), and a state searches the layer nearest its own.  A multirotor's
+    // axes are not AAM's, and --blend aam is refused for them.
+    if (condition_axes_ == ConditionAxes::helicopter)
     {
         std::vector<std::size_t> order(advance_ratios.size());
         std::iota(order.begin(), order.end(), std::size_t {0});
@@ -1893,20 +1960,34 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
     }
 
     // Normalize operating conditions
-    for (auto& x : advance_ratios)
-        x = unit_interval(x, advance_ratio_min, advance_ratio_max);
-    trace("Normalized μ   = ", advance_ratios);
-    for (auto& x : flight_path_angles)
-        x = unit_interval(x, flight_path_angle_min, flight_path_angle_max);
-    trace("Normalized γ   = ", flight_path_angles);
-    // A fixed_load_factor database has thrust_coefficient_min == max, so this
-    // would divide by zero -- and there is nothing to normalize anyway, since
-    // CT plays no part in a triangulation that does not include it.
-    if (!fixed_load_factor_)
+    if (condition_axes_ == ConditionAxes::multirotor)
     {
-        for (auto& x : thrust_coefficients)
-            x = unit_interval(x, thrust_coefficient_min, thrust_coefficient_max);
-        trace("Normalized CT  = ", thrust_coefficients);
+        // Each varying axis to [0, 1]; a constant one is left out below.
+        std::vector<double>* slots[3] = {&advance_ratios, &flight_path_angles, &thrust_coefficients};
+        const double lows[3] = {advance_ratio_min, flight_path_angle_min, thrust_coefficient_min};
+        const double highs[3] = {advance_ratio_max, flight_path_angle_max, thrust_coefficient_max};
+        for (std::size_t a = 0; a < 3; a++)
+            if (active_axes_[a] && highs[a] > lows[a])
+                for (auto& x : *slots[a])
+                    x = unit_interval(x, lows[a], highs[a]);
+    }
+    else
+    {
+        for (auto& x : advance_ratios)
+            x = unit_interval(x, advance_ratio_min, advance_ratio_max);
+        trace("Normalized μ   = ", advance_ratios);
+        for (auto& x : flight_path_angles)
+            x = unit_interval(x, flight_path_angle_min, flight_path_angle_max);
+        trace("Normalized γ   = ", flight_path_angles);
+        // A fixed_load_factor database has thrust_coefficient_min == max, so this
+        // would divide by zero -- and there is nothing to normalize anyway, since
+        // CT plays no part in a triangulation that does not include it.
+        if (!fixed_load_factor_)
+        {
+            for (auto& x : thrust_coefficients)
+                x = unit_interval(x, thrust_coefficient_min, thrust_coefficient_max);
+            trace("Normalized CT  = ", thrust_coefficients);
+        }
     }
 
     // Pack the normalized axes into the row-major point array the
@@ -1920,12 +2001,26 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
         input_error("The database attribute coherence_tonal_fraction holds ", coherence_record_.tonal_fraction.size(),
                 " values; it needs one per band of the database's spectra, ", frequencies_.size(), ".");
     std::vector<double> conditions(advance_ratios.size() * active_condition_dims_);
-    for (std::size_t i = 0; i < advance_ratios.size(); i++)
+    if (condition_axes_ == ConditionAxes::multirotor)
     {
-        conditions[i * active_condition_dims_ + 0] = advance_ratios[i];
-        conditions[i * active_condition_dims_ + 1] = flight_path_angles[i];
-        if (!fixed_load_factor_)
-            conditions[i * active_condition_dims_ + 2] = thrust_coefficients[i];
+        for (std::size_t i = 0; i < advance_ratios.size(); i++)
+        {
+            const double values[3] = {advance_ratios[i], flight_path_angles[i], thrust_coefficients[i]};
+            std::size_t column = 0;
+            for (std::size_t a = 0; a < 3; a++)
+                if (active_axes_[a])
+                    conditions[i * active_condition_dims_ + column++] = values[a];
+        }
+    }
+    else
+    {
+        for (std::size_t i = 0; i < advance_ratios.size(); i++)
+        {
+            conditions[i * active_condition_dims_ + 0] = advance_ratios[i];
+            conditions[i * active_condition_dims_ + 1] = flight_path_angles[i];
+            if (!fixed_load_factor_)
+                conditions[i * active_condition_dims_ + 2] = thrust_coefficients[i];
+        }
     }
     normalized_conditions_ = conditions;
     // The triangulation touches no netCDF state, and nc_close takes about as long:
@@ -1950,55 +2045,73 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
 
 namespace {
 
-// Tones of `source` whose phase the grid does not resolve: a step of more than
-// 90 degrees between neighboring cells (along phi, across the seam where phi
-// spans the circle, and along theta) that are both within 20 dB of the tone's
-// peak, at any condition.  Interpolating such a phase across a cell is a guess.
-std::vector<char> unresolved_tones(const ToneSource& source, const GridAxis& phis, const GridAxis& thetas,
-        std::size_t n_conditions)
+// Per tone of `source`, the widest phase step (rad) between neighboring cells
+// (along phi, across the seam where phi spans the circle, and along theta) that
+// are both within 20 dB of the tone's peak, at any condition: past 90 degrees
+// the grid does not resolve the phase, and interpolating it across a cell is a
+// guess.  With `azimuth` and `orders`, each amplitude is first unwound by
+// exp(-i orders[k] azimuth[cell]), as the lookup interpolates it.
+std::vector<double> widest_phase_steps(const ToneSource& source, const GridAxis& phis, const GridAxis& thetas,
+        std::size_t n_conditions, const std::vector<double>* azimuth, const std::vector<int>* orders)
 {
     const std::size_t n_phi = phis.size(), n_theta = thetas.size(), n_cells = n_phi * n_theta;
     const std::size_t n_tones = source.tone_count();
-    std::vector<char> flagged(n_tones, 0);
+    std::vector<double> widest_step(n_tones, 0.0);
     double widest = 0.0;
     for (std::size_t m = 1; m < n_phi; m++)
         widest = std::max(widest, phis[m] - phis[m - 1]);
     const bool full_circle = n_phi > 2 && phis[0] + 360.0 - phis[n_phi - 1] <= widest + 1e-9;
     // 20 dB below the peak, as a pressure ratio.
     constexpr float within = 0.1F;
+    std::vector<std::complex<double>> values(n_cells);
     for (std::size_t c = 0; c < n_conditions; c++)
     {
         for (std::size_t k = 0; k < n_tones; k++)
         {
-            if (flagged[k])
-                continue;
-            const auto at = [&](std::size_t cell) { return source.amplitudes[(c * n_cells + cell) * n_tones + k]; };
             float peak = 0.0F;
             for (std::size_t cell = 0; cell < n_cells; cell++)
-                peak = std::max(peak, std::abs(at(cell)));
+            {
+                const auto a = source.amplitudes[(c * n_cells + cell) * n_tones + k];
+                peak = std::max(peak, std::abs(a));
+                values[cell] = std::complex<double>(a.real(), a.imag());
+                if (azimuth && (*orders)[k] != 0)
+                    values[cell] *= std::polar(1.0, -(*orders)[k] * (*azimuth)[cell]);
+            }
             if (!(peak > 0.0F))
                 continue;
-            const float floor = peak * within;
+            const double floor = static_cast<double>(peak * within);
+            double& step = widest_step[k];
             const auto steps = [&](std::size_t a, std::size_t b) {
-                const auto pa = at(a), pb = at(b);
+                const auto pa = values[a], pb = values[b];
                 if (std::abs(pa) < floor || std::abs(pb) < floor)
-                    return false;
-                return std::fabs(std::arg(pb * std::conj(pa))) > 0.5 * pi;
+                    return;
+                step = std::max(step, std::fabs(std::arg(pb * std::conj(pa))));
             };
-            for (std::size_t m = 0; m < n_phi && !flagged[k]; m++)
+            for (std::size_t m = 0; m < n_phi; m++)
             {
-                for (std::size_t n = 0; n < n_theta && !flagged[k]; n++)
+                for (std::size_t n = 0; n < n_theta; n++)
                 {
                     const std::size_t cell = m * n_theta + n;
-                    const bool across_seam = full_circle && m + 1 == n_phi;
-                    if ((m + 1 < n_phi && steps(cell, cell + n_theta)) || (across_seam && steps(cell, n))
-                            || (n + 1 < n_theta && steps(cell, cell + 1)))
-                        flagged[k] = 1;
+                    if (m + 1 < n_phi)
+                        steps(cell, cell + n_theta);
+                    if (full_circle && m + 1 == n_phi)
+                        steps(cell, n);
+                    if (n + 1 < n_theta)
+                        steps(cell, cell + 1);
                 }
             }
         }
     }
-    return flagged;
+    return widest_step;
+}
+
+// A sphere direction's azimuth about the frame's up axis, toward starboard
+// (rad): phi and theta (deg) as lookup_angles gives them, theta from the nose
+// and phi about it, 0 straight down and +90 to starboard.
+double shaft_azimuth(double phi_deg, double theta_deg)
+{
+    const double phi = phi_deg * (pi / 180.0), theta = theta_deg * (pi / 180.0);
+    return std::atan2(std::sin(theta) * std::sin(phi), std::cos(theta));
 }
 
 // A root attribute's list of names, split at commas and blanks.
@@ -2155,6 +2268,20 @@ void Database::load_tone_sources(int file_ncid, const std::vector<int>& group_id
                 phase = read_exact(sid, "phase", n_cells * tones, what);
                 refuse_fill_values(datafile_path, i, ("phase of source " + tags[s]).c_str(), phase);
             }
+            if (!source.shaft_rates.empty() && (shaft_rate > 0.0) != (source.shaft_rates.front() > 0.0))
+                input_error(what, " turns the other way (shaft_rate ", shaft_rate, " rad/s) from sphere 0's (",
+                        source.shaft_rates.front(), " rad/s); a rotor keeps its sense of rotation.");
+            if (condition_axes_ == ConditionAxes::multirotor)
+            {
+                // Its speed at this condition over the hover tip speed's shaft
+                // rate there: what scales with the state's own Omega_h.
+                double ratio = 0.0;
+                require_scalar(sid, "speed_ratio", &ratio);
+                if (!(ratio > 0.0) || !std::isfinite(ratio))
+                    input_error(what, " has speed_ratio ", ratio, "; a rotor's speed over the hover shaft rate must "
+                            "be positive.");
+                source.speed_ratios.push_back(ratio);
+            }
             source.centers.push_back({center[0], center[1], center[2]});
             source.shaft_rates.push_back(shaft_rate);
             double azimuth = std::numeric_limits<double>::quiet_NaN();
@@ -2184,11 +2311,50 @@ void Database::load_tone_sources(int file_ncid, const std::vector<int>& group_id
             }
         }
     }
+    // Each cell's azimuth about the sphere frame's up axis, toward starboard: a
+    // shaft-order tone's phase winds as exp(+i sign(shaft rate) m alpha) about
+    // its rotor's shaft (THEORY 4.4), which is what makes it step between cells.
+    {
+        const std::size_t n_phi = phis.size(), n_theta = thetas.size();
+        cell_shaft_azimuth_.assign(n_phi * n_theta, 0.0);
+        for (std::size_t m = 0; m < n_phi; m++)
+            for (std::size_t n = 0; n < n_theta; n++)
+                cell_shaft_azimuth_[m * n_theta + n] = shaft_azimuth(phis[m], thetas[n]);
+    }
     for (auto& source : tone_sources_)
     {
-        source.energy_only = source.phase_reference == PhaseReference::none
-                ? std::vector<char>(source.tone_count(), 1)
-                : unresolved_tones(source, phis, thetas, group_ids.size());
+        // Per tone, the unwound phase where it is the smoother on this grid (its
+        // widest step between neighboring cells within 20 dB of the peak), the
+        // stored one otherwise; the resolution check then judges what is
+        // interpolated.
+        const int sense = source.shaft_rates.front() > 0.0 ? 1 : -1;
+        const auto wound = widest_phase_steps(source, phis, thetas, group_ids.size(), nullptr, nullptr);
+        std::vector<int> orders(source.tone_count());
+        for (std::size_t k = 0; k < orders.size(); k++)
+            orders[k] = sense * source.harmonics[k];
+        const auto unwound = widest_phase_steps(source, phis, thetas, group_ids.size(), &cell_shaft_azimuth_,
+                &orders);
+        source.unwind_order.assign(source.tone_count(), 0);
+        std::vector<double> widest(source.tone_count());
+        std::size_t chosen = 0, resolved_wound = 0;
+        for (std::size_t k = 0; k < source.tone_count(); k++)
+        {
+            source.unwind_order[k] = unwound[k] < wound[k] ? orders[k] : 0;
+            widest[k] = std::min(unwound[k], wound[k]);
+            chosen += source.unwind_order[k] != 0;
+            resolved_wound += wound[k] <= 0.5 * pi;
+        }
+        source.energy_only = std::vector<char>(source.tone_count(), 0);
+        if (source.phase_reference == PhaseReference::none)
+            source.energy_only.assign(source.tone_count(), 1);
+        else
+            for (std::size_t k = 0; k < source.tone_count(); k++)
+                source.energy_only[k] = widest[k] > 0.5 * pi;
+        if (source.phase_reference != PhaseReference::none)
+            info("Database source ", source.tag, ": ", chosen, " of ", source.tone_count(), " tones are interpolated "
+                    "with their phase unwound about the shaft; ",
+                    std::count(source.energy_only.begin(), source.energy_only.end(), 0), " resolved (",
+                    resolved_wound, " without unwinding).");
         const auto unresolved = static_cast<std::size_t>(std::count(source.energy_only.begin(), source.energy_only.end(), 1));
         if (source.phase_reference != PhaseReference::none && unresolved > 0)
         {
@@ -2215,6 +2381,8 @@ Database::Blend Database::blend_at(double advance_ratio, double flight_path_angl
     // analytic load-factor correction compares it against
     // reference_thrust_coefficient_ in physical units, not normalized ones.
     const double raw_thrust_coefficient = thrust_coefficient;
+    if (condition_axes_ == ConditionAxes::multirotor)
+        return blend_multirotor(advance_ratio, flight_path_angle, thrust_coefficient, options);
     Blend blend;
     blend.advance_ratio_clamped = advance_ratio < advance_ratio_min || advance_ratio > advance_ratio_max;
     blend.flight_path_angle_clamped = flight_path_angle < flight_path_angle_min || flight_path_angle > flight_path_angle_max;
@@ -2294,6 +2462,52 @@ Database::Blend Database::blend_at(double advance_ratio, double flight_path_angl
                     : 0.0;
         }
         trace("Load factor correction (dB): ", blend.level_correction_db);
+    }
+    return blend;
+}
+
+Database::Blend Database::blend_multirotor(double x, double z, double hover_tip_mach,
+        const BlendOptions& options) const
+{
+    // The multirotor axes (x, z, M_h) in the helicopter's three slots.  Every
+    // axis the database varies is normalized and clamped into its range; one it
+    // holds constant is out of the triangulation, and a query off its value is
+    // reported as clamped there, since the spheres say nothing else.
+    Blend blend;
+    const double query[3] = {x, z, hover_tip_mach};
+    const double lows[3] = {advance_ratio_min, flight_path_angle_min, thrust_coefficient_min};
+    const double highs[3] = {advance_ratio_max, flight_path_angle_max, thrust_coefficient_max};
+    bool clamped[3];
+    for (std::size_t a = 0; a < 3; a++)
+        clamped[a] = query[a] < lows[a] * (1.0 - 1e-12) - 1e-12 || query[a] > highs[a] * (1.0 + 1e-12) + 1e-12;
+    blend.advance_ratio_clamped = clamped[0];
+    blend.flight_path_angle_clamped = clamped[1];
+    blend.thrust_coefficient_clamped = clamped[2];
+    if (options.policy == BlendPolicy::aam)
+        input_error("--blend aam brackets in airspeed and flight path angle, and this database's conditions are in "
+                "multirotor axes (x, z, M_h). Refused.");
+    double normalized[condition_dims] = {0.0, 0.0, 0.0};
+    std::size_t column = 0;
+    for (std::size_t a = 0; a < 3; a++)
+        if (active_axes_[a])
+            normalized[column++] = clamp01(unit_interval(query[a], lows[a], highs[a]));
+    if (options.policy == BlendPolicy::nearest || n_conditions == 1)
+    {
+        const std::size_t count = normalized_conditions_.size() / active_condition_dims_;
+        const std::size_t nearest = nearest_point(active_condition_dims_, count, normalized_conditions_.data(),
+                normalized);
+        blend.weights.fill(0.0);
+        blend.weights[0] = 1.0;
+        blend.indices.fill(nearest);
+        return blend;
+    }
+    interpolator_.barycentric(normalized, blend.weights.data(), blend.indices.data());
+    // The interpolator writes active_condition_dims_ + 1 entries; the rest is
+    // padding, weight 0 on the first sphere (the fixed_load_factor convention).
+    for (std::size_t k = active_condition_dims_ + 1; k < blend.weights.size(); k++)
+    {
+        blend.weights[k] = 0.0;
+        blend.indices[k] = blend.indices[0];
     }
     return blend;
 }
@@ -2673,8 +2887,12 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
     const Blend& blend = state.blend;
     const double* w = blend.weights.data();
     const double* sw = stencil.weight;
+    // The direction's own azimuth about the shaft, for a tone interpolated
+    // unwound (ToneSource::unwind_order).
+    const double alpha = shaft_azimuth(angles[0], angles[1]);
     for (std::size_t k = 0; k < tones; k++)
     {
+        const int order = s.unwind_order.empty() ? 0 : s.unwind_order[k];
         // Each corner's conditions blended in dB, empty entries dropped
         // (blend_present), then the corners by their bilinear weights the same
         // way: the bands' rule, applied to the tone's level.  The phase is the
@@ -2697,6 +2915,8 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
                                            || is_empty(v[3], w[3]))
                     ? blend_present(v, w)
                     : w[0] * v[0] + w[1] * v[1] + w[2] * v[2] + w[3] * v[3];
+            if (order != 0)
+                corner_sum *= std::polar(1.0, -order * cell_shaft_azimuth_[stencil.corner[corner]]);
             sum += sw[corner] * corner_sum;
         }
         const double level = (is_empty(corner_level[0], sw[0]) || is_empty(corner_level[1], sw[1])
@@ -2705,6 +2925,8 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
                 : sw[0] * corner_level[0] + sw[1] * corner_level[1] + sw[2] * corner_level[2]
                         + sw[3] * corner_level[3];
         out[k].level_db = level <= empty_level_db ? no_energy_floor_db : level + blend.level_correction_db;
+        if (order != 0)
+            sum *= std::polar(1.0, order * alpha);
         out[k].phase = s.phase_reference == PhaseReference::none || std::abs(sum) == 0.0 ? 0.0 : std::arg(sum);
     }
 }
@@ -2722,6 +2944,16 @@ std::array<double, 3> Database::tone_center(std::size_t source, const Blend& ble
 double Database::tone_shaft_rate(std::size_t source, const Blend& blend) const
 {
     const ToneSource& s = tone_sources_[source];
+    if (condition_axes_ == ConditionAxes::multirotor)
+    {
+        // The conditions' speed ratios blended, times the state's own hover
+        // shaft rate, in the rotor's sense of rotation (THEORY 2.1).
+        assert(std::isfinite(blend.hover_rotor_speed));
+        double ratio = 0.0;
+        for (std::size_t k = 0; k < blend.weights.size(); k++)
+            ratio += blend.weights[k] * s.speed_ratios[blend.indices[k]];
+        return std::copysign(ratio * blend.hover_rotor_speed, s.shaft_rates.front());
+    }
     double rate = 0.0;
     for (std::size_t k = 0; k < blend.weights.size(); k++)
         rate += blend.weights[k] * s.shaft_rates[blend.indices[k]];
@@ -2732,6 +2964,14 @@ void Database::tone_frequencies(std::size_t source, const Blend& blend, double* 
 {
     const ToneSource& s = tone_sources_[source];
     const std::size_t tones = s.tone_count();
+    if (condition_axes_ == ConditionAxes::multirotor)
+    {
+        // Shaft orders of the state's own rotor speed.
+        const double rate = std::fabs(tone_shaft_rate(source, blend));
+        for (std::size_t t = 0; t < tones; t++)
+            frequencies[t] = s.harmonics[t] * rate / (2.0 * pi);
+        return;
+    }
     for (std::size_t t = 0; t < tones; t++)
     {
         double f = 0.0;

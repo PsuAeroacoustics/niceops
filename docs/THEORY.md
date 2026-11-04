@@ -103,6 +103,31 @@ rotation of §3. The same velocity sets the sphere's nose (§2.4). The load fact
 stays inertial: the rotor's thrust balances the aircraft's acceleration over the ground whatever
 the air does.
 
+**Multirotor databases.** A database whose root attribute `condition_axes` is `multirotor` gives
+its conditions in momentum similarity's axes instead. A fixed-pitch multirotor holds its thrust
+coefficient nearly fixed and sets its thrust by rotor speed, so neither $\mu$ on one tip speed nor
+$C_T$ indexes it. With the database's rotor count $N$, rotor radius $R$ and hover thrust
+coefficient $C_{T,h}$ (per rotor, $T/(\rho\pi R^2(\Omega R)^2)$), the vehicle file's weight $W$,
+the load factor $n$ and thrust direction $\hat{\mathbf{n}}$ above, and the air-relative velocity
+$\mathbf{u}$ (in the speed reference above):
+
+$$
+v_h = \sqrt{\frac{nW}{2\rho N\pi R^2}}, \qquad
+\Omega_h R = \sqrt{\frac{nW}{N\rho\pi R^2 C_{T,h}}}, \qquad
+x = \frac{\lvert\mathbf{u} - (\mathbf{u}\cdot\hat{\mathbf{n}})\hat{\mathbf{n}}\rvert}{v_h}, \qquad
+z = \frac{\mathbf{u}\cdot\hat{\mathbf{n}}}{v_h}, \qquad
+M_h = \frac{\Omega_h R}{c} .
+$$
+
+$v_h$ is the hover induced velocity and $\Omega_h$ the shaft rate that hovers at this weight and
+density; $x$ and $z$ are the in-plane and axial air speed over $v_h$ (hover the origin, $z > 0$ a
+climb), and $M_h$ is the multirotor's loading axis, the counterpart of $C_T$. $\rho$ is the run's
+air at the state's height by default (`--condition_density atmosphere`; `vehicle` takes the
+vehicle file's), and $c$ the run's sound speed there. The load factor is held at 0.1 below it. The
+conditions blend over $(x, z, M_h)$ as over $(\mu, \gamma, C_T)$ (§2.3), leaving out an axis the
+database does not vary (one built at one weight and air holds one $M_h$). There is no scaling law
+in $M_h$: a state off the database's $M_h$ takes its spheres as they are.
+
 ### 2.2 The sphere database
 
 A database (`.nod`, netCDF) holds one sphere per operating condition $(\mu, \gamma, C_T)$. Each
@@ -473,7 +498,11 @@ the blend-weighted means of its conditions' (the weights of §2.3); the hub, sto
 frame, is placed at $\mathbf{x}_r = \mathbf{x}_c + c_f\,\hat{\mathbf{n}} + c_s\,\hat{\mathbf{s}}
 + c_u\,\hat{\mathbf{u}}$ about the state's position, with the frame of §2.4. The tones are shaft
 orders $m$ in the emission frame, $f_e = m\lvert\Omega_r\rvert/2\pi$, so unlike the bands they
-are Doppler-shifted below.
+are Doppler-shifted below. $\Omega_r > 0$ is counterclockwise seen from above (about the sphere
+frame's up axis). On a multirotor database (§2.1) each condition stores the rotor's speed ratio
+$s_r = \lvert\Omega_r\rvert/\Omega_h$ at that condition, and the state's shaft rate is the
+blended ratio times its own hover shaft rate, $\Omega_r = \mathrm{sign}(\Omega_r)\,
+\bar{s}_r\,\Omega_h$, which carries the state's weight and air into the tones' frequencies.
 
 **An arrival.** Each hub reaches a point $\mathbf{x}_p$ (the observer, or its image in the
 ground plane) along a straight path. With the hub moving at the state's velocity $\mathbf{V}$
@@ -502,6 +531,19 @@ $L_A$ is the tone's level at the sphere radius $R_s$, interpolated in dB over th
 the conditions with the band spectrum's weights (empty entries dropped as there), with the
 blend's load-factor correction; $\varphi_A$ is the argument of the complex amplitudes summed with
 the same weights, which needs no unwrapping and does not dip where neighbors' phases differ.
+Shaft order $m$ of a rotor turning at $\Omega_r$ winds its phase as $e^{+i\sigma m\alpha}$
+about the shaft, $\sigma = \mathrm{sign}(\Omega_r)$ and $\alpha$ the direction's azimuth
+about the sphere frame's up axis toward starboard. The sum is taken over the unwound amplitudes
+$A\,e^{-i\sigma m\alpha_j}$ at the cells $j$, and the result multiplied by $e^{+i\sigma
+m\alpha}$ at the direction itself:
+
+$$
+\varphi_A = \arg\Big(e^{\,i\sigma m\alpha}\sum_j w_j A_j\, e^{-i\sigma m\alpha_j}\Big) .
+$$
+
+At the grid's nodes it is the stored phase. Each tone is unwound only where that makes its phase
+the smoother of the two on the grid (its widest step between neighboring cells within 20 dB of
+its peak), which is the phase the resolution check of §2.2 judges.
 $\psi_r$ is the rotor's azimuth (`--rotor_azimuth`, in its own sense of rotation); by default the
 azimuth its phases were locked to (the source's `azimuth`, the first sphere's), which reproduces
 the phasing it was predicted with, and zero, the stored rotor-locked phase itself, where the

@@ -849,8 +849,10 @@ struct RunOptions
     // Which velocity the flight conditions are taken from (--speed_reference).
     // Unset follows each database's own speed_reference attribute.
     std::optional<SpeedReference> speed_reference;
-    // Which air density C_T is formed with (--condition_density).
-    ConditionDensity condition_density = ConditionDensity::vehicle;
+    // Which air density C_T (or a multirotor's x, z and M_h) is formed with
+    // (--condition_density).  Unset: the vehicle file's for a helicopter
+    // database, the run's air for a multirotor one.
+    std::optional<ConditionDensity> condition_density;
     // A format 2 database's pure tones: --rotor_azimuth, --sync_group,
     // --tone_coherence, --tone_ground (tones.hpp).
     ToneRunOptions tones;
@@ -1527,8 +1529,42 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // it states is that air's, rather than one recomputed from the pressure the
     // file derived from it, so the run is the vehicle-density run to the bit.
     const double vehicle_density = trajectory.vehicle.rho;
+    const bool multirotor = database.multirotor();
+    // Unset: the vehicle file's density for a helicopter database, the run's
+    // air for a multirotor's, whose rotor speeds follow the air.
+    const ConditionDensity condition_density = options.condition_density.value_or(
+            multirotor ? ConditionDensity::atmosphere : ConditionDensity::vehicle);
     std::function<double(double)> run_density;
-    if (options.condition_density == ConditionDensity::atmosphere)
+    // A multirotor's hover tip Mach number takes the sound speed of the run's
+    // air at the state's height, under either density choice.
+    std::function<double(double)> run_sound_speed;
+    if (multirotor)
+    {
+        if (blend_options.policy == BlendPolicy::aam)
+            input_error("--blend aam brackets in airspeed and flight path angle, and the database given for ",
+                    job.trajectory, " is in multirotor axes (x, z, M_h). Refused.");
+        if (!(trajectory.vehicle.weight > 0.0) || !std::isfinite(trajectory.vehicle.weight))
+            input_error("The database given for ", job.trajectory, " is in multirotor axes, which scale by the "
+                    "vehicle's weight, and ", job.vehicle, " gives none (", trajectory.vehicle.weight, " N).");
+        Atmosphere air = trajectory.vehicle.atmosphere;
+        if (!std::isnan(options.temperature_override))
+            air.temperature = options.temperature_override;
+        if (!std::isnan(options.pressure_override))
+            air.pressure = options.pressure_override;
+        if (atmosphere)
+        {
+            const AtmosphereProfile layered = atmosphere->has_pressure()
+                    ? *atmosphere
+                    : atmosphere->with_hydrostatic_pressure(air.pressure);
+            run_sound_speed = [layered](double z) { return layered.at(z).sound_speed(); };
+        }
+        else
+        {
+            const double c = air.sound_speed();
+            run_sound_speed = [c](double) { return c; };
+        }
+    }
+    if (condition_density == ConditionDensity::atmosphere)
     {
         Atmosphere air = trajectory.vehicle.atmosphere;
         if (!std::isnan(options.temperature_override))
@@ -1556,8 +1592,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     }
     {
         const bool built_with_run = database.thrust_coefficient_density() == ThrustCoefficientDensity::run;
-        if (built_with_run != (options.condition_density == ConditionDensity::atmosphere))
-            warn("--condition_density ", to_string(options.condition_density), " forms C_T with ",
+        if (built_with_run != (condition_density == ConditionDensity::atmosphere))
+            warn("--condition_density ", to_string(condition_density), " forms C_T with ",
                     run_density ? "the run's air density" : "the vehicle file's density",
                     ", but the database records that its C_T axis used ",
                     built_with_run ? "the run's (thrust_coefficient_density run)" : "the vehicle file's",
@@ -1565,6 +1601,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     }
     double density_low = std::numeric_limits<double>::infinity();
     double density_high = -std::numeric_limits<double>::infinity();
+    std::array<double, 3> multirotor_low {std::numeric_limits<double>::infinity(),
+            std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
+    std::array<double, 3> multirotor_high {-std::numeric_limits<double>::infinity(),
+            -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()};
     std::vector<Database::SourceState> source_states;
     source_states.reserve(nt);
     // Per state, for --provenance_file: its ConditionFlag bits.
@@ -1594,9 +1634,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 by_heading++;
         }
         double density_ratio = 1.0;
+        double density = vehicle_density;
         if (run_density)
         {
-            const double density = run_density(state.z);
+            density = run_density(state.z);
             if (!(density > 0.0) || !std::isfinite(density))
                 input_error("--condition_density atmosphere: the run's air density at ", state.z, " m (t = ",
                         state.t, " s) is ", density, " kg/m^3; check the temperature and pressure.");
@@ -1604,8 +1645,21 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             density_high = std::max(density_high, density);
             density_ratio = vehicle_density / density;
         }
-        const auto condition = state_condition(state, database, options.qsam, options.max_load_factor,
-                blend_options, density_ratio);
+        const auto condition = multirotor
+                ? multirotor_condition(state, database, trajectory.vehicle.weight, density, run_sound_speed(state.z))
+                : state_condition(state, database, options.qsam, options.max_load_factor, blend_options,
+                        density_ratio);
+        if (multirotor)
+        {
+            for (std::size_t a = 0; a < 3; a++)
+            {
+                const double v = a == 0 ? condition.advance_ratio
+                        : a == 1        ? condition.flight_path_angle
+                                        : condition.thrust_coefficient;
+                multirotor_low[a] = std::min(multirotor_low[a], v);
+                multirotor_high[a] = std::max(multirotor_high[a], v);
+            }
+        }
         if (condition.load_capped)
             load_capped++;
         if (condition.load_floored)
@@ -1614,6 +1668,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 Vec3(nose[0], nose[1], nose[2]),
                 Vec3(state.nx, state.ny, state.nz), condition.advance_ratio,
                 condition.flight_path_angle, condition.thrust_coefficient, blend_options));
+        source_states.back().blend.hover_rotor_speed = condition.hover_rotor_speed;
         const auto& blend = source_states.back().blend;
         state_provenance[source_states.size() - 1]
                 = static_cast<unsigned char>(condition_flags(condition, blend));
@@ -1650,11 +1705,29 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     if (run_density)
         log("--condition_density atmosphere: C_T formed with ", density_low, " to ", density_high,
                 " kg/m^3 over the states, against the vehicle file's ", vehicle_density, ".");
-    log("Source axis coverage over ", nt, " states: advance ratio clamped ", mu_clamped,
-            ", flight-path angle clamped ", fpa_clamped, ", thrust coefficient clamped ", ct_clamped,
-            "; analytic load-factor correction applied ", load_scaled,
-            two_sided ? " (raising), " : ".", two_sided ? std::to_string(load_lowered) : std::string(),
-            two_sided ? " (lowering)." : "");
+    if (multirotor)
+    {
+        log("Multirotor conditions over ", nt, " states: x ", multirotor_low[0], " to ", multirotor_high[0], ", z ",
+                multirotor_low[1], " to ", multirotor_high[1], ", M_h ", multirotor_low[2], " to ",
+                multirotor_high[2], " (", to_string(condition_density), " density).");
+        if (mu_clamped || fpa_clamped || ct_clamped)
+            warn("Flight conditions exceed the source database's multirotor axis ranges: in-plane speed ratio x ",
+                    mu_clamped, ", axial speed ratio z ", fpa_clamped, ", hover tip Mach number M_h ", ct_clamped,
+                    " of ", nt, " states. These queries use clamped source conditions.");
+        if (load_floored > 0)
+            warn(load_floored, " of ", nt, " states have a load factor below ", multirotor_minimum_load_factor,
+                    "; their multirotor axes are formed at ", multirotor_minimum_load_factor, " g.");
+        mu_clamped = fpa_clamped = ct_clamped = 0;
+        load_floored = 0;
+    }
+    else
+    {
+        log("Source axis coverage over ", nt, " states: advance ratio clamped ", mu_clamped,
+                ", flight-path angle clamped ", fpa_clamped, ", thrust coefficient clamped ", ct_clamped,
+                "; analytic load-factor correction applied ", load_scaled,
+                two_sided ? " (raising), " : ".", two_sided ? std::to_string(load_lowered) : std::string(),
+                two_sided ? " (lowering)." : "");
+    }
     if (load_floored > 0)
     {
         warn(load_floored, " of ", nt, " states are below ", blend_options.min_load_factor, " g on a "
@@ -5334,7 +5407,7 @@ int run(int argc, char* argv[])
     double scattering = 0.0;
     // Empty follows the database's speed_reference attribute.
     std::string speed_reference;
-    std::string condition_density = "vehicle";
+    std::string condition_density;
     std::vector<std::string> rotor_azimuth_args;
     std::vector<std::string> sync_group_args;
     std::string tone_coherence = "coherent";
@@ -5710,8 +5783,10 @@ int run(int argc, char* argv[])
             ->check(CLI::IsMember({"ground", "air"}));
     app.add_option("--condition_density", condition_density,
             "Which air density the thrust coefficient C_T = n W / (rho V_tip^2 pi R^2) is formed with: "
-            "vehicle (default), the vehicle file's; or atmosphere, the run's air at each state's height "
+            "vehicle, the vehicle file's; or atmosphere, the run's air at each state's height "
             "(the --atmosphere profile's, else --temperature and --pressure, else the vehicle file's). "
+            "On a multirotor database it is the density of the momentum axes x, z and M_h. Default: "
+            "vehicle for a helicopter database, atmosphere for a multirotor one. "
             "A database records which its C_T used (thrust_coefficient_density), and the run warns "
             "when the two differ.")
             ->check(CLI::IsMember({"vehicle", "atmosphere"}));
@@ -6394,6 +6469,9 @@ int run(int argc, char* argv[])
     if (!sphere_file.empty() || !aam_file.empty() || self_test)
     {
         Database& database = load_front();
+        if ((!sphere_file.empty() || !aam_file.empty()) && database.multirotor())
+            input_error("--export_sphere/--export_aam take an operating condition as advance ratio, flight path angle "
+                    "and C_T, and ", front_database, " is in multirotor axes (x, z, M_h). Refused.");
         if ((!sphere_file.empty() || !aam_file.empty()) && database.has_tones())
             input_error("--export_sphere/--export_aam write the band spectrum alone, and ", front_database,
                     " carries pure-tone sources: the exported sphere would leave the rotor tones out. Refused.");
@@ -7203,7 +7281,8 @@ int run(int argc, char* argv[])
     options.frame_bearing = frame_bearing;
     if (!speed_reference.empty())
         options.speed_reference = parse_speed_reference(speed_reference);
-    options.condition_density = *parse_condition_density(condition_density);
+    if (!condition_density.empty())
+        options.condition_density = parse_condition_density(condition_density);
     for (const auto& text : rotor_azimuth_args)
         parse_rotor_azimuths(text, options.tones.rotor_azimuth_deg);
     for (const auto& text : sync_group_args)

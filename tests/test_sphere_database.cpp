@@ -3238,3 +3238,314 @@ TEST_CASE("tone groups refuse what cannot add coherently, naming why", "[tones]"
     REQUIRE_THROWS_WITH(parse_rotor_azimuths("front", parsed), Catch::Matchers::ContainsSubstring("tag=degrees"));
     REQUIRE(parse_sync_group("a, b ,c") == std::vector<std::string> {"a", "b", "c"});
 }
+
+// ---- Multirotor operating conditions (milestone 4): momentum similarity's axes
+// (x, z, M_h), per-condition speed ratios, and phase unwinding about the shaft.
+
+namespace {
+
+struct MultirotorFixture
+{
+    // Each condition's (x, z, M_h), in the fixture's condition order.
+    std::vector<std::array<double, 3>> conditions = {{0.0, 0.0, 0.25}, {1.0, 0.0, 0.25}, {0.0, 1.0, 0.25}};
+    // Source s's speed ratio at condition i.
+    std::function<double(std::size_t, std::size_t)> speed_ratio = [](std::size_t s, std::size_t i) {
+        return 1.0 + 0.1 * static_cast<double>(i) + 0.01 * static_cast<double>(s);
+    };
+    bool rotor_count = true, rotor_radius = true, hover_ct = true, speed_ratios = true;
+    bool keep_fixed_load_factor = false;
+};
+
+constexpr int test_rotors = 6;
+constexpr double test_rotor_radius = 0.3556;
+constexpr double test_hover_ct = 0.009;
+
+// A tone database (write_tone_test_database) restated in multirotor axes.
+std::string write_multirotor_test_database(const std::string& name, ToneFixture tones, const MultirotorFixture& m)
+{
+    tones.condition_axes = "multirotor";
+    const auto path = write_tone_test_database(name, tones);
+    int ncid = 0;
+    REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+    REQUIRE(nc_redef(ncid) == NC_NOERR);
+    if (m.rotor_count)
+        REQUIRE(nc_put_att_int(ncid, NC_GLOBAL, "rotor_count", NC_INT, 1, &test_rotors) == NC_NOERR);
+    if (m.rotor_radius)
+        REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, "rotor_radius_m", NC_DOUBLE, 1, &test_rotor_radius) == NC_NOERR);
+    if (m.hover_ct)
+        REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, "hover_thrust_coefficient", NC_DOUBLE, 1, &test_hover_ct)
+                == NC_NOERR);
+    int n = 0;
+    REQUIRE(nc_inq_grps(ncid, &n, nullptr) == NC_NOERR);
+    std::vector<int> groups(static_cast<std::size_t>(n));
+    REQUIRE(nc_inq_grps(ncid, &n, groups.data()) == NC_NOERR);
+    REQUIRE(groups.size() == m.conditions.size());
+    std::vector<std::array<int, 3>> axis_vars;
+    std::vector<std::vector<std::pair<int, int>>> ratio_vars(groups.size());
+    for (std::size_t i = 0; i < groups.size(); i++)
+    {
+        std::array<int, 3> v {};
+        REQUIRE(nc_def_var(groups[i], "inplane_speed_ratio", NC_DOUBLE, 0, nullptr, &v[0]) == NC_NOERR);
+        REQUIRE(nc_def_var(groups[i], "axial_speed_ratio", NC_DOUBLE, 0, nullptr, &v[1]) == NC_NOERR);
+        REQUIRE(nc_def_var(groups[i], "hover_tip_mach", NC_DOUBLE, 0, nullptr, &v[2]) == NC_NOERR);
+        axis_vars.push_back(v);
+        if (!m.speed_ratios)
+            continue;
+        for (std::size_t s = 0; s < tones.tags.size(); s++)
+        {
+            int sid = 0, var = 0;
+            REQUIRE(nc_inq_grp_ncid(groups[i], tones.tags[s].c_str(), &sid) == NC_NOERR);
+            REQUIRE(nc_def_var(sid, "speed_ratio", NC_DOUBLE, 0, nullptr, &var) == NC_NOERR);
+            ratio_vars[i].emplace_back(sid, var);
+        }
+    }
+    REQUIRE(nc_enddef(ncid) == NC_NOERR);
+    if (!m.keep_fixed_load_factor)
+    {
+        int fixed = 0;
+        REQUIRE(nc_inq_varid(ncid, "fixed_load_factor", &fixed) == NC_NOERR);
+        const short off = 0;
+        REQUIRE(nc_put_var_short(ncid, fixed, &off) == NC_NOERR);
+    }
+    for (std::size_t i = 0; i < groups.size(); i++)
+    {
+        for (std::size_t a = 0; a < 3; a++)
+            REQUIRE(nc_put_var_double(groups[i], axis_vars[i][a], &m.conditions[i][a]) == NC_NOERR);
+        for (std::size_t s = 0; s < ratio_vars[i].size(); s++)
+        {
+            const double ratio = m.speed_ratio(s, i);
+            REQUIRE(nc_put_var_double(ratio_vars[i][s].first, ratio_vars[i][s].second, &ratio) == NC_NOERR);
+        }
+    }
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+    return path;
+}
+
+State multirotor_state(Vec3 velocity, Vec3 thrust, double load_factor)
+{
+    State s {};
+    s.vx = velocity.x;
+    s.vy = velocity.y;
+    s.vz = velocity.z;
+    s.nx = thrust.x;
+    s.ny = thrust.y;
+    s.nz = thrust.z;
+    s.LF = load_factor;
+    return s;
+}
+
+} // namespace
+
+TEST_CASE("a multirotor state's x, z and M_h are momentum similarity's", "[multirotor]")
+{
+    const auto path = write_multirotor_test_database("niceops_multirotor_axes.nod", {}, {});
+    const Database database(path);
+    REQUIRE(database.multirotor());
+    REQUIRE(database.rotor_count() == test_rotors);
+    REQUIRE(database.multirotor_rotor_radius() == test_rotor_radius);
+    REQUIRE(database.hover_thrust_coefficient() == test_hover_ct);
+    const double W = 160.0, rho = 1.2, c = 340.0;
+    const double disk = pi * test_rotor_radius * test_rotor_radius;
+    const auto v_h = [&](double n) { return std::sqrt(n * W / (2.0 * rho * test_rotors * disk)); };
+    const auto tip = [&](double n) { return std::sqrt(n * W / (test_rotors * rho * disk * test_hover_ct)); };
+    const auto near = [](double a, double b) { return std::fabs(a - b) <= 1e-12 * std::max(1.0, std::fabs(b)); };
+    const Vec3 up(0.0, 0.0, 1.0);
+
+    // Hover: the origin, at the hover tip speed.
+    auto k = multirotor_condition(multirotor_state(Vec3(0.0, 0.0, 0.0), up, 1.0), database, W, rho, c);
+    REQUIRE(k.advance_ratio == 0.0);
+    REQUIRE(k.flight_path_angle == 0.0);
+    REQUIRE(near(k.thrust_coefficient, tip(1.0) / c));
+    REQUIRE(near(k.hover_rotor_speed, tip(1.0) / test_rotor_radius));
+    REQUIRE(!k.load_floored);
+    // Level flight at 8 m/s: in plane only.
+    k = multirotor_condition(multirotor_state(Vec3(8.0, 0.0, 0.0), up, 1.0), database, W, rho, c);
+    REQUIRE(near(k.advance_ratio, 8.0 / v_h(1.0)));
+    REQUIRE(k.flight_path_angle == 0.0);
+    // A vertical climb at 3 m/s and a descent at 2: axial only, signed.
+    k = multirotor_condition(multirotor_state(Vec3(0.0, 0.0, 3.0), up, 1.0), database, W, rho, c);
+    REQUIRE(k.advance_ratio == 0.0);
+    REQUIRE(near(k.flight_path_angle, 3.0 / v_h(1.0)));
+    k = multirotor_condition(multirotor_state(Vec3(0.0, 0.0, -2.0), up, 1.0), database, W, rho, c);
+    REQUIRE(near(k.flight_path_angle, -2.0 / v_h(1.0)));
+    // A banked turn at 1.5 g: the thrust tilted about the velocity, the weight
+    // times the load factor in v_h and Omega_h.
+    const double bank = std::acos(1.0 / 1.5);
+    k = multirotor_condition(multirotor_state(Vec3(10.0, 0.0, 0.0), Vec3(0.0, std::sin(bank), std::cos(bank)), 1.5),
+            database, W, rho, c);
+    REQUIRE(near(k.advance_ratio, 10.0 / v_h(1.5)));
+    REQUIRE(std::fabs(k.flight_path_angle) < 1e-12);
+    REQUIRE(near(k.thrust_coefficient, tip(1.5) / c));
+    // Forward climb with the disk tilted 10 degrees forward: u split along the thrust.
+    const double tilt = 10.0 * pi / 180.0;
+    const Vec3 n(std::sin(tilt), 0.0, std::cos(tilt)), u(10.0, 0.0, 2.0);
+    k = multirotor_condition(multirotor_state(u, n, 1.0), database, W, rho, c);
+    const double axial = u.dot(n);
+    REQUIRE(near(k.flight_path_angle, axial / v_h(1.0)));
+    REQUIRE(near(k.advance_ratio, (u - axial * n).norm() / v_h(1.0)));
+    // The wind is taken out: the air-relative velocity sets the axes.
+    auto windy = multirotor_state(Vec3(12.0, 0.0, 0.0), up, 1.0);
+    windy.wx = 4.0;
+    k = multirotor_condition(windy, database, W, rho, c);
+    REQUIRE(near(k.advance_ratio, 8.0 / v_h(1.0)));
+    // A load factor near zero is held at the floor, and says so.
+    k = multirotor_condition(multirotor_state(Vec3(5.0, 0.0, 0.0), up, 0.0), database, W, rho, c);
+    REQUIRE(k.load_floored);
+    REQUIRE(near(k.thrust_coefficient, tip(multirotor_minimum_load_factor) / c));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("a multirotor database blends over the axes it varies; a node is its condition", "[multirotor]")
+{
+    const ToneFixture tones;
+    const MultirotorFixture fixture;
+    const auto path = write_multirotor_test_database("niceops_multirotor_blend.nod", tones, fixture);
+    const Database database(path);
+    // One M_h across the database: the triangulation is over (x, z).
+    REQUIRE(database.active_condition_axes() == std::array<bool, 3> {true, true, false});
+    REQUIRE(database.condition(1) == std::array<double, 3> {1.0, 0.0, 0.25});
+    const double omega_h = 210.0;
+    const auto rate = [&](const Database::Blend& blend, std::size_t s) {
+        auto b = blend;
+        b.hover_rotor_speed = omega_h;
+        return database.tone_shaft_rate(s, b);
+    };
+    // At a node: that condition's speed ratio times the state's Omega_h, in the
+    // rotor's own sense; its tones the shaft orders of that.
+    auto blend = database.blend_at(1.0, 0.0, 0.25);
+    for (std::size_t s = 0; s < 2; s++)
+    {
+        const double expected = std::copysign(fixture.speed_ratio(s, 1) * omega_h, tones.shaft_rates[s]);
+        REQUIRE(std::fabs(rate(blend, s) - expected) < 1e-9);
+        auto b = blend;
+        b.hover_rotor_speed = omega_h;
+        double frequencies[2];
+        database.tone_frequencies(s, b, frequencies);
+        for (std::size_t t = 0; t < 2; t++)
+            REQUIRE(std::fabs(frequencies[t] - tones.harmonics[t] * std::fabs(expected) / (2.0 * pi)) < 1e-9);
+    }
+    REQUIRE(!blend.advance_ratio_clamped);
+    REQUIRE(!blend.thrust_coefficient_clamped);
+    // A node's tones are that condition's, at its grid nodes.
+    const Vec3 position(0.0, 0.0, 100.0), velocity(10.0, 0.0, 0.0), normal(0.0, 0.0, 1.0);
+    const auto state = database.source_state(position, velocity, normal, 1.0, 0.0, 0.25);
+    const auto& source = database.tone_sources()[0];
+    const std::size_t cells = 16, n_tones = 2;
+    const double phis[4] = {-90.0, -30.0, 30.0, 90.0}, thetas[4] = {0.0, 60.0, 120.0, 180.0};
+    for (std::size_t m = 1; m < 3; m++)
+        for (std::size_t n = 1; n < 3; n++)
+        {
+            const double p = phis[m] * pi / 180.0, t = thetas[n] * pi / 180.0;
+            const Vec3 d = state.frame.nose * std::cos(t) + state.frame.starboard * (std::sin(t) * std::sin(p))
+                    - state.frame.normal * (std::sin(t) * std::cos(p));
+            Database::ToneLookup out[2];
+            database.tone_directivity(0, state, d.normalized(), out);
+            for (std::size_t k = 0; k < n_tones; k++)
+            {
+                const auto a = source.amplitudes[(1 * cells + m * 4 + n) * n_tones + k];
+                REQUIRE(std::fabs(out[k].level_db - 20.0 * std::log10(std::abs(a))) < 1e-4);
+                REQUIRE(std::fabs(std::remainder(out[k].phase - std::arg(a), 2.0 * pi)) < 1e-5);
+            }
+        }
+    // Halfway between two conditions: their weights halve, and so the rate.
+    blend = database.blend_at(0.5, 0.0, 0.25);
+    const double half = 0.5 * (fixture.speed_ratio(0, 0) + fixture.speed_ratio(0, 1)) * omega_h;
+    REQUIRE(std::fabs(rate(blend, 0) - std::copysign(half, tones.shaft_rates[0])) < 1e-9);
+    // Off the database's one M_h: clamped there, and said to be.
+    blend = database.blend_at(0.5, 0.0, 0.3);
+    REQUIRE(blend.thrust_coefficient_clamped);
+    REQUIRE(std::fabs(rate(blend, 0) - std::copysign(half, tones.shaft_rates[0])) < 1e-9);
+    // --blend aam brackets in airspeed and flight path angle: refused.
+    BlendOptions aam;
+    aam.policy = BlendPolicy::aam;
+    REQUIRE_THROWS_WITH(database.blend_at(0.5, 0.0, 0.25, aam), Catch::Matchers::ContainsSubstring("multirotor axes"));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("a multirotor database refuses what it cannot place a state with", "[multirotor]")
+{
+    const ToneFixture tones;
+    const auto refused = [&](const char* name, MultirotorFixture m, const char* why) {
+        const auto path = write_multirotor_test_database(name, tones, m);
+        REQUIRE_THROWS_WITH(Database(path), Catch::Matchers::ContainsSubstring(why));
+        std::filesystem::remove(path);
+    };
+    MultirotorFixture m;
+    m.rotor_count = false;
+    refused("niceops_multirotor_no_count.nod", m, "lacks the root attribute rotor_count");
+    m = {};
+    m.hover_ct = false;
+    refused("niceops_multirotor_no_ct.nod", m, "hover_thrust_coefficient");
+    m = {};
+    m.keep_fixed_load_factor = true;
+    refused("niceops_multirotor_fixed.nod", m, "fixed_load_factor in multirotor axes");
+    m = {};
+    m.conditions = {{0.5, 0.2, 0.25}, {0.5, 0.2, 0.25}, {0.5, 0.2, 0.25}};
+    refused("niceops_multirotor_one_condition.nod", m, "are all at one multirotor condition");
+    m = {};
+    m.speed_ratios = false;
+    refused("niceops_multirotor_no_ratio.nod", m, "speed_ratio");
+    m = {};
+    m.conditions[1][0] = -0.5;
+    refused("niceops_multirotor_negative_x.nod", m, "expected x >= 0");
+}
+
+TEST_CASE("a shaft-order tone is interpolated with its phase unwound about the shaft", "[multirotor][tones]")
+{
+    // A tone whose phase winds exactly as a rotor's harmonic m does about the up
+    // axis, exp(+i sign(Omega) m alpha) (the convention WOPWOP's tandem pins:
+    // shaft_rate > 0 counterclockwise seen from above, alpha toward starboard):
+    // unwound, it is constant, so the lookup between nodes is exact; wound, the
+    // grid cannot resolve it.
+    ToneFixture fixture;
+    fixture.harmonics = {2, 4};
+    fixture.shaft_rates = {40.0, -40.0};
+    const double phis[4] = {-90.0, -30.0, 30.0, 90.0}, thetas[4] = {0.0, 60.0, 120.0, 180.0};
+    const auto alpha = [](double phi_deg, double theta_deg) {
+        const double p = phi_deg * pi / 180.0, t = theta_deg * pi / 180.0;
+        return std::atan2(std::sin(t) * std::sin(p), std::cos(t));
+    };
+    // Both sources wind in their own sense: +m alpha for the counterclockwise one,
+    // -m alpha for the clockwise; the fixture's phase function is shared, so the
+    // two are written as two databases.
+    for (const int sense : {1, -1})
+    {
+        fixture.phase = [&, sense](std::size_t m, std::size_t n, std::size_t k) {
+            return sense * fixture.harmonics[k] * alpha(phis[m], thetas[n]) * 180.0 / pi + 15.0;
+        };
+        fixture.amplitude = [](std::size_t, std::size_t, std::size_t, std::size_t) { return 80.0; };
+        fixture.shaft_rates = {sense * 40.0, sense * 40.0};
+        fixture.sync_group = "main";
+        const auto path = write_tone_test_database(sense > 0 ? "niceops_unwind_ccw.nod" : "niceops_unwind_cw.nod",
+                fixture);
+        const Database database(path);
+        const auto& source = database.tone_sources()[0];
+        REQUIRE(source.unwind_order == std::vector<int> {2 * sense, 4 * sense});
+        REQUIRE(source.energy_only == std::vector<char> {0, 0});
+        const Vec3 position(0.0, 0.0, 100.0), velocity(10.0, 0.0, 0.0), normal(0.0, 0.0, 1.0);
+        const auto state = database.source_state(position, velocity, normal, 0.2, 0.2, test_ct_reference);
+        for (double phi = -80.0; phi <= 80.0; phi += 17.0)
+            for (double theta = 10.0; theta <= 170.0; theta += 23.0)
+            {
+                const double p = phi * pi / 180.0, t = theta * pi / 180.0;
+                const Vec3 d = state.frame.nose * std::cos(t) + state.frame.starboard * (std::sin(t) * std::sin(p))
+                        - state.frame.normal * (std::sin(t) * std::cos(p));
+                Database::ToneLookup out[2];
+                database.tone_directivity(0, state, d.normalized(), out);
+                for (std::size_t k = 0; k < 2; k++)
+                {
+                    const double expected = sense * fixture.harmonics[k] * alpha(phi, theta) + 15.0 * pi / 180.0;
+                    REQUIRE(std::fabs(std::remainder(out[k].phase - expected, 2.0 * pi)) < 1e-5);
+                }
+            }
+        std::filesystem::remove(path);
+    }
+    // A phase that does not wind about the shaft is smoother as it is: left wound.
+    fixture.phase = [](std::size_t m, std::size_t n, std::size_t k) {
+        return 5.0 * static_cast<double>(m) + 3.0 * static_cast<double>(n) + 10.0 * static_cast<double>(k);
+    };
+    const auto path = write_tone_test_database("niceops_unwind_none.nod", fixture);
+    const Database database(path);
+    REQUIRE(database.tone_sources()[0].unwind_order == std::vector<int> {0, 0});
+    std::filesystem::remove(path);
+}
