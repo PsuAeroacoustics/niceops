@@ -2301,6 +2301,30 @@ The states sampled agree with every state evaluated to 0.003 dB, as without scat
 20 ft agree with the default 4 m to 0.03 dB. Cost: 1.7 s on the GPU against 1.5 s specular, and
 3.8 s with `--no-gpu` against 3.4 s, each microphone's field built once for the run.
 
+### Pure tones against PSU-WOPWOP
+
+PSU-WOPWOP's tandem regression case (two 3-bladed rotors at 30.05 rad/s, hubs 12 m apart and 1 m
+apart in height, the rear turned 40° further, at 40 m/s in a 2.9° descent), its per-rotor
+far-field PT spheres on a 2.5° lower-hemisphere grid built into a format 2 database by panam's
+PT build. Harness `tones/`: `wopwop_tandem.py` and `wopwop_flyover.py`.
+
+| Check | Result |
+| --- | --- |
+| The database read back through `tone_directivity` at every grid node, against the spheres (level, and phase locked to each rotor's azimuth) | 125,404 tone-cells: worst 2.3e-6 dB, 2.5e-5°, relative 4.5e-7 |
+| Both rotors in their sync group, at the recorded azimuths, against PSU-WOPWOP's whole-vehicle sphere, band by band (bands to 100 Hz, which hold only the tones the grid resolves; 14,420 direction-bands within 20 dB of their peak) | rms 4.0 dB at 100 m, 0.43 at 1 km, 0.042 at 10 km, 0.0042 at 100 km (worst 0.059 dB): the far-field sphere about the center is the approximation at short range |
+| A flyover past 15 ground microphones (150 m start, x ±300 m, y ±200 m), ground off: each band's level over the pass against PSU-WOPWOP's direct prediction (bands to 100 Hz within 30 dB of the microphone's loudest) | front rotor alone: mean −0.58 dB, rms 1.1; tandem: −0.63, 1.3; rear turned 60°: −0.61, 1.1 |
+| The same flyover, turning the rear rotor 60° (half a cycle of the blade-passage tone): the change in each band, mean over the microphones | 50 Hz: PSU-WOPWOP +4.59 dB, NICEOPS +4.86; 79 Hz: −4.39, −3.93; 40 Hz: −0.75, −1.53; 25, 32, 63, 100 Hz: within 0.5 dB |
+
+- **Phase resolution.** On the case's own 15° grid only the blade-passage tone resolves (the
+  others step more than 90° between cells and are summed in energy, as designed); 2.5° resolves
+  shaft orders to 33.
+- **The near field.** In 2 s windows NICEOPS falls below PSU-WOPWOP by a mean of 6 dB (rms 13)
+  at 150-250 m from the vehicle, 3 dB (rms 6-8) at 250-400 m, 2 dB (rms 5-6) at 400-600 m and
+  under 1 dB (rms 1.5-2.8) beyond, and by much more below 150 m, all overhead, where the
+  far-field spheres keep the rotors' on-axis nulls and the near field fills them. The spheres'
+  first-order phase error, (m + 1) c / (2 |Ω| R), is 6.5° at 200 m for the blade-passage tone and
+  21° for shaft order 12. NICEOPS logs it and does not correct it.
+
 ### `--db_cutoff` and SEL
 
 The cutoff is exact for an observer whose peak level reaches it, but an SEL exceeds its peak level

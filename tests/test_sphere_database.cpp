@@ -2532,6 +2532,9 @@ struct ToneFixture
     // Each source's hub (forward, starboard, up), m; unset, +-1.5 m fore and aft,
     // 0.3 m up.
     std::function<std::array<double, 3>(std::size_t)> center;
+    // The rotor azimuth (deg) source s's phases were locked to at condition i
+    // (the optional azimuth); unset, none written.
+    std::function<double(std::size_t, std::size_t)> azimuth;
 };
 
 std::string write_tone_test_database(const std::string& name, const ToneFixture& f)
@@ -2558,8 +2561,8 @@ std::string write_tone_test_database(const std::string& name, const ToneFixture&
     REQUIRE(nc_inq_grps(ncid, &n_groups, groups.data()) == NC_NOERR);
     struct SourceVars
     {
-        int group, center, shaft_rate, harmonic, frequency, amplitude, phase;
-        std::size_t s;
+        int group, center, shaft_rate, harmonic, frequency, amplitude, phase, azimuth;
+        std::size_t s, condition;
     };
     std::vector<SourceVars> vars;
     const std::size_t n_tones = f.harmonics.size();
@@ -2572,7 +2575,7 @@ std::string write_tone_test_database(const std::string& name, const ToneFixture&
         {
             if (f.drop_rear_from_condition_1 && i == 1 && s == 1)
                 continue;
-            SourceVars v {0, 0, 0, 0, 0, 0, 0, s};
+            SourceVars v {0, 0, 0, 0, 0, 0, 0, -1, s, i};
             REQUIRE(nc_def_grp(groups[i], f.tags[s].c_str(), &v.group) == NC_NOERR);
             int tone_dim = 0, xyz_dim = 0;
             REQUIRE(nc_def_dim(v.group, "tone", n_tones, &tone_dim) == NC_NOERR);
@@ -2584,6 +2587,8 @@ std::string write_tone_test_database(const std::string& name, const ToneFixture&
             const int dims[3] = {phi_dim, theta_dim, tone_dim};
             REQUIRE(nc_def_var(v.group, "amplitude", NC_DOUBLE, 3, dims, &v.amplitude) == NC_NOERR);
             REQUIRE(nc_def_var(v.group, "phase", NC_DOUBLE, 3, dims, &v.phase) == NC_NOERR);
+            if (f.azimuth)
+                REQUIRE(nc_def_var(v.group, "azimuth", NC_DOUBLE, 0, nullptr, &v.azimuth) == NC_NOERR);
             if (!f.phase_reference.empty())
                 REQUIRE(nc_put_att_text(v.group, NC_GLOBAL, "phase_reference", f.phase_reference.size(),
                                 f.phase_reference.c_str())
@@ -2604,6 +2609,11 @@ std::string write_tone_test_database(const std::string& name, const ToneFixture&
         const double center[3] = {hub[0], hub[1], hub[2]};
         REQUIRE(nc_put_var_double(v.group, v.center, center) == NC_NOERR);
         REQUIRE(nc_put_var_double(v.group, v.shaft_rate, &f.shaft_rates[v.s]) == NC_NOERR);
+        if (f.azimuth)
+        {
+            const double azimuth = f.azimuth(v.s, v.condition);
+            REQUIRE(nc_put_var_double(v.group, v.azimuth, &azimuth) == NC_NOERR);
+        }
         REQUIRE(nc_put_var_int(v.group, v.harmonic, f.harmonics.data()) == NC_NOERR);
         std::vector<double> frequency(n_tones);
         for (std::size_t k = 0; k < n_tones; k++)
@@ -3066,6 +3076,62 @@ TEST_CASE("two rotors in one sync group: +6 dB in phase, a null in antiphase, +3
     const double grouped
             = ToneRun("niceops_tones_declared.nod", omni_tones({"front", "rear"}, ""), declared).power(observer);
     REQUIRE(std::fabs(10.0 * std::log10(grouped / one) - 20.0 * std::log10(2.0)) < 1e-9);
+}
+
+TEST_CASE("a rotor's recorded azimuth is the default phasing, and --rotor_azimuth replaces it", "[tones]")
+{
+    // The phases are locked to azimuths 10 and 55 degrees: 45 degrees apart, half a
+    // cycle of shaft order 4, so the pair as predicted cancels below the vehicle.
+    const Vec3 observer(0.0, 0.0, -9900.0);
+    const double one = ToneRun("niceops_tones_az_one.nod", omni_tones({"front"})).power(observer);
+    auto recorded = omni_tones({"front", "rear"});
+    recorded.azimuth = [](std::size_t s, std::size_t) { return s == 0 ? 10.0 : 55.0; };
+    const double as_predicted = ToneRun("niceops_tones_az_rec.nod", recorded).power(observer);
+    REQUIRE(as_predicted < 1e-12 * one);
+    // Set absolutely: the rear at the front's azimuth, so in phase.
+    ToneRunOptions turned;
+    turned.rotor_azimuth_deg["rear"] = 10.0;
+    const double in_phase = ToneRun("niceops_tones_az_set.nod", recorded, turned).power(observer);
+    REQUIRE(std::fabs(10.0 * std::log10(in_phase / one) - 20.0 * std::log10(2.0)) < 1e-9);
+    // Without a recorded azimuth the stored phases stand as they are (in phase here).
+    const double unrecorded = ToneRun("niceops_tones_az_none.nod", omni_tones({"front", "rear"})).power(observer);
+    REQUIRE(std::fabs(10.0 * std::log10(unrecorded / one) - 20.0 * std::log10(2.0)) < 1e-9);
+}
+
+TEST_CASE("a tone in a uniform wind: still air in the frame moving with it", "[tones]")
+{
+    const double c = 343.2;
+    const Vec3 wind(10.0, 0.0, 0.0), still(0.0, 0.0, 0.0), hub(0.0, 0.0, 0.0);
+    // A still hub and microphone: no frequency shift, and sound reaches 1000 m
+    // downwind in 1000 / (c + W) and upwind in 1000 / (c - W).
+    const ToneArrival down = tone_arrival(hub, still, Vec3(1000.0, 0.0, 0.0), 1000.0 / (c + 10.0), c, wind);
+    REQUIRE(std::fabs(down.delta) < 1e-9);
+    REQUIRE(std::fabs(down.doppler - 1.0) < 1e-15);
+    const ToneArrival up = tone_arrival(hub, still, Vec3(-1000.0, 0.0, 0.0), 1000.0 / (c - 10.0), c, wind);
+    REQUIRE(std::fabs(up.delta) < 1e-9);
+    REQUIRE(std::fabs(up.doppler - 1.0) < 1e-15);
+    // Across the wind the wave normal leans upwind of the line of sight.
+    const ToneArrival across = tone_arrival(hub, still, Vec3(0.0, 1000.0, 0.0), 1000.0 / c, c, wind);
+    REQUIRE(across.direction.x < 0.0);
+    // A hub drifting with the wind is a still source in the air's frame, heard by a
+    // microphone moving at -W: the still-air solve at the moved point, and the
+    // observer's Doppler factor alone.
+    const Vec3 point(400.0, -300.0, -250.0);
+    const double lag = point.norm() / c;
+    const ToneArrival drifting = tone_arrival(hub, wind, point, lag, c, wind);
+    const ToneArrival moved = tone_arrival(hub, still, point - wind * lag, lag, c);
+    REQUIRE(std::fabs(drifting.delta - moved.delta) < 1e-12);
+    REQUIRE(std::fabs(drifting.length - moved.length) < 1e-9);
+    REQUIRE((drifting.direction - moved.direction).norm() < 1e-12);
+    REQUIRE(std::fabs(drifting.doppler - 1.0 / (1.0 + wind.dot(drifting.direction) / c)) < 1e-15);
+    // Calm air is the calm solve, to the bit.
+    const Vec3 velocity(50.0, 0.0, -5.0);
+    const ToneArrival calm = tone_arrival(hub, velocity, point, lag, c, still);
+    const ToneArrival plain = tone_arrival(hub, velocity, point, lag, c);
+    REQUIRE(calm.delta == plain.delta);
+    REQUIRE(calm.length == plain.length);
+    REQUIRE(calm.doppler == plain.doppler);
+    REQUIRE((calm.direction - plain.direction).norm() == 0.0);
 }
 
 TEST_CASE("one source sums the same coherently or in energy, to the bit", "[tones]")

@@ -15,7 +15,8 @@
 // with n the direction leaving the hub at its emission time, L the path length
 // from there, f = f_e / (1 - M.n) the received frequency, delta the emission
 // time relative to the state's own time for a common reception time, and psi0
-// the rotor's azimuth offset (--rotor_azimuth).  The image arrival carries the
+// the rotor's azimuth offset (--rotor_azimuth).  In wind every arrival is solved
+// in the frame moving with the air (tone_arrival).  The image arrival carries the
 // ground's spherical-wave reflection coefficient at its own frequency, which
 // enters conjugated (the ground model's Q is written for e^(-i omega t)).
 //
@@ -96,8 +97,11 @@ struct ToneArrival
     // The Doppler factor 1 - V.n / c: the received frequency is f_e over it.
     double doppler = 1.0;
 };
+// `wind`: a uniform wind (m/s), in which sound travels at c relative to the air;
+// the solve is then the still-air one in the frame moving with it.  Zero, calm
+// air, is the same arithmetic as without it.
 ToneArrival tone_arrival(const Vec3& hub, const Vec3& velocity, const Vec3& point, double reception_lag,
-        double sound_speed);
+        double sound_speed, const Vec3& wind = Vec3(0.0, 0.0, 0.0));
 
 // Per band, the ratio of the received energy to the free field's (the band
 // path's ground, plate, table, refraction or urban terms), applied to free-field
@@ -136,11 +140,16 @@ public:
         std::vector<Vec3> hubs;
         // [source][tone], flattened by tone_offset().
         std::vector<double> frequencies;
+        // The hubs' ground velocity, and the wind the tones travel in (the
+        // profile's, averaged over the heights of the state's straight paths to
+        // the ground; zero in calm air or without a profile).
         Vec3 velocity;
+        Vec3 wind;
         // Each run-time group's mean shaft rate at this state, rad/s (0 for others).
         std::vector<double> group_rates;
     };
-    StateTones prepare(const Database::SourceState& state, const Vec3& velocity) const;
+    StateTones prepare(const Database::SourceState& state, const Vec3& velocity,
+            const Vec3& wind = Vec3(0.0, 0.0, 0.0)) const;
 
     // The ground for the per-frequency path: the model and its admittance at any
     // frequency.  Null: free field, direct arrivals only.

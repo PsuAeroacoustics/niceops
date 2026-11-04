@@ -2905,8 +2905,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     }
     else if (profile && profile->has_wind() && !air_referenced)
     {
-        log("  the profile's wind is read but not used: it matters only to --refraction and to "
-            "a database referred to the air (--speed_reference).");
+        log("  the profile's wind is read but not used by the bands: it matters only to --refraction, to "
+            "a database referred to the air (--speed_reference) and to pure tones.");
     }
 
     // A format 2 database's pure tones (tones.hpp).  Evaluated beside a band
@@ -2955,10 +2955,30 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         tone_states.reserve(nt);
         std::vector<double> rate_low(groups.size(), std::numeric_limits<double>::infinity());
         std::vector<double> rate_high(groups.size(), 0.0);
+        // The wind the tones travel in: the profile's, turned into the local frame,
+        // averaged over the heights a straight path from the state to the ground
+        // crosses (the per-frequency tones run on level ground only; elsewhere they
+        // take the band path's correction).  Calm without a profile's wind.
+        const bool tone_wind = profile && profile->has_wind();
+        const CompassToLocal tone_to_local(std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing);
+        auto layer_wind = [&](double z) {
+            constexpr int samples = 16;
+            Vec3 sum(0.0, 0.0, 0.0);
+            for (int k = 0; k < samples; k++)
+            {
+                const auto w = tone_to_local(profile->wind_at(std::max(z, 0.0) * (k + 0.5) / samples));
+                sum = sum + Vec3(w[0], w[1], 0.0);
+            }
+            return sum / static_cast<double>(samples);
+        };
+        if (tone_wind)
+            log("Tones: Doppler factors and emission times are solved in the frame moving with the profile's wind, "
+                "averaged over each state's height.");
         for (std::size_t it = 0; it < nt; it++)
         {
             const auto v = ground_velocity(trajectory.states[it]);
-            tone_states.push_back(tone_evaluator->prepare(source_states[it], Vec3(v[0], v[1], v[2])));
+            tone_states.push_back(tone_evaluator->prepare(source_states[it], Vec3(v[0], v[1], v[2]),
+                    tone_wind ? layer_wind(source_states[it].position.z) : Vec3(0.0, 0.0, 0.0)));
             for (std::size_t g = 0; g < groups.size(); g++)
             {
                 rate_low[g] = std::min(rate_low[g], tone_states.back().group_rates[g]);

@@ -428,6 +428,11 @@ struct ToneSource
     // and the shaft rate (rad/s, signed by the sense of rotation).
     std::vector<std::array<double, 3>> centers;
     std::vector<double> shaft_rates;
+    // Per condition, the rotor azimuth (degrees, in its own sense of rotation)
+    // its phases were locked to (the source's optional azimuth), NaN where the
+    // file does not say: the default of --rotor_azimuth, so that a database
+    // evaluated as it stands keeps the phasing its rotors were predicted with.
+    std::vector<double> azimuths_deg;
     // The tones' emission-frame frequencies, Hz: [condition * tones + tone].
     std::vector<double> frequencies;
     // The complex pressure amplitude of each tone in each grid cell, relative to

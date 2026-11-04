@@ -96,26 +96,37 @@ std::vector<std::string> parse_sync_group(const std::string& text)
 }
 
 ToneArrival tone_arrival(const Vec3& hub, const Vec3& velocity, const Vec3& point, double reception_lag,
-        double sound_speed)
+        double sound_speed, const Vec3& wind)
 {
     // The emission time delta solves c (T - delta) = |point - (hub + V delta)|, T the
     // reception lag: (c^2 - V^2) delta^2 - 2 (c^2 T - D.V) delta + (c^2 T^2 - D^2) = 0,
     // D = point - hub.  Of its roots the one before reception, written in the
     // form that does not cancel when delta is small against T.
-    const Vec3 d0 = point - hub;
+    //
+    // In a uniform wind W the same holds in the frame moving with the air, where
+    // sound travels at c: there the hub moves at V - W and the point, at rest on
+    // the ground, at -W, so it is received at point - W T.  Calm air takes the
+    // first branch, the arithmetic as it always was.
     const double c = sound_speed;
-    const double a = c * c - velocity.squaredNorm();
-    const double b = c * c * reception_lag - d0.dot(velocity);
+    const bool calm = wind.x == 0.0 && wind.y == 0.0 && wind.z == 0.0;
+    const Vec3 v = calm ? velocity : velocity - wind;
+    const Vec3 received = calm ? point : point - wind * reception_lag;
+    const Vec3 d0 = received - hub;
+    const double a = c * c - v.squaredNorm();
+    const double b = c * c * reception_lag - d0.dot(v);
     const double cc = c * c * reception_lag * reception_lag - d0.squaredNorm();
     const double disc = std::max(b * b - a * cc, 0.0);
     ToneArrival out;
     out.delta = cc / (b + std::sqrt(disc));
     out.length = c * (reception_lag - out.delta);
-    const Vec3 emitted = hub + velocity * out.delta;
-    const Vec3 toward = point - emitted;
+    const Vec3 emitted = hub + v * out.delta;
+    const Vec3 toward = received - emitted;
     const double n = toward.norm();
     out.direction = n > 0.0 ? toward / n : Vec3(0.0, 0.0, -1.0);
-    out.doppler = 1.0 - velocity.dot(out.direction) / c;
+    // f = f_e (1 - n.v_o / c) / (1 - n.v_s / c) with the air-frame velocities
+    // v_s = V - W and v_o = -W; doppler is f_e / f.
+    out.doppler = calm ? 1.0 - velocity.dot(out.direction) / c
+                       : (1.0 - v.dot(out.direction) / c) / (1.0 + wind.dot(out.direction) / c);
     return out;
 }
 
@@ -153,7 +164,13 @@ ToneEvaluator::ToneEvaluator(const Database& database, const ToneRunOptions& opt
         return all.str();
     };
 
+    // Each rotor at the azimuth its phases were locked to (the first sphere's),
+    // which reproduces the phasing it was predicted with; zero, the stored
+    // rotor-locked phase itself, where the database does not record one.
     azimuth_.assign(sources.size(), 0.0);
+    for (std::size_t s = 0; s < sources.size(); s++)
+        if (!sources[s].azimuths_deg.empty() && std::isfinite(sources[s].azimuths_deg.front()))
+            azimuth_[s] = sources[s].azimuths_deg.front() * pi / 180.0;
     for (const auto& [tag, deg] : options.rotor_azimuth_deg)
     {
         const auto it = index.find(tag);
@@ -239,6 +256,24 @@ ToneEvaluator::ToneEvaluator(const Database& database, const ToneRunOptions& opt
                             ". Sources held at a fixed phase must share a shaft rate.");
             }
         }
+        // The default phasing is the first sphere's recorded azimuths; a group
+        // whose members' recorded azimuths differ from one sphere to another by
+        // other than a common turn is phased differently there, which one
+        // default cannot hold.
+        for (const std::size_t s : g.sources)
+        {
+            const auto& a = sources[s].azimuths_deg;
+            const auto& a0 = sources[g.sources[0]].azimuths_deg;
+            for (std::size_t i = 1; i < n_conditions && i < a.size() && i < a0.size(); i++)
+            {
+                const double turn = std::remainder((a[i] - a0[i]) - (a[0] - a0[0]), 360.0);
+                if (std::isfinite(turn) && std::fabs(turn) > 1e-3)
+                    warn("Database sync group ", g.name, ": source ", sources[s].tag, "'s recorded azimuth relative to ",
+                            sources[g.sources[0]].tag, "'s is ", std::remainder(a[i] - a0[i], 360.0), " deg at sphere ",
+                            i, " and ", std::remainder(a[0] - a0[0], 360.0), " deg at sphere 0; the run phases the "
+                            "group as sphere 0 records unless --rotor_azimuth says otherwise.");
+            }
+        }
     }
 
     tone_offsets_.resize(sources.size());
@@ -308,11 +343,13 @@ double ToneEvaluator::absorption_at(const double* absorption, double frequency) 
     return (1.0 - t) * a + t * b;
 }
 
-ToneEvaluator::StateTones ToneEvaluator::prepare(const Database::SourceState& state, const Vec3& velocity) const
+ToneEvaluator::StateTones ToneEvaluator::prepare(const Database::SourceState& state, const Vec3& velocity,
+        const Vec3& wind) const
 {
     const auto& sources = database_.tone_sources();
     StateTones out;
     out.velocity = velocity;
+    out.wind = wind;
     out.hubs.resize(sources.size());
     out.frequencies.assign(tone_total_, 0.0);
     out.group_rates.assign(groups_.size(), 0.0);
@@ -418,12 +455,12 @@ void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTone
         {
             const auto& src = sources[s];
             const Vec3& hub = tones.hubs[s];
-            const ToneArrival d_arrival = tone_arrival(hub, tones.velocity, observer, lag, c);
+            const ToneArrival d_arrival = tone_arrival(hub, tones.velocity, observer, lag, c, tones.wind);
             database_.tone_directivity(s, state, d_arrival.direction, direct.data());
             ToneArrival r_arrival;
             if (with_ground)
             {
-                r_arrival = tone_arrival(hub, tones.velocity, image, lag, c);
+                r_arrival = tone_arrival(hub, tones.velocity, image, lag, c, tones.wind);
                 database_.tone_directivity(s, state, r_arrival.direction, reflected.data());
             }
             for (std::size_t t = 0; t < src.tone_count(); t++)

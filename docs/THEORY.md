@@ -502,10 +502,27 @@ $L_A$ is the tone's level at the sphere radius $R_s$, interpolated in dB over th
 the conditions with the band spectrum's weights (empty entries dropped as there), with the
 blend's load-factor correction; $\varphi_A$ is the argument of the complex amplitudes summed with
 the same weights, which needs no unwrapping and does not dip where neighbors' phases differ.
-$\psi_r$ is the rotor's azimuth offset (`--rotor_azimuth`, in its own sense of rotation; zero
-keeps the stored rotor-locked phase). $\alpha(f)$ is the path's absorption (§4.3) at the received
+$\psi_r$ is the rotor's azimuth (`--rotor_azimuth`, in its own sense of rotation); by default the
+azimuth its phases were locked to (the source's `azimuth`, the first sphere's), which reproduces
+the phasing it was predicted with, and zero, the stored rotor-locked phase itself, where the
+database records none. $\alpha(f)$ is the path's absorption (§4.3) at the received
 frequency, interpolated between the band centers linearly in $\lg f$ and $\lg\alpha$. $R_a$ is
 where absorption starts, the sphere radius or, for lossless spheres, 0 (§2.2).
+
+**In wind** $\mathbf{W}$ (the profile's, averaged over the heights between the ground and the
+state) the solve is the same in the frame moving with the air, where sound travels at $c$: the
+hub moves at $\mathbf{V} - \mathbf{W}$ and the point, at rest on the ground, is received at
+$\mathbf{x}_p - \mathbf{W}T$, so
+
+$$
+c\,(T - \delta) = \left\lvert \mathbf{x}_p - \mathbf{W}T - (\mathbf{x}_r + (\mathbf{V} - \mathbf{W})\delta) \right\rvert ,
+\qquad
+f = f_e\,\frac{1 + \mathbf{W}\cdot\hat{\mathbf{k}}/c}{1 - (\mathbf{V} - \mathbf{W})\cdot\hat{\mathbf{k}}/c},
+$$
+
+with $\hat{\mathbf{k}}$ the wave normal in that frame, along which the directivity is read (the
+spheres are the rotor's in still air at its airspeed). The paths stay straight. $\mathbf{W} = 0$
+is the still-air solve above, to the bit.
 
 Between two hubs a distance $\mathbf{d}$ apart the emission times differ, in the far field, by
 $\hat{\mathbf{k}}\cdot\mathbf{d}/(c(1 - \mathbf{M}\cdot\hat{\mathbf{k}}))$, so their phasors by

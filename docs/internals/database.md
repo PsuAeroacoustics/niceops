@@ -299,6 +299,25 @@ with phase. Things to keep:
 - **The ground per frequency uses an admittance table** (`AdmittanceTable`, 96 points per octave),
   not the band admittances: a tone's frequency is its own, Doppler-shifted. The ground table
   (`GroundTable`) is the band model's and is not read for tones.
+- **The default phasing is each rotor's recorded azimuth** (`azimuth`, first sphere): the phases
+  are stored locked to it (Â = A e^(-i m psi_ref)), so evaluating them at it gives back the
+  phasing they were predicted with. Zero would put every rotor of a tandem at one blade azimuth,
+  which is not the vehicle that was predicted. A group whose members' recorded azimuths differ
+  between spheres by other than a common turn warns: one default cannot hold both.
+- **Wind is solved in the frame moving with the air** (`tone_arrival`'s `wind`): the hub at
+  V - W, the microphone received at x - W T. The wind is the profile's mean over the heights from
+  the ground to the state, the straight ray's own on the level ground the per-frequency path
+  runs on. Calm air takes the old arithmetic in its own branch, to the bit (`a tone in a uniform
+  wind`), so a run without a wind profile is unchanged.
+- **A predicted sphere's floor cells must stay finite.** The loader keeps a non-finite level as
+  an empty entry, which `tone_directivity` drops and renormalizes over, as the bands do for
+  unmeasured cells: a -inf written where a prediction is merely quiet fills a directivity null
+  with its neighbors' level. panam's PT build keeps PSU-WOPWOP's floor level there; on the tandem,
+  writing -inf put 15-33 dB into bands made of such tones.
+- **Verified against PSU-WOPWOP** in the validation harness (`tones/`): the database's cells
+  through `tone_directivity` to float precision; the coherent sum of a tandem's two rotor spheres
+  against PSU-WOPWOP's whole-vehicle sphere, converging as the range grows; and ground-microphone
+  band levels of a flyover against PSU-WOPWOP's direct prediction ([FIDELITY](../FIDELITY.md)).
 - Tested in `[tones]` (`test_sphere_database.cpp`) and the `tones_*` CTests, on databases
   `make_tone_database` writes from B407's (two rotors at 110 and 220 Hz, 95 dB). Deferred: tones on
   refracted and terrain paths per frequency, a bound for the peak search, multirotor axes, the

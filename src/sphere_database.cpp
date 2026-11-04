@@ -1364,7 +1364,7 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
         {
             const auto origin = parse_condition_origin(*origin_text);
             if (!origin)
-                input_error("Database error: sphere ", group_id, " has condition_origin '", *origin_text,
+                input_error("Database error: sphere ", i, " has condition_origin '", *origin_text,
                         "'; expected measured, extended_flight_path_angle or synthesized_hover.");
             origins_.push_back(*origin);
         }
@@ -2157,6 +2157,15 @@ void Database::load_tone_sources(int file_ncid, const std::vector<int>& group_id
             }
             source.centers.push_back({center[0], center[1], center[2]});
             source.shaft_rates.push_back(shaft_rate);
+            double azimuth = std::numeric_limits<double>::quiet_NaN();
+            if (int azimuth_id = 0; NC_NOERR == nc_inq_varid(sid, "azimuth", &azimuth_id))
+            {
+                require_scalar(sid, "azimuth", &azimuth);
+                if (!std::isfinite(azimuth))
+                    input_error(what, " has azimuth ", azimuth, "; the rotor azimuth its phases were locked to must "
+                            "be a finite number of degrees.");
+            }
+            source.azimuths_deg.push_back(azimuth);
             source.frequencies.insert(source.frequencies.end(), frequencies.begin(), frequencies.end());
             // Gridded over the sorted unique angles, as a band amplitude is; an
             // empty (non-finite) level is no pressure.

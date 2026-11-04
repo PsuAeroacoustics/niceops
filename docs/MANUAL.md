@@ -602,10 +602,15 @@ their amplitude and phase over the sphere grid.
 
 | Option | What it does |
 | --- | --- |
-| `--rotor_azimuth tag=deg,...` | Advances each named rotor by that angle in its own sense of rotation: the synchrophasing angle. Repeatable. Default: the stored phases as they are. |
+| `--rotor_azimuth tag=deg,...` | Sets each named rotor's azimuth, in degrees in its own sense of rotation: the synchrophasing angle. Repeatable. Default: the azimuth each rotor's phases were locked to (its `azimuth`, which panam's PT build records), which reproduces the phasing it was predicted with; without one, the stored phases as they are. |
 | `--sync_group tag,tag,...` | Adds the named rotors coherently, replacing their database groups, at their mean shaft rate (logged). Repeatable, one group each. Only rotors whose phases are tied to their azimuth can join one. |
 | `--tone_coherence coherent\|energy` | `energy` adds every rotor in energy, each keeping its own ground interference: the level with no synchrophasing. Default `coherent`. |
 | `--tone_ground frequency\|band` | `frequency` (default) reflects each tone at its own frequency where the path allows; `band` applies the band model's correction to free-field tones. |
+
+**Wind.** With a wind profile (`--atmosphere` with wind columns, or `--wind`), each tone's
+emission time and Doppler shift are solved in the frame moving with the air, the wind taken as the
+profile's mean over the heights between the ground and the state. The tones' paths stay straight;
+`--refraction` bends the bands' only. Calm air, or no profile, is the still-air solve.
 
 **Where the ground is per tone.** On straight rays over level ground at point microphones, or
 with no ground model, each tone's reflection is evaluated at its own frequency. Over plate
