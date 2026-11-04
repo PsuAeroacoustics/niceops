@@ -416,16 +416,43 @@ void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTone
             p += 2.0 * gamma * (d * std::conj(r)).real();
         return p;
     };
+    const bool near_field = options_.near_field;
     auto phasor = [&](const Database::ToneLookup& look, const ToneArrival& a, double frequency_e, double psi,
                           double& received) {
         received = frequency_e / a.doppler;
-        if (look.level_db <= Database::no_energy_floor_db)
+        const bool near = near_field && look.near_field != std::complex<double>(0.0, 0.0);
+        if (look.level_db <= Database::no_energy_floor_db && !near)
             return std::complex<double>(0.0, 0.0);
         const double alpha = absorption_at(absorption, received);
         const double absorbed = std::max(a.length - start, lossless ? radius : 0.0);
-        const double amplitude = std::pow(10.0, (look.level_db - alpha * absorbed) / 20.0)
-                * (radius / std::max(a.length, radius));
-        return std::polar(amplitude, look.phase + psi + 2.0 * pi * frequency_e * a.delta);
+        if (!near)
+        {
+            // The far field alone, as without --tone_near_field.
+            const double amplitude = std::pow(10.0, (look.level_db - alpha * absorbed) / 20.0)
+                    * (radius / std::max(a.length, radius));
+            return std::polar(amplitude, look.phase + psi + 2.0 * pi * frequency_e * a.delta);
+        }
+        const double range = std::max(a.length, radius);
+        const double loss = std::pow(10.0, -alpha * absorbed / 20.0) * (radius / range);
+        const double turn = psi + 2.0 * pi * frequency_e * a.delta;
+        // The first-order near-field term at the arrival's range from the hub,
+        // A + (i / (2 k R)) Lap[D A] (THEORY 4.4), k at the emission frequency;
+        // capped at twice the tone's largest amplitude over the sphere, which
+        // only a range within a wavelength or two of the hub reaches.
+        const std::complex<double> far = look.level_db <= Database::no_energy_floor_db
+                ? std::complex<double>(0.0, 0.0)
+                : std::polar(std::pow(10.0, look.level_db / 20.0), look.phase);
+        const double k = 2.0 * pi * frequency_e / c;
+        std::complex<double> term = std::complex<double>(0.0, 1.0 / (2.0 * k * range)) * look.near_field;
+        near_field_evaluations_.fetch_add(1, std::memory_order_relaxed);
+        if (std::abs(term) > 0.5 * std::abs(far))
+            near_field_large_.fetch_add(1, std::memory_order_relaxed);
+        if (std::abs(term) > 2.0 * look.peak_amplitude)
+        {
+            term *= 2.0 * look.peak_amplitude / std::abs(term);
+            near_field_capped_.fetch_add(1, std::memory_order_relaxed);
+        }
+        return (far + term) * loss * std::polar(1.0, turn);
     };
     auto reflect = [&](std::complex<double> p, const ToneArrival& a, const Vec3& hub, double received) {
         // The ground model's Q at the reflected arrival's own frequency and

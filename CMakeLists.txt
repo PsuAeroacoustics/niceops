@@ -245,6 +245,7 @@ add_library(niceops_core STATIC
   src/exact_solutions.cpp
   src/weighting.cpp
   src/tones.cpp
+  src/sphere_laplacian.cpp
   src/pnl.cpp
   src/band_frames.cpp
   src/faddeeva.cpp
@@ -366,6 +367,7 @@ add_executable(niceops_unit_tests
   tests/test_procedure.cpp
   tests/test_iota.cpp
   tests/test_sphere_database.cpp
+  tests/test_near_field.cpp
   tests/test_geodetic.cpp
   tests/test_terrain.cpp
   tests/test_screening.cpp

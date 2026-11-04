@@ -598,8 +598,55 @@ arrivals only) and each band's tone power is multiplied by the band path's own r
 $G_b = 10^{(L_b - L_b^{\mathrm{free}})/10}$ of its level with every term to its straight-ray
 free-field level. `--tone_ground band` takes the fallback everywhere.
 
-The spheres' first-order near-field phase error, $(m+1)c/(2\lvert\Omega\rvert R_s)$ for a rotor
-centered on its hub (§2.2), is logged, not corrected.
+**The near field** (`--tone_near_field on`, the default). The spheres hold the far-field
+directivity $A(\mathbf{n})$, $R e^{ikR}p$ as $R \to \infty$ about the hub. At a finite range the
+field of any time-periodic source in uniform flight is, to first order (the Atkinson-Wilcox
+expansion of the field outside the source, in the frame moving with it),
+
+$$
+R\,e^{ikR}\,p_R(\mathbf{n}) = A(\mathbf{n}) + \frac{i}{2kR}\,\Delta_{\mathbf{n}}\big[D(\mathbf{n})\,A(\mathbf{n})\big]
++ O(R^{-2}), \qquad D = 1 - \mathbf{M}\cdot\mathbf{n},
+$$
+
+in the $e^{+i\omega t}$ convention of the spheres, with $k = 2\pi f_e/c$ at the emission frequency,
+$\mathbf{M}$ the condition's flight Mach vector in the sphere frame and $\Delta_{\mathbf{n}}$ the
+Laplace-Beltrami operator on the unit sphere of emission directions. $C = \Delta[DA]$ is taken
+once per tone and condition when the database loads, on the grid, and interpolated as $A$ is (the
+same cell, weights and unwinding). Each arrival's phasor becomes
+
+$$
+a = \Big(A + \frac{i}{2kR}\,C\Big)\,10^{-\alpha(f)\ell/20}\,\frac{R_s}{R}\,
+  e^{\,i(m\psi_r + 2\pi f_e\delta)}, \qquad R = \max(L, R_s),
+$$
+
+with the term capped at twice the tone's largest $\lvert A\rvert$ over the sphere, which only a
+range within a wavelength or two of the hub reaches. $\mathbf{M}$ lies along the nose in the
+flight-path frame and climbs at the condition's flight path angle in the level frame; its speed is
+a multirotor condition's `airspeed`, or a helicopter condition's advance ratio times the
+database's tip speed, over $c = 340.29$ m/s ($D$ depends on $c$ only to second order); without
+either it is zero ($D = 1$, as in hover). A tone without phase on the grid takes no term.
+
+$\Delta$ is second-order differences on the $(\phi, \theta)$ grid, $\Delta f = f_{\theta\theta} +
+\cot\theta\, f_\theta + f_{\phi\phi}/\sin^2\theta$ ($\theta$ from the nose), periodic across a full
+circle's seam and extended evenly across the horizontal plane for a lower hemisphere (the other
+half being its mirror image, §2.4). Where it varies less there, the unwound
+$B = f e^{-i\sigma m\alpha}$ is differentiated instead and the winding restored exactly,
+
+$$
+\Delta\big(e^{i n\alpha}B\big) = e^{i n\alpha}\Big[\Delta B + 2in\,\nabla\alpha\cdot\nabla B
+ - \frac{n^2}{\sin^2\beta}\,B\Big], \qquad n = \sigma m,
+$$
+
+$\alpha$ being harmonic away from the shaft ($\beta$ the angle from it), so a coarse grid
+differentiates a smooth function; never for $\lvert n\rvert = 1$ (whose $B$, like $\sin\beta$,
+has a cone point on the shaft) or on the shaft itself. The grid's poles and an open edge take a
+quadratic least-squares fit over the nodes within two grid steps, in the tangent plane.
+
+The first-order term is reliable while it is small against $A$; the run counts the arrivals where
+it exceeds half of $\lvert A\rvert$ there (a null being filled, or the expansion stretched,
+$(m+1)c/(2\lvert\Omega\rvert R) \gtrsim 1/2$ for a rotor). The term vanishes as $R\to\infty$,
+and for a source whose $A$ is uniform in hover. `--tone_near_field off` is the far field alone,
+$a$ of the phasor above with $C = 0$, to the bit.
 
 ## 5. Ground effect
 
@@ -3091,8 +3138,9 @@ than for SEL.
   shaft orders, and each arrival is shifted (§4.4).
 - **Pure tones off the straight, level-ground path, and the spheres' near field.** Tones over
   plates, tables, terrain, screening, refraction and urban tables take the band path's
-  correction (§4.4), and `--buildings` is refused with tones. The first-order near-field phase
-  error of a finite-radius sphere is logged, not corrected.
+  correction (§4.4), and `--buildings` is refused with tones. The spheres' near field is
+  corrected to first order only (§4.4): the $O(R^{-2})$ terms, and an axial null that the
+  first-order term cannot fill, remain.
 - **Buildings**, except through an urban table at its microphones or `--buildings` (§6.5). The
   rays among buildings leave out what §6.5 lists ("What the rays leave out"); they are straight,
   in uniform air over a level floor, so `--buildings` is refused with `--refraction`,

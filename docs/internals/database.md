@@ -373,11 +373,35 @@ with phase. Things to keep:
 - **Verified against PSU-WOPWOP** in the validation harness (`tones/`): the database's cells
   through `tone_directivity` to float precision; the coherent sum of a tandem's two rotor spheres
   against PSU-WOPWOP's whole-vehicle sphere, converging as the range grows; and ground-microphone
-  band levels of a flyover against PSU-WOPWOP's direct prediction ([FIDELITY](../FIDELITY.md)).
+  band levels of a flyover against PSU-WOPWOP's direct prediction, with and without the near-field
+  term ([FIDELITY](../FIDELITY.md)).
 - Tested in `[tones]` (`test_sphere_database.cpp`) and the `tones_*` CTests, on databases
   `make_tone_database` writes from B407's (two rotors at 110 and 220 Hz, 95 dB). Deferred: tones on
-  refracted and terrain paths per frequency, a bound for the peak search, multirotor axes, the
-  near-field correction.
+  refracted and terrain paths per frequency, a bound for the peak search.
+- **The near-field term** (`--tone_near_field`, THEORY 4.4) is `ToneSource::near_field`, Lap[D A]
+  per condition, cell and tone, computed at load by `compute_tone_near_fields` with
+  `sphere_laplacian` (`src/sphere_laplacian.cpp`) and interpolated in `tone_directivity` with the
+  amplitude's own weights and unwinding. Keep:
+  - **Differentiate whichever of f and its unwound B varies less at each node** (relative differences
+    to its four grid neighbors; a tie unwinds). Unwinding everywhere fails twice: order +-1, whose B
+    is sin(beta) with a cone point on the shaft (its error grew as the grid was refined, 0.05 at 15°,
+    0.26 at 2.5°), and a tone whose content near the shaft does not wind, where B winds instead.
+    Choosing by the phase step alone, with a 20 dB floor, picked the wound form near the shaft for
+    pure modes (both scored zero there) and lost an order of magnitude.
+  - **A lower hemisphere is extended evenly across the horizontal plane**, the half Database reads
+    as its mirror image: one-sided fits at its edge were first order and ran to 0.3 relative.
+  - **Interior nodes take three-point differences** in (theta, phi); only the grid's poles, an open
+    edge and a theta edge without a pole take the tangent-plane quadratic fit (two grid steps).
+  - **The cap**, twice the tone's largest |A| over the sphere, only bites within a wavelength or two
+    of the hub; the counted condition, the term over half of |A| there, is the expansion's limit.
+  - **D's speed** is the condition's own (airspeed, or advance ratio times the root's tip speed),
+    over c = 340.29 m/s; a database without it gets D = 1 and a warning.
+  - Tested in `[near_field]` (`test_near_field.cpp`): spherical harmonics on 15°, 5° and 2.5° grids,
+    full and lower hemispheres, tolerance 0.25 (l h)^2 + 0.1 h; and a port of the rotating source of
+    PSU-WOPWOP's near-field check (exact convected Green's function) at R = 2-16 c/Ω, hover and
+    M 0.2, shaft orders 3 and 6: the corrected error falls as about 1/R^2, never exceeds the far
+    field's, and is under 0.3 of it where (m + 1) c / (2 |Ω| R) <= 1/2. `--tone_near_field off`
+    takes the M3 arithmetic unchanged, so its results are those of the far field alone, to the bit.
 
 ## Broadband and spectral propagation
 

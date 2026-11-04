@@ -2335,12 +2335,46 @@ PT build. Harness `tones/`: `wopwop_tandem.py` and `wopwop_flyover.py`.
 
   Over all 43 tones the median phase error rms falls from 94° to 1.4°, and the median complex
   error from 1.23 to 0.10.
-- **The near field.** In 2 s windows NICEOPS falls below PSU-WOPWOP by a mean of 6 dB (rms 13)
-  at 150-250 m from the vehicle, 3 dB (rms 6-8) at 250-400 m, 2 dB (rms 5-6) at 400-600 m and
-  under 1 dB (rms 1.5-2.8) beyond, and by much more below 150 m, all overhead, where the
-  far-field spheres keep the rotors' on-axis nulls and the near field fills them. The spheres'
-  first-order phase error, (m + 1) c / (2 |Ω| R), is 6.5° at 200 m for the blade-passage tone and
-  21° for shaft order 12. NICEOPS logs it and does not correct it.
+- **The near-field correction against the exact field** (`[near_field]`). A rotating source of
+  compact monopoles and dipoles (three blades, tip Mach 0.6), its far-field directivity on a 5°
+  grid, and its exact field from the convected Green's function at R = 2-16 c/Ω, at the grid's
+  nodes within 20 dB of the peak (error relative to the peak):
+
+  | Case | R (c/Ω) | Far field alone | With the first-order term |
+  | --- | --- | --- | --- |
+  | hover, shaft order 3 | 2, 4, 8, 16 | 1.01, 0.49, 0.24, 0.12 | 0.39, 0.096, 0.024, 0.0064 |
+  | hover, order 6 | 2, 4, 8, 16 | 1.63, 0.85, 0.43, 0.21 | 1.36, 0.35, 0.089, 0.027 |
+  | M 0.2, order 3 | 2, 4, 8, 16 | 0.90, 0.43, 0.21, 0.11 | 0.32, 0.079, 0.020, 0.0056 |
+  | M 0.2, order 6 | 2, 4, 8, 16 | 1.39, 0.72, 0.36, 0.18 | 1.04, 0.26, 0.070, 0.022 |
+
+  The far field's error falls as 1/R, the corrected one's as about 1/R²; the term never adds
+  error, and once (m + 1) c / (2 |Ω| R) is under 1/2 it removes at least 70 % of it. The grid
+  Laplacian itself is held to spherical harmonics on 15°, 5° and 2.5° grids, full and lower
+  hemispheres: relative error 0.009-0.27, 0.0036-0.034 and 0.0009-0.0085 for degrees 1-8, second
+  order in the step.
+- **The near field in the flyover** (2 s windows, bands to 100 Hz within 20 dB of the window's
+  loudest band at that microphone; front rotor alone, without the near-field term / with it):
+
+  | Range at emission | Mean (dB) | rms (dB) |
+  | --- | --- | --- |
+  | below 150 m (mostly overhead) | −29.7 / −27.7 | 39.2 / 37.2 |
+  | 150-250 m | −3.6 / −3.2 | 10.5 / 9.9 |
+  | 250-400 m | −0.54 / −0.37 | 1.77 / 1.66 |
+  | 400-600 m | −0.34 / −0.26 | 0.69 / 0.63 |
+  | beyond 600 m | −0.67 / −0.64 | 1.13 / 1.10 |
+
+  The tandem: 150-250 m −3.7 / −3.3 dB (rms 9.4 / 9.1), 250-400 m −1.8 / −1.6 (5.4 / 5.2). Over the
+  whole pass the front rotor's mean moves from −0.58 to −0.41 dB (rms 1.11 to 0.99), the tandem's
+  from −0.63 to −0.44 (1.33 to 1.24); the phasing's effect is unchanged (50 Hz +4.82 dB with the
+  term, +4.86 without, against PSU-WOPWOP's +4.59). The term helps in every range and band, but it
+  is a small part of the short-range difference: this rotor (6.6 m, 30 rad/s) is 17 c/Ω out at
+  200 m, where its first-order phase error is 6.5° at blade passage. What remains close in is the
+  overhead axial null, which NICEOPS keeps 35-40 dB deeper than PSU-WOPWOP's direct prediction
+  below 150 m (the first-order term fills it by 2 dB), and windows near the null on their way in.
+  Counting every band within 20 dB of its own peak over the pass, as an earlier version of this
+  comparison did, also takes in the receding pass's weak bands at 79-100 Hz (25-30 dB, near the
+  2 s FFT's leakage from the loud tones), where NICEOPS reads 15-27 dB lower: that gave the larger
+  short-range means (6 dB at 150-250 m) this table replaces.
 
 ### `--db_cutoff` and SEL
 

@@ -135,7 +135,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--min_load_factor` | With `two_sided`, the smallest load factor, g, the law is taken to. Default 0.5; at most 1. Refused without `two_sided`. |
 | `--speed_reference` | `ground` or `air`: which velocity sets μ, the path angle and the `velocity` nose. Default: what the database records, ground if nothing ([Speed reference](#speed-reference)). |
 | `--condition_density` | `vehicle` or `atmosphere`: which air density C<sub>T</sub> (or a multirotor database's axes) is formed with, the vehicle file's or the run's air at each state's height. Default: `vehicle` for a helicopter database, `atmosphere` for a multirotor one ([The density in C<sub>T</sub>](#the-density-in-ct)). |
-| `--rotor_azimuth`, `--sync_group`, `--tone_coherence`, `--tone_ground` | A format 2 database's rotor tones: each rotor's azimuth, coherent groups declared for the run, coherent or energy sums, and the ground per tone or per band ([Pure-tone sources](#pure-tone-sources-format-2)). |
+| `--rotor_azimuth`, `--sync_group`, `--tone_coherence`, `--tone_ground`, `--tone_near_field` | A format 2 database's rotor tones: each rotor's azimuth, coherent groups declared for the run, coherent or energy sums, the ground per tone or per band, and the spheres' near-field term ([Pure-tone sources](#pure-tone-sources-format-2)). |
 | `--nose` | `velocity`, `ground_velocity` or `heading`. Default: what the database's `azimuth_reference` records, `velocity` if nothing ([The sphere's nose](#the-spheres-nose)). |
 | `--accept_vehicle_mismatch` | Warn, rather than refuse, when the vehicle file disagrees with the database by more than 2 percent ([Vehicle file](#vehicle-file)). |
 | `--screen_database` | Write every entry the load-time screen finds suspect to this CSV ([Screening a database](#screening-a-database)). One database per run. |
@@ -606,6 +606,7 @@ their amplitude and phase over the sphere grid.
 | `--sync_group tag,tag,...` | Adds the named rotors coherently, replacing their database groups, at their mean shaft rate (logged). Repeatable, one group each. Only rotors whose phases are tied to their azimuth can join one. |
 | `--tone_coherence coherent\|energy` | `energy` adds every rotor in energy, each keeping its own ground interference: the level with no synchrophasing. Default `coherent`. |
 | `--tone_ground frequency\|band` | `frequency` (default) reflects each tone at its own frequency where the path allows; `band` applies the band model's correction to free-field tones. |
+| `--tone_near_field on\|off` | `on` (default) adds each tone's first-order near-field term to its far-field sphere at each arrival's range; `off` keeps the far field alone. |
 
 **Wind.** With a wind profile (`--atmosphere` with wind columns, or `--wind`), each tone's
 emission time and Doppler shift are solved in the frame moving with the air, the wind taken as the
@@ -618,9 +619,18 @@ microphones, propagation tables, terrain, screening, refraction and urban tables
 the band path's correction instead (the run logs how many evaluations went each way). A tone
 heard outside every band of the database is not counted, with a warning.
 
+**The near field.** A rotor's sphere is its far field. Closer in, the field differs from it, by a
+phase error of about (m + 1) c / (2 |Ω| R) for shaft order m at range R: it matters within some
+tens of c / |Ω| of a rotor (tens of meters for a helicopter rotor at its low harmonics, much less
+for a small fast rotor). With `--tone_near_field on`, the default, each tone takes the first-order
+correction, computed once per tone and condition when the database loads (about 0.2 s for 700 of
+them on a 5° grid) and costing a tone run about a third more time. It is good while the term is
+small against the far field: the log counts the arrivals where it exceeds half of it, and warns
+when they pass a tenth of all. It does not fill a rotor's axial null directly overhead. `off` is
+the far field alone, as before this option.
+
 **Limits.** A tone run evaluates every state (the quick peak search covers the bands only), so it
-is slower than the same run without tones. The spheres' near-field phase error is logged, not
-corrected. Refused, naming why: `--no-spectral`, `--db_cutoff`, `--buildings` and `--gpu`,
+is slower than the same run without tones. The near field is corrected to first order only. Refused, naming why: `--no-spectral`, `--db_cutoff`, `--buildings` and `--gpu`,
 `--export_sphere` and `--export_aam` (which would leave the tones out), a sync group whose rotors
 turn at different rates, a `--sync_group` or `--rotor_azimuth` naming a rotor the database does
 not carry, and a `--sync_group` member whose phases are not tied to its azimuth.

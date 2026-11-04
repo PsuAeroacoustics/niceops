@@ -423,6 +423,9 @@ struct DatabaseLoadOptions
     // in its band spectrum (band_content broadband) is refused, and one whose are
     // (total) warns that it runs on its bands alone.
     bool tones_evaluated = false;
+    // Whether to precompute each tone's first-order near-field term, Lap[D A] on
+    // the grid (ToneSource::near_field; THEORY 4.4): --tone_near_field on.
+    bool tone_near_field = false;
 };
 
 // One pure-tone source of a format 2 database (a rotor): a subgroup of every
@@ -468,6 +471,15 @@ struct ToneSource
     // speed's shaft rate Omega_h at that condition (speed_ratio); empty for a
     // helicopter database.
     std::vector<double> speed_ratios;
+    // With DatabaseLoadOptions::tone_near_field, each tone's first-order
+    // near-field term Lap[D A] (THEORY 4.4), laid out as `amplitudes` and in its
+    // units, D = 1 - M.n for the condition's flight Mach number M: the field at
+    // range R is A + (i / (2 k R)) times it.  Empty otherwise, and zero for a
+    // tone without a phase (phase_reference none, or energy_only).
+    std::vector<std::complex<float>> near_field;
+    // Per condition and tone, [condition * tones + tone], its largest |A| over
+    // the grid: what the near-field term is capped at twice.
+    std::vector<float> peak_amplitude;
 
     std::size_t tone_count() const
     {
@@ -965,6 +977,12 @@ public:
     {
         double level_db;
         double phase;
+        // The first-order near-field term Lap[D A] at the direction, interpolated
+        // as the amplitude is (its units, the load-factor correction included);
+        // zero where the database holds none.  And the tone's largest |A| over the
+        // grid, blended over the conditions.
+        std::complex<double> near_field {0.0, 0.0};
+        double peak_amplitude = 0.0;
     };
     // Every tone of `source` along `direction` (the unit vector leaving its hub,
     // in the run's frame), into `out` (tone_count() entries).  The cell and its
@@ -1222,6 +1240,13 @@ private:
     // starboard (rad): what a tone's phase is unwound by (ToneSource::unwind_order).
     std::vector<double> cell_shaft_azimuth_;
     std::vector<ToneSource> tone_sources_;
+    bool tone_near_field_ = false;
+    // Per condition, the flight speed (m/s) and climb angle (rad) a multirotor
+    // condition group records (airspeed, climb_rate), NaN where it does not: the
+    // near-field term's flight Mach number.
+    std::vector<double> condition_airspeed_, condition_climb_;
+    // Each tone's near-field term over the grid (ToneSource::near_field).
+    void compute_tone_near_fields(const std::string& datafile_path);
     // The constructor's reading of a format 2 database's source subgroups.
     void load_tone_sources(int file_ncid, const std::vector<int>& group_ids, const std::string& datafile_path);
 };

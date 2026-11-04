@@ -3024,7 +3024,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         }
         log("Tones: the spheres' first-order near-field phase error, (m + 1) c / (2 |Omega| R), is up to ",
                 tone_evaluator->near_field_degrees(), " degrees (shaft order ", tone_evaluator->near_field_order(),
-                " of source ", tone_evaluator->near_field_source(), "); the run does not correct it.");
+                " of source ", tone_evaluator->near_field_source(), ") at the sphere radius; ",
+                options.tones.near_field ? "the run adds the first-order term (--tone_near_field on)."
+                                         : "the run does not correct it (--tone_near_field off).");
         tone_states.reserve(nt);
         std::vector<double> rate_low(groups.size(), std::numeric_limits<double>::infinity());
         std::vector<double> rate_high(groups.size(), 0.0);
@@ -4876,6 +4878,20 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         if (tone_evaluator->outside_bands() > 0)
             warn("Tones: ", tone_evaluator->outside_bands(), " tone arrivals were received outside the database's "
                     "bands and are not counted.");
+        if (options.tones.near_field)
+        {
+            const std::size_t corrected = tone_evaluator->near_field_evaluations();
+            const std::size_t large = tone_evaluator->near_field_large();
+            log("Tones: ", corrected, " arrivals took the near-field term; in ", large, " (",
+                    corrected > 0 ? 100.0 * static_cast<double>(large) / static_cast<double>(corrected) : 0.0,
+                    "%) it was more than half the far-field amplitude there (a null filling, or the first-order "
+                    "expansion stretched); ", tone_evaluator->near_field_capped(),
+                    " capped at twice the tone's peak.");
+            if (corrected > 0 && static_cast<double>(large) > 0.1 * static_cast<double>(corrected))
+                warn("Tones: the near-field term was more than half the far field at ", large, " of ", corrected,
+                        " arrivals: observers this close to the rotors are near the edge of the first-order "
+                        "correction (THEORY 4.4).");
+        }
     }
 
     if (culling)
@@ -5412,6 +5428,7 @@ int run(int argc, char* argv[])
     std::vector<std::string> sync_group_args;
     std::string tone_coherence = "coherent";
     std::string tone_ground = "frequency";
+    std::string tone_near_field = "on";
     // Empty follows the database's azimuth_reference attribute.
     std::string nose;
     // WGS84 input and output.  An unset origin is taken from the first geodetic
@@ -5801,6 +5818,10 @@ int run(int argc, char* argv[])
             "A format 2 database's tones: coherent (default) adds the sources of a sync group coherently; energy adds "
             "every source in energy.")
             ->check(CLI::IsMember({"coherent", "energy"}));
+    app.add_option("--tone_near_field", tone_near_field,
+            "A format 2 database's tones: on (default) adds each tone's first-order near-field term, "
+            "A + (i / (2 k R)) Lap[D A], taken at load from its far-field sphere; off keeps the far field alone.")
+            ->check(CLI::IsMember({"on", "off"}));
     app.add_option("--tone_ground", tone_ground,
             "A format 2 database's tones over the ground: frequency (default), each arrival's reflection at its own "
             "frequency where the run's path allows; band, the band model's correction on free-field tones.")
@@ -7289,6 +7310,8 @@ int run(int argc, char* argv[])
         options.tones.sync_groups.push_back(parse_sync_group(text));
     options.tones.coherence = *parse_tone_coherence(tone_coherence);
     options.tones.ground = *parse_tone_ground(tone_ground);
+    options.tones.near_field = tone_near_field == "on";
+    database_load.tone_near_field = options.tones.near_field;
     if (!nose.empty())
         options.nose = parse_nose_source(nose);
     // Each distinct --wind and --atmosphere is parsed once, and its warnings

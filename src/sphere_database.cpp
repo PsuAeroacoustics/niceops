@@ -1,4 +1,5 @@
 #include "sphere_database.hpp"
+#include "sphere_laplacian.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -1810,7 +1811,10 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
         conditions_[i] = {advance_ratios[i], flight_path_angles[i], thrust_coefficients[i]};
     // A format 2 database's pure-tone sources (subgroups of each condition).
     if (database_version_ >= 2)
+    {
+        tone_near_field_ = load.tone_near_field;
         load_tone_sources(file_ncid, group_ids, datafile_path);
+    }
     else if (read_root_text(file_ncid, "sources"))
         input_error("Database ", datafile_path, " lists pure-tone sources but has database_version ",
                 database_version_, "; a database with sources is format 2.");
@@ -2174,9 +2178,17 @@ void Database::load_tone_sources(int file_ncid, const std::vector<int>& group_id
     tone_sources_.assign(tags.size(), {});
     for (std::size_t s = 0; s < tags.size(); s++)
         tone_sources_[s].tag = tags[s];
+    condition_airspeed_.assign(group_ids.size(), std::numeric_limits<double>::quiet_NaN());
+    condition_climb_.assign(group_ids.size(), std::numeric_limits<double>::quiet_NaN());
     for (std::size_t i = 0; i < group_ids.size(); i++)
     {
         const int group_id = group_ids[i];
+        // A multirotor condition's flight speed and climb rate, informative but for
+        // the near-field term's flight Mach number.
+        if (int id = 0; NC_NOERR == nc_inq_varid(group_id, "airspeed", &id))
+            require_scalar(group_id, "airspeed", &condition_airspeed_[i]);
+        if (int id = 0; NC_NOERR == nc_inq_varid(group_id, "climb_rate", &id))
+            require_scalar(group_id, "climb_rate", &condition_climb_[i]);
         // Exactly the listed sources: blending conditions needs every source at
         // every one of them.
         int n_sub = 0;
@@ -2370,6 +2382,94 @@ void Database::load_tone_sources(int file_ncid, const std::vector<int>& group_id
         info("Database source ", source.tag, ": ", source.tone_count(), " tones, phase_reference ",
                 to_string(source.phase_reference), source.sync_group.empty() ? ", free-running" : ", sync group ",
                 source.sync_group, ".");
+    }
+    if (tone_near_field_)
+        compute_tone_near_fields(datafile_path);
+}
+
+void Database::compute_tone_near_fields(const std::string& datafile_path)
+{
+    // The flight Mach vector of each condition in the sphere frame (forward,
+    // starboard, up): along the nose in the flight-path frame, else climbing at
+    // the condition's flight path angle. Its speed is the condition's airspeed
+    // (multirotor), or its advance ratio times the database's tip speed
+    // (helicopter); the sound speed is the standard atmosphere's, the term's
+    // flight factor D = 1 - M.n depending on it only to second order.
+    constexpr double sound_speed = 340.29;
+    const std::size_t n_conditions = conditions_.size();
+    const std::size_t n_phi = phis.size(), n_theta = thetas.size(), n_cells = n_phi * n_theta;
+    std::vector<std::array<double, 3>> mach(n_conditions, {0.0, 0.0, 0.0});
+    bool speed_unknown = false;
+    for (std::size_t i = 0; i < n_conditions; i++)
+    {
+        double speed = 0.0, climb = 0.0;
+        if (condition_axes_ == ConditionAxes::multirotor)
+        {
+            if (std::isfinite(condition_airspeed_[i]))
+            {
+                speed = condition_airspeed_[i];
+                if (std::isfinite(condition_climb_[i]) && speed > 0.0)
+                    climb = std::asin(std::clamp(condition_climb_[i] / speed, -1.0, 1.0));
+            }
+            else if (conditions_[i][0] != 0.0 || conditions_[i][1] != 0.0)
+            {
+                speed_unknown = true;
+            }
+        }
+        else
+        {
+            if (std::isfinite(tip_speed_))
+                speed = conditions_[i][0] * tip_speed_;
+            else if (conditions_[i][0] != 0.0)
+                speed_unknown = true;
+            climb = conditions_[i][1] * (pi / 180.0);
+        }
+        const double m = speed / sound_speed;
+        if (sphere_frame_kind_ == SphereFrameKind::flight_path)
+            mach[i] = {m, 0.0, 0.0};
+        else
+            mach[i] = {m * std::cos(climb), 0.0, m * std::sin(climb)};
+    }
+    if (speed_unknown)
+        warn("Database ", datafile_path, ": the near-field term takes its conditions' flight speed from ",
+                condition_axes_ == ConditionAxes::multirotor ? "each condition's airspeed"
+                                                             : "the root's main_rotor_tip_speed_meters_per_sec",
+                ", which it lacks; it is taken as zero (D = 1), as in hover.");
+    std::vector<GridDirection> dirs(n_cells);
+    for (std::size_t m = 0; m < n_phi; m++)
+        for (std::size_t n = 0; n < n_theta; n++)
+            dirs[m * n_theta + n] = grid_direction(phis[m], thetas[n]);
+    const std::vector<double>& phi_values = phis.values();
+    const std::vector<double>& theta_values = thetas.values();
+    std::vector<std::complex<double>> field(n_cells);
+    for (auto& source : tone_sources_)
+    {
+        const std::size_t tones = source.tone_count();
+        source.near_field.assign(source.amplitudes.size(), std::complex<float>(0.0F, 0.0F));
+        source.peak_amplitude.assign(n_conditions * tones, 0.0F);
+        const int sense = source.shaft_rates.front() > 0.0 ? 1 : -1;
+        for (std::size_t i = 0; i < n_conditions; i++)
+            for (std::size_t k = 0; k < tones; k++)
+            {
+                float peak = 0.0F;
+                for (std::size_t cell = 0; cell < n_cells; cell++)
+                {
+                    const auto a = source.amplitudes[(i * n_cells + cell) * tones + k];
+                    peak = std::max(peak, std::abs(a));
+                    const double d = 1.0 - (mach[i][0] * dirs[cell].forward + mach[i][1] * dirs[cell].starboard
+                                                   + mach[i][2] * dirs[cell].up);
+                    field[cell] = d * std::complex<double>(a.real(), a.imag());
+                }
+                source.peak_amplitude[i * tones + k] = peak;
+                // A tone without a phase on this grid has no Laplacian to take.
+                if (source.phase_reference == PhaseReference::none || source.energy_only[k] || !(peak > 0.0F))
+                    continue;
+                const auto lap = sphere_laplacian(phi_values, theta_values, field, sense * source.harmonics[k]);
+                for (std::size_t cell = 0; cell < n_cells; cell++)
+                    source.near_field[(i * n_cells + cell) * tones + k] = std::complex<float>(lap[cell]);
+            }
+        info("Database source ", source.tag, ": the first-order near-field term Lap[D A] is precomputed for its ",
+                std::count(source.energy_only.begin(), source.energy_only.end(), 0), " resolved tones.");
     }
 }
 
@@ -2899,25 +2999,37 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
         // argument of the complex amplitudes under the same weights, which needs
         // no unwrapping and does not dip where neighbors' phases differ.
         double corner_level[4];
-        std::complex<double> sum(0.0, 0.0);
+        std::complex<double> sum(0.0, 0.0), near_sum(0.0, 0.0);
+        const bool near = !s.near_field.empty();
         for (std::size_t corner = 0; corner < 4; corner++)
         {
             double v[4];
-            std::complex<double> corner_sum(0.0, 0.0);
+            std::complex<double> corner_sum(0.0, 0.0), corner_near(0.0, 0.0);
             for (std::size_t c = 0; c < 4; c++)
             {
-                const std::complex<float> a = s.amplitudes[(blend.indices[c] * n_cells + stencil.corner[corner]) * tones + k];
+                const std::size_t slot = (blend.indices[c] * n_cells + stencil.corner[corner]) * tones + k;
+                const std::complex<float> a = s.amplitudes[slot];
                 const double magnitude = std::abs(std::complex<double>(a.real(), a.imag()));
                 v[c] = magnitude > 0.0 ? 20.0 * std::log10(magnitude) : no_energy_floor_db;
                 corner_sum += w[c] * std::complex<double>(a.real(), a.imag());
+                if (near)
+                {
+                    const std::complex<float> b = s.near_field[slot];
+                    corner_near += w[c] * std::complex<double>(b.real(), b.imag());
+                }
             }
             corner_level[corner] = (is_empty(v[0], w[0]) || is_empty(v[1], w[1]) || is_empty(v[2], w[2])
                                            || is_empty(v[3], w[3]))
                     ? blend_present(v, w)
                     : w[0] * v[0] + w[1] * v[1] + w[2] * v[2] + w[3] * v[3];
             if (order != 0)
-                corner_sum *= std::polar(1.0, -order * cell_shaft_azimuth_[stencil.corner[corner]]);
+            {
+                const auto unwind = std::polar(1.0, -order * cell_shaft_azimuth_[stencil.corner[corner]]);
+                corner_sum *= unwind;
+                corner_near *= unwind;
+            }
             sum += sw[corner] * corner_sum;
+            near_sum += sw[corner] * corner_near;
         }
         const double level = (is_empty(corner_level[0], sw[0]) || is_empty(corner_level[1], sw[1])
                                      || is_empty(corner_level[2], sw[2]) || is_empty(corner_level[3], sw[3]))
@@ -2926,8 +3038,27 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
                         + sw[3] * corner_level[3];
         out[k].level_db = level <= empty_level_db ? no_energy_floor_db : level + blend.level_correction_db;
         if (order != 0)
-            sum *= std::polar(1.0, order * alpha);
+        {
+            const auto rewind = std::polar(1.0, order * alpha);
+            sum *= rewind;
+            near_sum *= rewind;
+        }
         out[k].phase = s.phase_reference == PhaseReference::none || std::abs(sum) == 0.0 ? 0.0 : std::arg(sum);
+        if (near)
+        {
+            // In the amplitude's units, the blend's load-factor correction with it.
+            const double scale = std::pow(10.0, blend.level_correction_db / 20.0);
+            out[k].near_field = near_sum * scale;
+            double peak = 0.0;
+            for (std::size_t c = 0; c < 4; c++)
+                peak += w[c] * s.peak_amplitude[blend.indices[c] * tones + k];
+            out[k].peak_amplitude = peak * scale;
+        }
+        else
+        {
+            out[k].near_field = {0.0, 0.0};
+            out[k].peak_amplitude = 0.0;
+        }
     }
 }
 

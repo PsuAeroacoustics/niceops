@@ -76,6 +76,10 @@ struct ToneRunOptions
     // database's groups for their members and hold their shaft rates at the
     // group's mean.
     std::vector<std::vector<std::string>> sync_groups;
+    // --tone_near_field on: each arrival's tone takes the first-order near-field
+    // term, A + (i / (2 k R)) Lap[D A] (THEORY 4.4), where the database holds it
+    // (DatabaseLoadOptions::tone_near_field).
+    bool near_field = false;
 };
 
 // "tag=deg,tag=deg" into `out`; refuses an entry without '=' or a number.
@@ -193,6 +197,22 @@ public:
     {
         return outside_bands_.load();
     }
+    // Tone arrivals that took the near-field term; of them, those where it was
+    // more than half the far-field amplitude there (the first-order expansion is
+    // then doubtful), and those where it was capped at twice the tone's largest
+    // amplitude over the sphere.
+    std::size_t near_field_evaluations() const
+    {
+        return near_field_evaluations_.load();
+    }
+    std::size_t near_field_large() const
+    {
+        return near_field_large_.load();
+    }
+    std::size_t near_field_capped() const
+    {
+        return near_field_capped_.load();
+    }
     std::size_t tone_offset(std::size_t source) const
     {
         return tone_offsets_[source];
@@ -220,6 +240,9 @@ private:
     int near_field_order_ = 0;
     std::string near_field_source_;
     mutable std::atomic<std::size_t> outside_bands_ {0};
+    mutable std::atomic<std::size_t> near_field_evaluations_ {0};
+    mutable std::atomic<std::size_t> near_field_large_ {0};
+    mutable std::atomic<std::size_t> near_field_capped_ {0};
 
     double absorption_at(const double* absorption, double frequency) const;
 };
