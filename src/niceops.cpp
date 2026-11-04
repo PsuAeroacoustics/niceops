@@ -1534,6 +1534,18 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // air for a multirotor's, whose rotor speeds follow the air.
     const ConditionDensity condition_density = options.condition_density.value_or(
             multirotor ? ConditionDensity::atmosphere : ConditionDensity::vehicle);
+    // The run's air, built once for both the density and the sound speed below:
+    // the vehicle file's, with --temperature and --pressure applied, and the
+    // --atmosphere profile layered over it (a profile without pressure takes
+    // the surface pressure, as the propagation's does below).
+    Atmosphere run_air = trajectory.vehicle.atmosphere;
+    if (!std::isnan(options.temperature_override))
+        run_air.temperature = options.temperature_override;
+    if (!std::isnan(options.pressure_override))
+        run_air.pressure = options.pressure_override;
+    std::optional<AtmosphereProfile> run_layers;
+    if (atmosphere)
+        run_layers = atmosphere->has_pressure() ? *atmosphere : atmosphere->with_hydrostatic_pressure(run_air.pressure);
     std::function<double(double)> run_density;
     // A multirotor's hover tip Mach number takes the sound speed of the run's
     // air at the state's height, under either density choice.
@@ -1546,39 +1558,21 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         if (!(trajectory.vehicle.weight > 0.0) || !std::isfinite(trajectory.vehicle.weight))
             input_error("The database given for ", job.trajectory, " is in multirotor axes, which scale by the "
                     "vehicle's weight, and ", job.vehicle, " gives none (", trajectory.vehicle.weight, " N).");
-        Atmosphere air = trajectory.vehicle.atmosphere;
-        if (!std::isnan(options.temperature_override))
-            air.temperature = options.temperature_override;
-        if (!std::isnan(options.pressure_override))
-            air.pressure = options.pressure_override;
-        if (atmosphere)
+        if (run_layers)
         {
-            const AtmosphereProfile layered = atmosphere->has_pressure()
-                    ? *atmosphere
-                    : atmosphere->with_hydrostatic_pressure(air.pressure);
-            run_sound_speed = [layered](double z) { return layered.at(z).sound_speed(); };
+            run_sound_speed = [layered = *run_layers](double z) { return layered.at(z).sound_speed(); };
         }
         else
         {
-            const double c = air.sound_speed();
+            const double c = run_air.sound_speed();
             run_sound_speed = [c](double) { return c; };
         }
     }
     if (condition_density == ConditionDensity::atmosphere)
     {
-        Atmosphere air = trajectory.vehicle.atmosphere;
-        if (!std::isnan(options.temperature_override))
-            air.temperature = options.temperature_override;
-        if (!std::isnan(options.pressure_override))
-            air.pressure = options.pressure_override;
-        if (atmosphere)
+        if (run_layers)
         {
-            // A profile without pressure takes the surface pressure, as the
-            // propagation's does below.
-            const AtmosphereProfile layered = atmosphere->has_pressure()
-                    ? *atmosphere
-                    : atmosphere->with_hydrostatic_pressure(air.pressure);
-            run_density = [layered](double z) { return layered.at(z).density(); };
+            run_density = [layered = *run_layers](double z) { return layered.at(z).density(); };
         }
         else if (std::isnan(options.temperature_override) && std::isnan(options.pressure_override))
         {
@@ -1586,13 +1580,20 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         }
         else
         {
-            const double density = air.density();
+            const double density = run_air.density();
             run_density = [density](double) { return density; };
         }
     }
     {
         const bool built_with_run = database.thrust_coefficient_density() == ThrustCoefficientDensity::run;
-        if (built_with_run != (condition_density == ConditionDensity::atmosphere))
+        // A multirotor database is always built with each condition's own air
+        // (refused otherwise, at load); placing states with the vehicle file's
+        // density instead moves v_h and M_h, not a C_T.
+        if (multirotor && condition_density == ConditionDensity::vehicle)
+            warn("--condition_density vehicle places ", job.trajectory, "'s states in multirotor axes with the "
+                    "vehicle file's density, but the database's conditions were formed with their own air: v_h and "
+                    "M_h move with the ratio of the two densities.");
+        else if (!multirotor && built_with_run != (condition_density == ConditionDensity::atmosphere))
             warn("--condition_density ", to_string(condition_density), " forms C_T with ",
                     run_density ? "the run's air density" : "the vehicle file's density",
                     ", but the database records that its C_T axis used ",
