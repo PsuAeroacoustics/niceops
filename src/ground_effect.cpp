@@ -221,22 +221,7 @@ void excess_ground_attenuation(const GroundModel& ground,
     const double range_ratio = direct_range > 0.0 ? image_range / direct_range : 1.0;
 
     // Hoisted: the turbulence factor's only per-band term is the frequency.
-    // Chessell: exp(-(scale f)^2), scale = C/2 sqrt(R).  HARMONOISE:
-    // exp(-3/8 B k^2 gamma_p^(5/3) R gamma_T) = exp(-(scale f)^2) with
-    // scale^2 = 3/8 B (2 pi / c)^2 gamma_p^(5/3) R gamma_T.
-    double turbulence_scale = 0.0;
-    if (ground.turbulence_model == TurbulenceModel::chessell)
-    {
-        turbulence_scale
-                = ground.turbulence > 0.0 ? 0.5 * ground.turbulence * std::sqrt(direct_range) : 0.0;
-    }
-    else if (ground.gamma_t > 0.0 && hs + hr > 0.0)
-    {
-        const double gamma_p = hs * hr / (hs + hr);
-        const double k_per_hz = 2.0 * pi / sound_speed;
-        turbulence_scale = std::sqrt(0.375 * 0.364 * k_per_hz * k_per_hz
-                                     * std::pow(gamma_p, 5.0 / 3.0) * direct_range * ground.gamma_t);
-    }
+    const double turbulence_scale = niceops::turbulence_scale(ground, hs, direct_range, sound_speed);
     // Roughness: the coherent reflection's amplitude falls by
     // exp(-2 (k sigma cos theta)^2) = exp(-(roughness_scale f)^2).
     const double roughness_scale = ground.roughness > 0.0
@@ -325,25 +310,35 @@ std::array<double, 2> spherical_reflection_coefficient(double cos_grazing, doubl
             boundary_loss);
 }
 
-double turbulence_coherence(const GroundModel& ground, double source_height, double ground_distance,
-        double frequency, double sound_speed)
+double turbulence_scale(const GroundModel& ground, double source_height, double direct_range, double sound_speed)
 {
+    // Chessell: exp(-(scale f)^2), scale = C/2 sqrt(R).  HARMONOISE:
+    // exp(-3/8 B k^2 gamma_p^(5/3) R gamma_T) = exp(-(scale f)^2) with
+    // scale^2 = 3/8 B (2 pi / c)^2 gamma_p^(5/3) R gamma_T.
     const double hs = source_height;
     const double hr = ground.receiver_height;
-    const double direct_range = std::hypot(ground_distance, hs - hr);
-    double scale = 0.0;
     if (ground.turbulence_model == TurbulenceModel::chessell)
-    {
-        scale = ground.turbulence > 0.0 ? 0.5 * ground.turbulence * std::sqrt(direct_range) : 0.0;
-    }
-    else if (ground.gamma_t > 0.0 && hs + hr > 0.0)
+        return ground.turbulence > 0.0 ? 0.5 * ground.turbulence * std::sqrt(direct_range) : 0.0;
+    if (ground.gamma_t > 0.0 && hs + hr > 0.0)
     {
         const double gamma_p = hs * hr / (hs + hr);
         const double k_per_hz = 2.0 * pi / sound_speed;
-        scale = std::sqrt(0.375 * 0.364 * k_per_hz * k_per_hz * std::pow(gamma_p, 5.0 / 3.0) * direct_range
+        return std::sqrt(0.375 * 0.364 * k_per_hz * k_per_hz * std::pow(gamma_p, 5.0 / 3.0) * direct_range
                 * ground.gamma_t);
     }
+    return 0.0;
+}
+
+double turbulence_coherence(double scale, double frequency)
+{
     return scale > 0.0 ? std::exp(-(scale * frequency) * (scale * frequency)) : 1.0;
+}
+
+double turbulence_coherence(const GroundModel& ground, double source_height, double ground_distance,
+        double frequency, double sound_speed)
+{
+    const double direct_range = std::hypot(ground_distance, source_height - ground.receiver_height);
+    return turbulence_coherence(turbulence_scale(ground, source_height, direct_range, sound_speed), frequency);
 }
 
 double roughness_coherence(const GroundModel& ground, double cos_grazing, double frequency, double sound_speed)

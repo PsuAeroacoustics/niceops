@@ -168,6 +168,15 @@ std::vector<double> reflection_coefficient_bounds(const GroundModel& ground,
 std::array<double, 2> spherical_reflection_coefficient(double cos_grazing, double kappa,
         std::complex<double> admittance, bool boundary_loss = true);
 
+// The turbulence term's frequency scale: the coherence of the direct and
+// reflected paths is exp(-(scale f)^2) (Chessell's or HARMONOISE's, as `ground`
+// says), for a source `source_height` up, `direct_range` from a receiver at
+// ground.receiver_height; 0 without turbulence.  The geometry's part, computed
+// once per source and receiver; the band model and the tones both take it.
+double turbulence_scale(const GroundModel& ground, double source_height, double direct_range, double sound_speed);
+// exp(-(scale f)^2), 1 at scale 0.
+double turbulence_coherence(double scale, double frequency);
+
 // The coherence of the direct and reflected paths that the model's turbulence
 // term gives at one frequency (Chessell's or HARMONOISE's, as `ground` says),
 // for a source `source_height` up and `ground_distance` away from a receiver at

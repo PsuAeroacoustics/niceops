@@ -406,9 +406,12 @@ void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTone
     // model takes, so every source of one state shares it.
     const double center_height = state.position.z - ground_plane;
     const double center_distance = (observer - state.position).horizontal_norm();
-    auto coherence = [&](double frequency) {
-        return with_ground ? turbulence_coherence(*ground->model, center_height, center_distance, frequency, c) : 1.0;
-    };
+    // Its geometric part once per state and observer; per tone only the frequency.
+    const double turbulence = with_ground
+            ? turbulence_scale(*ground->model, center_height,
+                      std::hypot(center_distance, center_height - ground->model->receiver_height), c)
+            : 0.0;
+    auto coherence = [&](double frequency) { return turbulence_coherence(turbulence, frequency); };
     auto file = [&](double p, double frequency) {
         const std::size_t band = band_of(frequency);
         if (band == no_band)
