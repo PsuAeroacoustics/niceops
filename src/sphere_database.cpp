@@ -1236,6 +1236,17 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
     }
     if (levels_lossless_)
         info("Database sphere levels are lossless: absorption runs from the hub.");
+    // How a tone's amplitude follows its rotor's speed: pressure as the rate to
+    // this power (3 for the sound level as RPM^6), against the rate the database
+    // records for the source.  Absent: no scaling.
+    if (const auto exponent = read_double_attribute(file_ncid, "tone_speed_exponent"))
+    {
+        if (!std::isfinite(*exponent) || *exponent < 0.0)
+            input_error("Database ", datafile_path, " has tone_speed_exponent ", *exponent,
+                    "; it must be a finite number, 0 or more.");
+        tone_speed_exponent_ = *exponent;
+        info("Database tones scale with their rotor's speed: pressure as the rate to the power ", *exponent, ".");
+    }
     // Which density the thrust coefficient axis was formed with
     // (--condition_density checks a run against it).
     if (const auto text = read_root_text(file_ncid, "thrust_coefficient_density"))

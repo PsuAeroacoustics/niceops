@@ -558,6 +558,11 @@ where absorption starts, the sphere radius or, for lossless spheres, 0 (§2.2). 
 replayed rotor's logged azimuth and shaft rate at the state's time, and the replayed rotors are one
 coherent group: the sum below is then the instantaneous one of free-running rotors, which beats as
 their azimuths drift apart.
+Where the database gives `tone_speed_exponent` $\nu$, each tone's pressure (direct and
+reflected) is scaled by $(|\Omega_r| / |\Omega_{r,0}|)^{\nu}$, the run's shaft rate (logged, or the
+sync group's mean) over the database's $\Omega_{r,0}$: $\nu = 3$ is the level as rpm to the sixth of
+a hovering rotor's tones [79]. Without the attribute $\nu = 0$ and the amplitudes are
+the stored ones.
 
 **In wind** $\mathbf{W}$ (the profile's, averaged over the heights between the ground and the
 state) the solve is the same in the frame moving with the air, where sound travels at $c$: the
@@ -3258,3 +3263,4 @@ than for SEL.
 76. "Noise Standards: Definitions," California Code of Regulations, Title 21, Sec. 5001.
 77. "Environmental Protection, Volume I — Aircraft Noise," Annex 16 to the Convention on International Civil Aviation, 8th ed., International Civil Aviation Organization, Montréal, July 2017.
 78. "Noise Standards: Aircraft Type and Airworthiness Certification," Advisory Circular AC 36-4D, Federal Aviation Administration, Washington, DC, 12 October 2017.
+79. Valente, V. T., "Multiple Rotor Acoustic Control," Ph.D. Dissertation, Department of Aerospace Engineering, The Pennsylvania State University, University Park, PA, 2024.

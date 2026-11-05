@@ -2579,6 +2579,8 @@ struct ToneFixture
     // Rows (channels) with phi descending, as write_shared_grid_test_database's
     // reverse_phi_rows lays them out; the tones follow the same rows.
     bool reverse_phi_rows = false;
+    // The root's tone_speed_exponent; NaN: none written.
+    double tone_speed_exponent = std::numeric_limits<double>::quiet_NaN();
 };
 
 std::string write_tone_test_database(const std::string& name, const ToneFixture& f)
@@ -2598,6 +2600,9 @@ std::string write_tone_test_database(const std::string& name, const ToneFixture&
     if (!f.condition_axes.empty())
         REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, "condition_axes", f.condition_axes.size(),
                         f.condition_axes.c_str())
+                == NC_NOERR);
+    if (std::isfinite(f.tone_speed_exponent))
+        REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, "tone_speed_exponent", NC_DOUBLE, 1, &f.tone_speed_exponent)
                 == NC_NOERR);
     int n_groups = 0;
     REQUIRE(nc_inq_grps(ncid, &n_groups, nullptr) == NC_NOERR);
@@ -3285,6 +3290,45 @@ TEST_CASE("replayed rotors interfere at their logged azimuths, and sound at thei
     ToneRunOptions both = faster;
     both.rotor_azimuth_deg["front"] = 10.0;
     REQUIRE_THROWS(ToneRun("niceops_tones_history_both.nod", omni_tones({"front"}, ""), both));
+}
+
+TEST_CASE("a tone's pressure follows its rotor's speed where the database gives tone_speed_exponent", "[tones]")
+{
+    // RPM^6 in level is pressure as the rate cubed: a rotor replayed 10 % faster
+    // than the database's rate is 1.1^6 louder; without the exponent it is not.
+    const Vec3 observer(0.0, 0.0, -9900.0);
+    const double rate = 2.0 * pi * 62.5;
+    auto history = [](double w) {
+        RotorHistory h;
+        h.time = {-1.0, 1.0};
+        h.azimuth = {-w, w};
+        h.rate = {w, w};
+        return h;
+    };
+    auto scaled = omni_tones({"front"}, "");
+    scaled.tone_speed_exponent = 3.0;
+    ToneRunOptions at_rate, faster;
+    at_rate.rotor_history = {{"front", history(rate)}};
+    faster.rotor_history = {{"front", history(1.1 * rate)}};
+    const double base = ToneRun("niceops_tones_speed_base.nod", scaled, at_rate).power(observer);
+    const double fast = ToneRun("niceops_tones_speed_fast.nod", scaled, faster).power(observer);
+    REQUIRE(std::fabs(fast / base - std::pow(1.1, 6.0)) < 1e-9 * std::pow(1.1, 6.0));
+    const double plain = ToneRun("niceops_tones_speed_plain.nod", omni_tones({"front"}, ""), faster).power(observer);
+    REQUIRE(std::fabs(plain / base - 1.0) < 1e-9);
+    // A sync group held at the members' mean rate scales each by (mean / own)^3.
+    auto unequal = omni_tones({"front", "rear"}, "");
+    unequal.shaft_rates = {rate, -1.2 * rate};
+    unequal.tone_speed_exponent = 3.0;
+    ToneRunOptions locked;
+    locked.sync_groups = {{"front", "rear"}};
+    ToneRun run("niceops_tones_speed_group.nod", unequal, locked);
+    const auto prepared = run.tones.prepare(run.state, Vec3(0.0, 0.0, 0.0));
+    REQUIRE(std::fabs(prepared.amplitude_scales[0] - std::pow(1.1, 3.0)) < 1e-12);
+    REQUIRE(std::fabs(prepared.amplitude_scales[1] - std::pow(1.1 / 1.2, 3.0)) < 1e-12);
+    // A negative or non-finite exponent is refused.
+    auto bad = omni_tones({"front"}, "");
+    bad.tone_speed_exponent = -1.0;
+    REQUIRE_THROWS(ToneRun("niceops_tones_speed_bad.nod", bad));
 }
 
 TEST_CASE("a rotor history file is unwrapped against its rate, and refused when it is not a history", "[tones]")

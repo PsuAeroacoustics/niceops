@@ -187,6 +187,10 @@ public:
         // Each source's azimuth at this state, rad: its --rotor_history's at the
         // state's time, else its fixed one (--rotor_azimuth or the database's).
         std::vector<double> azimuths;
+        // Each source's tone pressure scale: (the rate it turns at here / the
+        // database's rate)^tone_speed_exponent; 1 where the two agree or the
+        // database gives no exponent.
+        std::vector<double> amplitude_scales;
     };
     // `time` is the state's (s, the trajectory's), which a --rotor_history needs.
     StateTones prepare(const Database::SourceState& state, const Vec3& velocity,

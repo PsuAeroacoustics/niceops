@@ -996,6 +996,12 @@ public:
     // at a blend: each the blend-weighted mean of its conditions'.
     std::array<double, 3> tone_center(std::size_t source, const Blend& blend) const;
     double tone_shaft_rate(std::size_t source, const Blend& blend) const;
+    // The power of a rotor's rate its tones' pressure follows (the root's
+    // tone_speed_exponent; 0, no scaling, where the database gives none).
+    double tone_speed_exponent() const
+    {
+        return tone_speed_exponent_;
+    }
     void tone_frequencies(std::size_t source, const Blend& blend, double* frequencies) const;
     // Where absorption starts along a path, m: the sphere radius, or 0 for
     // lossless spheres (sphere_levels_lossless).
@@ -1245,6 +1251,7 @@ private:
     BandContent band_content_ = BandContent::total;
     ThrustCoefficientDensity thrust_coefficient_density_ = ThrustCoefficientDensity::vehicle;
     ConditionAxes condition_axes_ = ConditionAxes::helicopter;
+    double tone_speed_exponent_ = 0.0;
     int rotor_count_ = 0;
     double multirotor_radius_ = std::numeric_limits<double>::quiet_NaN();
     double hover_thrust_coefficient_ = std::numeric_limits<double>::quiet_NaN();

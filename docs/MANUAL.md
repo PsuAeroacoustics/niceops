@@ -605,6 +605,11 @@ their amplitude and phase over the sphere grid.
 - **`band_content = total`**: the band spectrum and dBA already hold the tones; the run uses them,
   as for any other database, and warns that the tones are not added again.
 
+A root attribute `tone_speed_exponent` (default 0) scales each tone's pressure as its rotor's
+shaft rate in the run over the database's, raised to that power: 3 gives the level as rpm to the
+sixth. It acts where a run turns a rotor at a speed the database does not, under `--rotor_history`
+or in a `--sync_group` at the members' mean rate; the frequencies follow the run's rate either way.
+
 | Option | What it does |
 | --- | --- |
 | `--rotor_azimuth tag=deg,...` | Sets each named rotor's azimuth, in degrees in its own sense of rotation: the synchrophasing angle. Repeatable. Default: the azimuth each rotor's phases were locked to (its `azimuth`, which panam's PT build records), which reproduces the phasing it was predicted with; without one, the stored phases as they are. |

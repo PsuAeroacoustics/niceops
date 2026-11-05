@@ -406,6 +406,11 @@ ToneEvaluator::StateTones ToneEvaluator::prepare(const Database::SourceState& st
                 out.frequencies[tone_offsets_[s] + t] = sources[s].harmonics[t] * rate / (2.0 * pi);
     }
     out.azimuths = azimuth_;
+    std::vector<double> rates(sources.size(), std::numeric_limits<double>::quiet_NaN());
+    for (std::size_t g = 0; g < groups_.size(); g++)
+        if (groups_[g].forced)
+            for (const std::size_t s : groups_[g].sources)
+                rates[s] = out.group_rates[g];
     for (std::size_t s = 0; s < sources.size(); s++)
     {
         if (history_of_[s] < 0)
@@ -413,9 +418,21 @@ ToneEvaluator::StateTones ToneEvaluator::prepare(const Database::SourceState& st
         const RotorHistory& h = histories_[static_cast<std::size_t>(history_of_[s])];
         out.azimuths[s] = h.azimuth_at(time);
         const double rate = h.rate_at(time);
+        rates[s] = rate;
         for (std::size_t t = 0; t < sources[s].tone_count(); t++)
             out.frequencies[tone_offsets_[s] + t] = sources[s].harmonics[t] * rate / (2.0 * pi);
     }
+    // A tone's pressure follows its rotor's speed where the database says how
+    // (tone_speed_exponent): the rate it turns at here against the database's.
+    out.amplitude_scales.assign(sources.size(), 1.0);
+    const double exponent = database_.tone_speed_exponent();
+    if (exponent > 0.0)
+        for (std::size_t s = 0; s < sources.size(); s++)
+        {
+            const double reference = std::fabs(database_.tone_shaft_rate(s, state.blend));
+            if (std::isfinite(rates[s]) && reference > 0.0)
+                out.amplitude_scales[s] = std::pow(rates[s] / reference, exponent);
+        }
     return out;
 }
 
@@ -687,7 +704,7 @@ void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTone
                 const int m = src.harmonics[t];
                 const double psi = m * tones.azimuths[s];
                 double fd = 0.0, fr = 0.0;
-                const std::complex<double> pd = phasor(direct[t], d_arrival, fe, psi, fd);
+                std::complex<double> pd = phasor(direct[t], d_arrival, fe, psi, fd);
                 std::complex<double> pr(0.0, 0.0);
                 if (with_ground)
                     pr = reflect(phasor(reflected[t], r_arrival, fe, psi, fr), r_arrival, hub, fr);
@@ -699,6 +716,11 @@ void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTone
                     const std::complex<double> pv = phasor(at_receiver[t], v_arrival, fe, psi, fv);
                     if (pv != std::complex<double>(0.0, 0.0))
                         pr = pd * (pr / pv);
+                }
+                if (const double scale = tones.amplitude_scales[s]; scale != 1.0)
+                {
+                    pd *= scale;
+                    pr *= scale;
                 }
                 // A tone whose phase is known adds its own arrivals coherently;
                 // one without (none, or the grid does not resolve it) in energy.
