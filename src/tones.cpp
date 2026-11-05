@@ -722,6 +722,34 @@ void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTone
                     pd *= scale;
                     pr *= scale;
                 }
+                // The tone's incoherent part: its own arrivals as the tone's (their
+                // path delays, the ground at their frequency), read at no directivity
+                // phase and no azimuth, and added in energy, whatever the source's
+                // group (THEORY 4.4).
+                if (direct[t].incoherent_db > Database::no_energy_floor_db
+                        || (with_ground && reflected[t].incoherent_db > Database::no_energy_floor_db))
+                {
+                    auto part = [](const Database::ToneLookup& look) {
+                        Database::ToneLookup out;
+                        out.level_db = look.incoherent_db;
+                        out.phase = 0.0;
+                        return out;
+                    };
+                    double gd = 0.0, gr = 0.0;
+                    std::complex<double> qd = phasor(part(direct[t]), d_arrival, fe, 0.0, gd);
+                    std::complex<double> qr(0.0, 0.0);
+                    if (with_ground)
+                        qr = reflect(phasor(part(reflected[t]), r_arrival, fe, 0.0, gr), r_arrival, hub, gr);
+                    if (off_receiver)
+                    {
+                        double gv = 0.0;
+                        const std::complex<double> qv = phasor(part(at_receiver[t]), v_arrival, fe, 0.0, gv);
+                        if (qv != std::complex<double>(0.0, 0.0))
+                            qr = qd * (qr / qv);
+                    }
+                    const double scale = tones.amplitude_scales[s];
+                    file(scale * scale * combine(qd, qr, coherence(gd), true), gd);
+                }
                 // A tone whose phase is known adds its own arrivals coherently;
                 // one without (none, or the grid does not resolve it) in energy.
                 const bool phased = src.phase_reference != PhaseReference::none && !src.energy_only[t];

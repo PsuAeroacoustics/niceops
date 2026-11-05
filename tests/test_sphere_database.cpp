@@ -2581,6 +2581,13 @@ struct ToneFixture
     bool reverse_phi_rows = false;
     // The root's tone_speed_exponent; NaN: none written.
     double tone_speed_exponent = std::numeric_limits<double>::quiet_NaN();
+    // The incoherent_amplitude (dB) of tone k of source s at grid cell (m, n) at
+    // condition i; unset, none written.  Only the sources it is given for when
+    // `incoherent_sources` is not empty.
+    std::function<double(std::size_t, std::size_t, std::size_t, std::size_t)> incoherent;
+    std::vector<std::size_t> incoherent_sources;
+    // Leave incoherent_amplitude out of the second condition.
+    bool drop_incoherent_from_condition_1 = false;
 };
 
 std::string write_tone_test_database(const std::string& name, const ToneFixture& f)
@@ -2610,7 +2617,7 @@ std::string write_tone_test_database(const std::string& name, const ToneFixture&
     REQUIRE(nc_inq_grps(ncid, &n_groups, groups.data()) == NC_NOERR);
     struct SourceVars
     {
-        int group, center, shaft_rate, harmonic, frequency, amplitude, phase, azimuth;
+        int group, center, shaft_rate, harmonic, frequency, amplitude, phase, azimuth, incoherent;
         std::size_t s, condition;
     };
     std::vector<SourceVars> vars;
@@ -2624,7 +2631,7 @@ std::string write_tone_test_database(const std::string& name, const ToneFixture&
         {
             if (f.drop_rear_from_condition_1 && i == 1 && s == 1)
                 continue;
-            SourceVars v {0, 0, 0, 0, 0, 0, 0, -1, s, i};
+            SourceVars v {0, 0, 0, 0, 0, 0, 0, -1, -1, s, i};
             REQUIRE(nc_def_grp(groups[i], f.tags[s].c_str(), &v.group) == NC_NOERR);
             int tone_dim = 0, xyz_dim = 0;
             REQUIRE(nc_def_dim(v.group, "tone", n_tones, &tone_dim) == NC_NOERR);
@@ -2638,6 +2645,11 @@ std::string write_tone_test_database(const std::string& name, const ToneFixture&
             REQUIRE(nc_def_var(v.group, "phase", NC_DOUBLE, 3, dims, &v.phase) == NC_NOERR);
             if (f.azimuth)
                 REQUIRE(nc_def_var(v.group, "azimuth", NC_DOUBLE, 0, nullptr, &v.azimuth) == NC_NOERR);
+            if (f.incoherent && !(f.drop_incoherent_from_condition_1 && i == 1)
+                    && (f.incoherent_sources.empty()
+                            || std::find(f.incoherent_sources.begin(), f.incoherent_sources.end(), s)
+                                    != f.incoherent_sources.end()))
+                REQUIRE(nc_def_var(v.group, "incoherent_amplitude", NC_DOUBLE, 3, dims, &v.incoherent) == NC_NOERR);
             if (!f.phase_reference.empty())
                 REQUIRE(nc_put_att_text(v.group, NC_GLOBAL, "phase_reference", f.phase_reference.size(),
                                 f.phase_reference.c_str())
@@ -2683,6 +2695,15 @@ std::string write_tone_test_database(const std::string& name, const ToneFixture&
                 }
         REQUIRE(nc_put_var_double(v.group, v.amplitude, amplitude.data()) == NC_NOERR);
         REQUIRE(nc_put_var_double(v.group, v.phase, phase.data()) == NC_NOERR);
+        if (v.incoherent >= 0)
+        {
+            std::vector<double> incoherent;
+            for (std::size_t row = 0; row < 4; row++)
+                for (std::size_t n = 0; n < 4; n++)
+                    for (std::size_t k = 0; k < n_tones; k++)
+                        incoherent.push_back(f.incoherent(v.s, f.reverse_phi_rows ? 3 - row : row, n, k));
+            REQUIRE(nc_put_var_double(v.group, v.incoherent, incoherent.data()) == NC_NOERR);
+        }
     }
     REQUIRE(nc_close(ncid) == NC_NOERR);
     return path;
@@ -3292,6 +3313,64 @@ TEST_CASE("replayed rotors interfere at their logged azimuths, and sound at thei
     REQUIRE_THROWS(ToneRun("niceops_tones_history_both.nod", omni_tones({"front"}, ""), both));
 }
 
+TEST_CASE("a tone's incoherent part adds in energy, each source alone, with its own arrivals' interference",
+        "[tones]")
+{
+    // An incoherent part at the tone's own level, over a directivity whose phase
+    // is uniform, doubles each source's power exactly, in free field and over the
+    // ground (its direct and reflected arrivals interfere as the tone's do).
+    const Vec3 observer(300.0, 40.0, 1.2);
+    auto plain = omni_tones({"front"});
+    plain.center = [](std::size_t) { return std::array<double, 3> {0.0, 0.0, 0.0}; };
+    auto doubled = plain;
+    doubled.incoherent = [](std::size_t, std::size_t, std::size_t, std::size_t) { return 80.0; };
+    ToneRunOptions energy;
+    energy.coherence = ToneCoherence::energy;
+    const ToneRun a("niceops_tones_incoherent_plain.nod", plain, energy, Vec3(0.0, 0.0, 10.0));
+    const ToneRun b("niceops_tones_incoherent_doubled.nod", doubled, energy, Vec3(0.0, 0.0, 10.0));
+    REQUIRE(std::fabs(b.power(observer) / a.power(observer) - 2.0) < 1e-9);
+    GroundModel ground;
+    ground.receiver_height = 1.2;
+    const AdmittanceTable admittance(ground, 10.0, 20000.0, 343.2);
+    const ToneEvaluator::Ground g {&ground, &admittance};
+    for (const double x : {40.0, 300.0, 900.0})
+    {
+        const Vec3 at(x, 15.0, 1.2);
+        REQUIRE(std::fabs(b.power(at, &g) / a.power(at, &g) - 2.0) < 1e-9);
+        // An observer off the model's receiver height takes the ratio there too.
+        const Vec3 off(x, 15.0, 4.0);
+        REQUIRE(std::fabs(b.power(off, &g) / a.power(off, &g) - 2.0) < 1e-9);
+    }
+
+    // Two rotors in one sync group: the tones add coherently, the incoherent parts
+    // in energy, each the source's own power (the energy run's).
+    auto pair = omni_tones({"front", "rear"});
+    pair.amplitude = [](std::size_t s, std::size_t m, std::size_t n, std::size_t) {
+        return 80.0 - 3.0 * static_cast<double>(s) + static_cast<double>(m) - 0.5 * static_cast<double>(n);
+    };
+    auto pair_incoherent = pair;
+    pair_incoherent.incoherent = [&pair](std::size_t s, std::size_t m, std::size_t n, std::size_t k) {
+        return pair.amplitude(s, m, n, k);
+    };
+    const ToneRun coherent("niceops_tones_incoherent_pair.nod", pair);
+    const ToneRun coherent_with("niceops_tones_incoherent_pair_with.nod", pair_incoherent);
+    const ToneRun separate("niceops_tones_incoherent_pair_energy.nod", pair, energy);
+    const Vec3 far(150.0, -60.0, 0.0);
+    const double expected = coherent.power(far) + separate.power(far);
+    // Float storage: the tone as a complex magnitude, its incoherent part in dB.
+    REQUIRE(std::fabs(coherent_with.power(far) - expected) < 1e-7 * expected);
+
+    // A source with the incoherent part at some conditions only is refused.
+    auto partial = doubled;
+    partial.drop_incoherent_from_condition_1 = true;
+    REQUIRE_THROWS(ToneRun("niceops_tones_incoherent_partial.nod", partial));
+    auto infinite = doubled;
+    infinite.incoherent = [](std::size_t, std::size_t, std::size_t, std::size_t) {
+        return std::numeric_limits<double>::infinity();
+    };
+    REQUIRE_THROWS(ToneRun("niceops_tones_incoherent_inf.nod", infinite));
+}
+
 TEST_CASE("a tone's pressure follows its rotor's speed where the database gives tone_speed_exponent", "[tones]")
 {
     // RPM^6 in level is pressure as the rate cubed: a rotor replayed 10 % faster
@@ -3307,13 +3386,17 @@ TEST_CASE("a tone's pressure follows its rotor's speed where the database gives 
     };
     auto scaled = omni_tones({"front"}, "");
     scaled.tone_speed_exponent = 3.0;
+    // Its incoherent part scales with it.
+    scaled.incoherent = [](std::size_t, std::size_t, std::size_t, std::size_t) { return 86.0; };
     ToneRunOptions at_rate, faster;
     at_rate.rotor_history = {{"front", history(rate)}};
     faster.rotor_history = {{"front", history(1.1 * rate)}};
     const double base = ToneRun("niceops_tones_speed_base.nod", scaled, at_rate).power(observer);
     const double fast = ToneRun("niceops_tones_speed_fast.nod", scaled, faster).power(observer);
     REQUIRE(std::fabs(fast / base - std::pow(1.1, 6.0)) < 1e-9 * std::pow(1.1, 6.0));
-    const double plain = ToneRun("niceops_tones_speed_plain.nod", omni_tones({"front"}, ""), faster).power(observer);
+    auto unscaled = scaled;
+    unscaled.tone_speed_exponent = std::numeric_limits<double>::quiet_NaN();
+    const double plain = ToneRun("niceops_tones_speed_plain.nod", unscaled, faster).power(observer);
     REQUIRE(std::fabs(plain / base - 1.0) < 1e-9);
     // A sync group held at the members' mean rate scales each by (mean / own)^3.
     auto unequal = omni_tones({"front", "rear"}, "");

@@ -610,6 +610,12 @@ shaft rate in the run over the database's, raised to that power: 3 gives the lev
 sixth. It acts where a run turns a rotor at a speed the database does not, under `--rotor_history`
 or in a `--sync_group` at the members' mean rate; the frequencies follow the run's rate either way.
 
+A source may also carry, beside each tone's amplitude and phase, an `incoherent_amplitude` over the
+same grid: the level, dB re 20 uPa at the sphere radius, of what the rotor radiates at that shaft
+order without a stable phase (from unsteady loading, say), -inf where it has none. The run adds it
+in energy, each rotor on its own whatever its sync group, with the tone's own frequency, ground
+and speed scaling. A source gives it at every condition or at none.
+
 | Option | What it does |
 | --- | --- |
 | `--rotor_azimuth tag=deg,...` | Sets each named rotor's azimuth, in degrees in its own sense of rotation: the synchrophasing angle. Repeatable. Default: the azimuth each rotor's phases were locked to (its `azimuth`, which panam's PT build records), which reproduces the phasing it was predicted with; without one, the stored phases as they are. |

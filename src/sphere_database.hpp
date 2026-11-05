@@ -482,6 +482,12 @@ struct ToneSource
     // Per condition and tone, [condition * tones + tone], its largest |A| over
     // the grid: what the near-field term is capped at twice.
     std::vector<float> peak_amplitude;
+    // Each tone's part without a stable phase (the file's optional
+    // incoherent_amplitude): its rms level at the sphere radius, dB re 20 uPa, laid
+    // out as `amplitudes`, -inf where it has none; added in energy, each source
+    // alone (THEORY 4.4).  Empty where the source carries none.
+    bool has_incoherent = false;
+    std::vector<float> incoherent_db;
 
     std::size_t tone_count() const
     {
@@ -985,6 +991,9 @@ public:
         // grid, blended over the conditions.
         std::complex<double> near_field {0.0, 0.0};
         double peak_amplitude = 0.0;
+        // The tone's incoherent part (ToneSource::incoherent_db), blended as the
+        // level is; no_energy_floor_db where it has none.
+        double incoherent_db = no_energy_floor_db;
     };
     // Every tone of `source` along `direction` (the unit vector leaving its hub,
     // in the run's frame), into `out` (tone_count() entries).  The cell and its

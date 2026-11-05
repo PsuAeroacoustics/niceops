@@ -564,6 +564,20 @@ sync group's mean) over the database's $\Omega_{r,0}$: $\nu = 3$ is the level as
 a hovering rotor's tones [79]. Without the attribute $\nu = 0$ and the amplitudes are
 the stored ones.
 
+**Incoherent part.** A source may give each tone an incoherent level $I(\mathbf{n})$
+(`incoherent_amplitude`): the rms pressure at $R_s$ of what the rotor radiates at that shaft order
+with no stable phase against its azimuth. It takes the tone's arrivals with $|A|$ replaced by
+$I$ and no directivity phase or azimuth term, so its direct and reflected arrivals keep their
+path difference, and adds in energy for each source alone,
+
+$$
+P_I = |I_d|^2 + |I_r|^2 + 2\gamma\,\mathrm{Re}(I_d \bar{I}_r),
+$$
+
+scaled by $(|\Omega_r| / |\Omega_{r,0}|)^{2\nu}$ like the tone's power. Taking no directivity phase
+treats the part as radiated from the hub, with no phase difference between the directions of a
+source's two arrivals.
+
 **In wind** $\mathbf{W}$ (the profile's, averaged over the heights between the ground and the
 state) the solve is the same in the frame moving with the air, where sound travels at $c$: the
 hub moves at $\mathbf{V} - \mathbf{W}$ and the point, at rest on the ground, is received at

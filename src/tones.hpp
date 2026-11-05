@@ -26,6 +26,11 @@
 //
 //   P = |S_d|^2 + |S_r|^2 + 2 gamma Re(S_d conj(S_r)).
 //
+// A tone's incoherent part (the database's optional incoherent_amplitude: what
+// the source radiates at that order without a stable phase) takes the same
+// arrivals at its own level, no directivity phase and no azimuth, and adds in
+// energy, each source alone, whatever its group.
+//
 // The powers are filed into the database's bands, A-weighted at their own
 // received frequency, so they add to the band spectrum's energy (band_content
 // broadband).

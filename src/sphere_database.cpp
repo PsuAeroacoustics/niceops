@@ -2322,6 +2322,34 @@ void Database::load_tone_sources(int file_ncid, const std::vector<int>& group_id
                             static_cast<float>(std::pow(10.0, level / 20.0)), static_cast<float>(phase[slot] * pi / 180.0));
                 }
             }
+            // The tones' parts without a stable phase (optional): level only, added in
+            // energy (THEORY 4.4).  A source carries them at every condition or none.
+            int incoherent_id = 0;
+            const bool incoherent = NC_NOERR == nc_inq_varid(sid, "incoherent_amplitude", &incoherent_id);
+            if (i == 0)
+                source.has_incoherent = incoherent;
+            else if (incoherent != source.has_incoherent)
+                input_error(what, incoherent ? " has" : " has no", " incoherent_amplitude, unlike sphere 0; a source "
+                        "carries its tones' incoherent parts at every condition or at none.");
+            if (incoherent)
+            {
+                const auto levels = read_exact(sid, "incoherent_amplitude", n_cells * tones, what);
+                refuse_fill_values(datafile_path, i, ("incoherent_amplitude of source " + tags[s]).c_str(), levels);
+                const std::size_t at = source.incoherent_db.size();
+                source.incoherent_db.resize(at + n_cells * tones, -std::numeric_limits<float>::infinity());
+                for (std::size_t row = 0; row < n_cells; row++)
+                {
+                    const std::size_t cell = cell_of != nullptr && cell_of->size() == n_cells ? (*cell_of)[row] : row;
+                    for (std::size_t k = 0; k < tones; k++)
+                    {
+                        const double level = levels[row * tones + k];
+                        if (std::isnan(level) || level == std::numeric_limits<double>::infinity())
+                            input_error(what, " has incoherent_amplitude ", level, "; a level is finite, or -inf "
+                                    "where the tone has no incoherent part.");
+                        source.incoherent_db[at + cell * tones + k] = static_cast<float>(level);
+                    }
+                }
+            }
         }
     }
     // Each cell's azimuth about the sphere frame's up axis, toward starboard: a
@@ -3005,6 +3033,33 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
                 : sw[0] * corner_level[0] + sw[1] * corner_level[1] + sw[2] * corner_level[2]
                         + sw[3] * corner_level[3];
         out[k].level_db = level <= empty_level_db ? no_energy_floor_db : level + blend.level_correction_db;
+        out[k].incoherent_db = no_energy_floor_db;
+        if (s.has_incoherent)
+        {
+            // Blended as the level is: in dB, empty entries dropped.
+            double corner_incoherent[4];
+            for (std::size_t corner = 0; corner < 4; corner++)
+            {
+                double v[4];
+                for (std::size_t c = 0; c < 4; c++)
+                {
+                    const float x = s.incoherent_db[(blend.indices[c] * n_cells + stencil.corner[corner]) * tones + k];
+                    v[c] = std::isfinite(x) ? static_cast<double>(x) : no_energy_floor_db;
+                }
+                corner_incoherent[corner] = (is_empty(v[0], w[0]) || is_empty(v[1], w[1]) || is_empty(v[2], w[2])
+                                                    || is_empty(v[3], w[3]))
+                        ? blend_present(v, w)
+                        : w[0] * v[0] + w[1] * v[1] + w[2] * v[2] + w[3] * v[3];
+            }
+            const double incoherent = (is_empty(corner_incoherent[0], sw[0]) || is_empty(corner_incoherent[1], sw[1])
+                                              || is_empty(corner_incoherent[2], sw[2])
+                                              || is_empty(corner_incoherent[3], sw[3]))
+                    ? blend_present(corner_incoherent, sw)
+                    : sw[0] * corner_incoherent[0] + sw[1] * corner_incoherent[1] + sw[2] * corner_incoherent[2]
+                            + sw[3] * corner_incoherent[3];
+            if (incoherent > empty_level_db)
+                out[k].incoherent_db = incoherent + blend.level_correction_db;
+        }
         if (order != 0)
         {
             const auto rewind = std::polar(1.0, order * alpha);
