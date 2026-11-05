@@ -612,7 +612,8 @@ or in a `--sync_group` at the members' mean rate; the frequencies follow the run
 
 A source may also carry, beside each tone's amplitude and phase, an `incoherent_amplitude` over the
 same grid: the level, dB re 20 uPa at the sphere radius, of what the rotor radiates at that shaft
-order without a stable phase (from unsteady loading, say), -inf where it has none. The run adds it
+order without a stable phase (from unsteady loading, say). As in the tones' own grids, -inf is no
+data, filled from the neighboring cells: give a quiet direction a low finite level. The run adds it
 in energy, each rotor on its own whatever its sync group, with the tone's own frequency, ground
 and speed scaling. A source gives it at every condition or at none.
 
