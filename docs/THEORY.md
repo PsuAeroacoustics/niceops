@@ -554,7 +554,10 @@ azimuth its phases were locked to (the source's `azimuth`, the first sphere's), 
 the phasing it was predicted with, and zero, the stored rotor-locked phase itself, where the
 database records none. $\alpha(f)$ is the path's absorption (§4.3) at the received
 frequency, interpolated between the band centers linearly in $\lg f$ and $\lg\alpha$. $R_a$ is
-where absorption starts, the sphere radius or, for lossless spheres, 0 (§2.2).
+where absorption starts, the sphere radius or, for lossless spheres, 0 (§2.2). With `--rotor_history`, $\psi_r$ and $\Omega_r$ are each
+replayed rotor's logged azimuth and shaft rate at the state's time, and the replayed rotors are one
+coherent group: the sum below is then the instantaneous one of free-running rotors, which beats as
+their azimuths drift apart.
 
 **In wind** $\mathbf{W}$ (the profile's, averaged over the heights between the ground and the
 state) the solve is the same in the frame moving with the air, where sound travels at $c$: the

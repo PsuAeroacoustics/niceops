@@ -30,6 +30,7 @@
 // received frequency, so they add to the band spectrum's energy (band_content
 // broadband).
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <complex>
@@ -64,6 +65,31 @@ enum class ToneGround
 std::optional<ToneCoherence> parse_tone_coherence(const std::string& name);
 std::optional<ToneGround> parse_tone_ground(const std::string& name);
 
+// A rotor's azimuth over time, from a log (--rotor_history): replayed, its tones
+// take this azimuth and their frequencies this shaft rate at each state.
+struct RotorHistory
+{
+    // s, increasing, in the trajectory's time.
+    std::vector<double> time;
+    // rad, in the rotor's own sense of rotation, continuous (unwrapped).
+    std::vector<double> azimuth;
+    // rad/s, |shaft rate|.
+    std::vector<double> rate;
+    // The azimuth (rad) and |rate| (rad/s) at t, linear between samples; t must
+    // lie within the history.
+    double azimuth_at(double t) const;
+    double rate_at(double t) const;
+};
+
+// The rotor histories of a --rotor_history file: a CSV whose header is `time`
+// and, for each rotor, `<tag>_azimuth` (degrees in its own sense of rotation,
+// wrapped or not) and `<tag>_rate` (rad/s, either sign).  The azimuth is
+// unwrapped against the rate (each step taken to the turn nearest the rate's
+// advance), so samples need only be close enough for that.  Refuses a file
+// whose time does not increase, a non-finite value, a column without its
+// partner, or a rotor that turns backward.
+std::map<std::string, RotorHistory> read_rotor_history(const std::string& path);
+
 struct ToneRunOptions
 {
     ToneCoherence coherence = ToneCoherence::coherent;
@@ -76,6 +102,11 @@ struct ToneRunOptions
     // database's groups for their members and hold their shaft rates at the
     // group's mean.
     std::vector<std::vector<std::string>> sync_groups;
+    // --rotor_history: each named source's azimuth and shaft rate over time.  The
+    // named sources add coherently with each other (their own group, in place of
+    // any other), each at its logged azimuth and rate at every state: a replay of
+    // free-running rotors, their interference as it was.
+    std::map<std::string, RotorHistory> rotor_history;
     // --tone_near_field on: each arrival's tone takes the first-order near-field
     // term, A + (i / (2 k R)) Lap[D A] (THEORY 4.4), where the database holds it
     // (DatabaseLoadOptions::tone_near_field).
@@ -151,9 +182,19 @@ public:
         Vec3 wind;
         // Each run-time group's mean shaft rate at this state, rad/s (0 for others).
         std::vector<double> group_rates;
+        // Each source's azimuth at this state, rad: its --rotor_history's at the
+        // state's time, else its fixed one (--rotor_azimuth or the database's).
+        std::vector<double> azimuths;
     };
+    // `time` is the state's (s, the trajectory's), which a --rotor_history needs.
     StateTones prepare(const Database::SourceState& state, const Vec3& velocity,
-            const Vec3& wind = Vec3(0.0, 0.0, 0.0)) const;
+            const Vec3& wind = Vec3(0.0, 0.0, 0.0), double time = 0.0) const;
+    // Whether the run replays rotor histories, and their time span (s).
+    bool replays_history() const
+    {
+        return !histories_.empty();
+    }
+    std::array<double, 2> history_span() const;
 
     // The ground for the per-frequency path: the model and its admittance at any
     // frequency.  Null: free field, direct arrivals only.
@@ -262,6 +303,10 @@ private:
     // StateTones::frequencies.
     std::vector<std::size_t> group_of_;
     std::vector<double> azimuth_;
+    // The --rotor_history histories, and per source the index of its own (-1:
+    // none).
+    std::vector<RotorHistory> histories_;
+    std::vector<int> history_of_;
     std::vector<std::size_t> tone_offsets_;
     std::size_t tone_total_ = 0;
     std::size_t max_tones_ = 0;

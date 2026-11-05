@@ -3050,11 +3050,21 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         if (tone_wind)
             log("Tones: Doppler factors and emission times are solved in the frame moving with the profile's wind, "
                 "averaged over each state's height.");
+        if (tone_evaluator->replays_history())
+        {
+            const auto span = tone_evaluator->history_span();
+            for (std::size_t it = 0; it < nt; it++)
+                if (!(trajectory.states[it].t >= span[0] && trajectory.states[it].t <= span[1]))
+                    input_error("--rotor_history covers ", span[0], " to ", span[1], " s, and the trajectory has a "
+                            "state at ", trajectory.states[it].t, " s: trim the trajectory to the log, or log longer.");
+            log("Tones: replaying the --rotor_history rotors at their logged azimuths and shaft rates, coherently.");
+        }
         for (std::size_t it = 0; it < nt; it++)
         {
             const auto v = ground_velocity(trajectory.states[it]);
             tone_states.push_back(tone_evaluator->prepare(source_states[it], Vec3(v[0], v[1], v[2]),
-                    tone_wind ? layer_wind(source_states[it].position.z) : Vec3(0.0, 0.0, 0.0)));
+                    tone_wind ? layer_wind(source_states[it].position.z) : Vec3(0.0, 0.0, 0.0),
+                    trajectory.states[it].t));
             for (std::size_t g = 0; g < groups.size(); g++)
             {
                 rate_low[g] = std::min(rate_low[g], tone_states.back().group_rates[g]);
@@ -5429,6 +5439,7 @@ int run(int argc, char* argv[])
     std::string speed_reference;
     std::string condition_density;
     std::vector<std::string> rotor_azimuth_args;
+    std::string rotor_history_file;
     std::vector<std::string> sync_group_args;
     std::string tone_coherence = "coherent";
     std::string tone_ground = "frequency";
@@ -5821,6 +5832,11 @@ int run(int argc, char* argv[])
             "sense of rotation (shaft order m takes e^(i m azimuth)). Repeatable. Default: the azimuth each rotor's "
             "phases were locked to, as the database records it (the stored phases as they are where it records "
             "none).");
+    app.add_option("--rotor_history", rotor_history_file,
+            "A format 2 database's rotors replayed from a log: a CSV of time (s, the trajectory's) and, per rotor, "
+            "<tag>_azimuth (degrees in its own sense of rotation) and <tag>_rate (rad/s). The named rotors add "
+            "coherently with each other, each at its logged azimuth and shaft rate at every state: free-running "
+            "rotors' interference as it was. Every state must lie within the log.");
     app.add_option("--sync_group", sync_group_args,
             "A format 2 database's rotors: tag,tag,... adds the named sources coherently, replacing their database "
             "groups, at the group's mean shaft rate. Repeatable, one group each.");
@@ -7341,6 +7357,8 @@ int run(int argc, char* argv[])
         parse_rotor_azimuths(text, options.tones.rotor_azimuth_deg);
     for (const auto& text : sync_group_args)
         options.tones.sync_groups.push_back(parse_sync_group(text));
+    if (!rotor_history_file.empty())
+        options.tones.rotor_history = read_rotor_history(rotor_history_file);
     options.tones.coherence = *parse_tone_coherence(tone_coherence);
     options.tones.ground = *parse_tone_ground(tone_ground);
     options.tones.near_field = tone_near_field == "on";

@@ -8,6 +8,7 @@
 #include <sstream>
 
 #include "util/constants.hpp"
+#include "util/csv.hpp"
 #include "util/logger.hpp"
 #include "weighting.hpp"
 
@@ -182,7 +183,34 @@ ToneEvaluator::ToneEvaluator(const Database& database, const ToneRunOptions& opt
 
     const bool coherent = options.coherence == ToneCoherence::coherent;
     group_of_.assign(sources.size(), static_cast<std::size_t>(-1));
-    // Run-time groups first: they take their members out of the database's.
+    history_of_.assign(sources.size(), -1);
+    // Replayed rotors (--rotor_history) first: one coherent group, each member
+    // at its logged azimuth and rate at every state.
+    if (!options.rotor_history.empty())
+    {
+        Group g;
+        g.name = "rotor history";
+        g.coherent = coherent;
+        for (const auto& [tag, history] : options.rotor_history)
+        {
+            const auto it = index.find(tag);
+            if (it == index.end())
+                input_error("--rotor_history names source ", tag, ", which the database does not carry (it has ",
+                        tags(), ").");
+            const std::size_t s = it->second;
+            if (sources[s].phase_reference != PhaseReference::rotor_azimuth)
+                input_error("--rotor_history: source ", tag, "'s phases are ", to_string(sources[s].phase_reference),
+                        ", not tied to its rotor's azimuth, so its logged azimuth cannot phase it.");
+            if (options.rotor_azimuth_deg.count(tag) != 0)
+                input_error("--rotor_history and --rotor_azimuth both set source ", tag, "'s azimuth: give one.");
+            history_of_[s] = static_cast<int>(histories_.size());
+            histories_.push_back(history);
+            group_of_[s] = groups_.size();
+            g.sources.push_back(s);
+        }
+        groups_.push_back(g);
+    }
+    // Run-time groups next: they take their members out of the database's.
     for (const auto& members : options.sync_groups)
     {
         Group g;
@@ -195,6 +223,9 @@ ToneEvaluator::ToneEvaluator(const Database& database, const ToneRunOptions& opt
                 input_error("--sync_group names source ", tag, ", which the database does not carry (it has ", tags(),
                         ").");
             const std::size_t s = it->second;
+            if (history_of_[s] >= 0)
+                input_error("--sync_group names source ", tag, ", which --rotor_history replays: a replayed rotor "
+                        "adds coherently with the other replayed rotors, at its logged azimuth and rate.");
             if (group_of_[s] != static_cast<std::size_t>(-1))
                 input_error("--sync_group puts source ", tag, " in two groups.");
             if (sources[s].phase_reference != PhaseReference::rotor_azimuth)
@@ -344,7 +375,7 @@ double ToneEvaluator::absorption_at(const double* absorption, double frequency) 
 }
 
 ToneEvaluator::StateTones ToneEvaluator::prepare(const Database::SourceState& state, const Vec3& velocity,
-        const Vec3& wind) const
+        const Vec3& wind, double time) const
 {
     const auto& sources = database_.tone_sources();
     StateTones out;
@@ -372,6 +403,139 @@ ToneEvaluator::StateTones ToneEvaluator::prepare(const Database::SourceState& st
         for (const std::size_t s : groups_[g].sources)
             for (std::size_t t = 0; t < sources[s].tone_count(); t++)
                 out.frequencies[tone_offsets_[s] + t] = sources[s].harmonics[t] * rate / (2.0 * pi);
+    }
+    out.azimuths = azimuth_;
+    for (std::size_t s = 0; s < sources.size(); s++)
+    {
+        if (history_of_[s] < 0)
+            continue;
+        const RotorHistory& h = histories_[static_cast<std::size_t>(history_of_[s])];
+        out.azimuths[s] = h.azimuth_at(time);
+        const double rate = h.rate_at(time);
+        for (std::size_t t = 0; t < sources[s].tone_count(); t++)
+            out.frequencies[tone_offsets_[s] + t] = sources[s].harmonics[t] * rate / (2.0 * pi);
+    }
+    return out;
+}
+
+std::array<double, 2> ToneEvaluator::history_span() const
+{
+    std::array<double, 2> span {-std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
+    for (const auto& h : histories_)
+    {
+        span[0] = std::max(span[0], h.time.front());
+        span[1] = std::min(span[1], h.time.back());
+    }
+    return span;
+}
+
+namespace {
+
+double interpolate(const std::vector<double>& x, const std::vector<double>& y, double t)
+{
+    assert(!x.empty() && t >= x.front() && t <= x.back());
+    const auto it = std::upper_bound(x.begin(), x.end(), t);
+    if (it == x.end())
+        return y.back();
+    const std::size_t hi = static_cast<std::size_t>(it - x.begin());
+    if (hi == 0)
+        return y.front();
+    const std::size_t lo = hi - 1;
+    const double w = (t - x[lo]) / (x[hi] - x[lo]);
+    return y[lo] + w * (y[hi] - y[lo]);
+}
+
+} // namespace
+
+double RotorHistory::azimuth_at(double t) const
+{
+    return interpolate(time, azimuth, t);
+}
+
+double RotorHistory::rate_at(double t) const
+{
+    return interpolate(time, rate, t);
+}
+
+std::map<std::string, RotorHistory> read_rotor_history(const std::string& path)
+{
+    CsvReport report;
+    LabeledCsv csv;
+    try
+    {
+        csv = read_labeled_csv(path, &report);
+    }
+    catch (const std::exception& e)
+    {
+        input_error("--rotor_history: ", e.what());
+    }
+    if (report.dropped > 0)
+        input_error("--rotor_history ", path, ": line ", report.first_dropped_line, " is not numeric (text after the "
+                "data, or a damaged row).");
+    if (csv.header.empty() || csv.rows.size() < 2)
+        input_error("--rotor_history ", path, " needs a header and at least two rows.");
+    auto trimmed = [](std::string field) {
+        const auto b = field.find_first_not_of(" \t");
+        const auto e = field.find_last_not_of(" \t");
+        return b == std::string::npos ? std::string() : field.substr(b, e - b + 1);
+    };
+    std::size_t time_column = csv.header.size();
+    std::map<std::string, std::array<std::size_t, 2>> columns;
+    for (std::size_t i = 0; i < csv.header.size(); i++)
+    {
+        const std::string name = trimmed(csv.header[i]);
+        if (name == "time")
+        {
+            time_column = i;
+            continue;
+        }
+        for (const auto& [suffix, slot] : {std::pair<std::string, std::size_t> {"_azimuth", 0}, {"_rate", 1}})
+        {
+            if (name.size() > suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0)
+            {
+                auto& c = columns.try_emplace(name.substr(0, name.size() - suffix.size()),
+                        std::array<std::size_t, 2> {csv.header.size(), csv.header.size()}).first->second;
+                c[slot] = i;
+            }
+        }
+    }
+    if (time_column == csv.header.size())
+        input_error("--rotor_history ", path, " has no 'time' column.");
+    if (columns.empty())
+        input_error("--rotor_history ", path, " names no rotor: give <tag>_azimuth (deg) and <tag>_rate (rad/s).");
+    std::map<std::string, RotorHistory> out;
+    for (const auto& [tag, c] : columns)
+    {
+        if (c[0] == csv.header.size() || c[1] == csv.header.size())
+            input_error("--rotor_history ", path, ": source ", tag, " needs both ", tag, "_azimuth and ", tag,
+                    "_rate.");
+        RotorHistory h;
+        for (std::size_t k = 0; k < csv.rows.size(); k++)
+        {
+            const auto& row = csv.rows[k];
+            if (row.size() != csv.header.size())
+                input_error("--rotor_history ", path, ": row ", k + 1, " has ", row.size(), " fields, the header ",
+                        csv.header.size(), ".");
+            const double t = row[time_column], a = row[c[0]] * pi / 180.0, w = std::fabs(row[c[1]]);
+            if (!std::isfinite(t) || !std::isfinite(a) || !std::isfinite(w))
+                input_error("--rotor_history ", path, ": row ", k + 1, " holds a value that is not a finite number.");
+            if (!h.time.empty() && !(t > h.time.back()))
+                input_error("--rotor_history ", path, ": time does not increase at row ", k + 1, ".");
+            double azimuth = a;
+            if (!h.time.empty())
+            {
+                // The turn nearest the rate's advance from the last sample.
+                const double expected = h.azimuth.back() + 0.5 * (w + h.rate.back()) * (t - h.time.back());
+                azimuth = a + 2.0 * pi * std::round((expected - a) / (2.0 * pi));
+                if (azimuth < h.azimuth.back())
+                    input_error("--rotor_history ", path, ": source ", tag, " turns backward at row ", k + 1,
+                            " (its azimuth runs in its own sense of rotation).");
+            }
+            h.time.push_back(t);
+            h.azimuth.push_back(azimuth);
+            h.rate.push_back(w);
+        }
+        out.emplace(tag, std::move(h));
     }
     return out;
 }
@@ -520,7 +684,7 @@ void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTone
             {
                 const double fe = tones.frequencies[tone_offsets_[s] + t];
                 const int m = src.harmonics[t];
-                const double psi = m * azimuth_[s];
+                const double psi = m * tones.azimuths[s];
                 double fd = 0.0, fr = 0.0;
                 const std::complex<double> pd = phasor(direct[t], d_arrival, fe, psi, fd);
                 std::complex<double> pr(0.0, 0.0);

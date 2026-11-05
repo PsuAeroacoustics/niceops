@@ -3243,6 +3243,74 @@ TEST_CASE("two rotors in one sync group: +6 dB in phase, a null in antiphase, +3
     REQUIRE(std::fabs(10.0 * std::log10(grouped / one) - 20.0 * std::log10(2.0)) < 1e-9);
 }
 
+TEST_CASE("replayed rotors interfere at their logged azimuths, and sound at their logged rates", "[tones]")
+{
+    // Free-running sources (no database group) replayed from a log: together they are
+    // a coherent group at the logged azimuths, as a sync group at those azimuths is.
+    const Vec3 observer(0.0, 0.0, -9900.0);
+    const double one = ToneRun("niceops_tones_history_one.nod", omni_tones({"front"})).power(observer);
+    auto history = [](double offset_deg, double rate) {
+        RotorHistory h;
+        h.time = {-1.0, 1.0};
+        h.azimuth = {offset_deg * pi / 180.0 - rate, offset_deg * pi / 180.0 + rate};
+        h.rate = {rate, rate};
+        return h;
+    };
+    const double rate = 2.0 * pi * 62.5;
+    ToneRunOptions together;
+    together.rotor_history = {{"front", history(0.0, rate)}, {"rear", history(0.0, rate)}};
+    const double in_phase
+            = ToneRun("niceops_tones_history_pair.nod", omni_tones({"front", "rear"}, ""), together).power(observer);
+    REQUIRE(std::fabs(10.0 * std::log10(in_phase / one) - 20.0 * std::log10(2.0)) < 1e-9);
+    ToneRunOptions apart;
+    apart.rotor_history = {{"front", history(0.0, rate)}, {"rear", history(45.0, rate)}};
+    const double null
+            = ToneRun("niceops_tones_history_null.nod", omni_tones({"front", "rear"}, ""), apart).power(observer);
+    REQUIRE(null < 1e-12 * one);
+    // A rotor logged at another rate sounds at it: shaft order 4 of 2 pi 100 rad/s is 400 Hz.
+    ToneRunOptions faster;
+    faster.rotor_history = {{"front", history(0.0, 2.0 * pi * 100.0)}};
+    ToneRun run("niceops_tones_history_rate.nod", omni_tones({"front"}, ""), faster);
+    const auto prepared = run.tones.prepare(run.state, Vec3(0.0, 0.0, 0.0), Vec3(0.0, 0.0, 0.0), 0.5);
+    REQUIRE(std::fabs(prepared.frequencies[0] - 400.0) < 1e-9);
+    REQUIRE(std::fabs(prepared.azimuths[0] - 0.5 * 2.0 * pi * 100.0) < 1e-9);
+    // A replayed rotor cannot also be set or grouped.
+    ToneRunOptions both = faster;
+    both.rotor_azimuth_deg["front"] = 10.0;
+    REQUIRE_THROWS(ToneRun("niceops_tones_history_both.nod", omni_tones({"front"}, ""), both));
+}
+
+TEST_CASE("a rotor history file is unwrapped against its rate, and refused when it is not a history", "[tones]")
+{
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_rotor_history.csv").string();
+    auto write = [&](const std::string& text) {
+        std::ofstream(path) << text;
+    };
+    // 50 rad/s logged every 0.1 s: 5 rad (286 deg) a step, wrapped to [-180, 180).
+    std::ostringstream text;
+    text.precision(17);
+    text << "time,M1_azimuth,M1_rate,M2_azimuth,M2_rate\n";
+    for (int k = 0; k <= 10; k++)
+    {
+        const double a = 50.0 * 0.1 * k * 180.0 / pi;
+        text << 0.1 * k << "," << std::remainder(a, 360.0) << ",-50," << std::remainder(2.0 * a, 360.0) << ",100\n";
+    }
+    write(text.str());
+    const auto h = read_rotor_history(path);
+    REQUIRE(h.size() == 2);
+    REQUIRE(std::fabs(h.at("M1").azimuth.back() - h.at("M1").azimuth.front() - 50.0) < 1e-9);
+    REQUIRE(std::fabs(h.at("M2").azimuth.back() - h.at("M2").azimuth.front() - 100.0) < 1e-9);
+    REQUIRE(h.at("M1").rate.front() == 50.0);
+    REQUIRE(std::fabs(h.at("M1").azimuth_at(0.55) - h.at("M1").azimuth.front() - 27.5) < 1e-9);
+    write("time,M1_azimuth,M1_rate\n0,0,10\n0,1,10\n");
+    REQUIRE_THROWS(read_rotor_history(path));
+    write("time,M1_azimuth\n0,0\n1,1\n");
+    REQUIRE_THROWS(read_rotor_history(path));
+    write("time,M1_azimuth,M1_rate\n0,0,10\n1,1,10\nend\n");
+    REQUIRE_THROWS(read_rotor_history(path));
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("a rotor's recorded azimuth is the default phasing, and --rotor_azimuth replaces it", "[tones]")
 {
     // The phases are locked to azimuths 10 and 55 degrees: 45 degrees apart, half a
