@@ -2515,6 +2515,44 @@ SEL, station atmosphere, plates:
   smaller error was that deficit cancelling the broadband path's own excess (+3.4 dB on the
   descents in the build).
 
+### Rotor tones of a hovering hexacopter (Mid-State, 2023)
+
+The PSU hexacopter (six two-bladed 14 in rotors, about 220 rad/s) hovered at 6, 12, 24 and 49 m
+over a line of ground plates on two days (runs HC1ZZC-13 and HC1ZZC-19), its rotor angles logged
+onboard. PANAM extracted each rotor's shaft orders phase-locked to its logged angle, fitted each
+rotor's order 2 (blade passage) and 4 to the plates' order sums over all six rotors (spinning
+modes k = m s and m s ± 1 about the shaft, s the sense of rotation; amplitudes referred to 220
+rad/s, pressure as the rate cubed), fitted what that leaves as each rotor's incoherent energy
+directivity, and wrote both into a format 2 database (`tone_speed_exponent` 3,
+`incoherent_amplitude`). NICEOPS replays each held-out segment with `--rotor_history` at the
+logged azimuths and speeds, the plates as free-field observers (each plate's response divided out
+of the measured sums). Harness `tones/`: `nice_holdout.py`, `incoherent.py`.
+
+Held out, fitted to the rest; means over each kind's folds. Leq: the energy mean over a segment
+at each plate, less the measured; rms over plates and segments. Beating: the correlation over time
+of predicted and measured power, against about 0 for the energy sum of the phase-locked parts.
+
+| Held out | Order | Leq (rms) | Phase-locked part alone | Beating |
+| --- | --- | --- | --- | --- |
+| The plates on the other side of the line | 2 | −1.02 (2.44) dB | −5.72 (6.20) dB | 0.38 |
+| | 4 | +0.49 (2.26) | −19.6 (20.3) | 0.01 |
+| Each height, from the other heights | 2 | −0.01 (1.98) | −4.66 (5.16) | 0.54 |
+| | 4 | +0.93 (2.36) | −23.0 (23.3) | 0.00 |
+| Each day, from the other (its timing offset fitted) | 2 | −0.47 (2.44) | −3.80 (4.50) | 0.56 |
+| | 4 | +0.06 (2.52) | −20.7 (21.3) | −0.04 |
+
+- **NICEOPS reproduces the fit's own prediction**: correlation 0.97 of the levels over time at
+  blade passage (0.81-0.84 at order 4, whose level barely moves), means within 0.07 dB.
+- **Blade passage is about half phase-locked** (37 % incoherent on one day, 65 % on the other),
+  and its interference between rotors is predicted held out; order 4 is about 97 % incoherent: 21.5 dB
+  above the extraction noise, but a fixed directivity per rotor explains 2 % of it in sample (14 %
+  with every azimuthal order), so it is carried in energy.
+- **Synchrophasing** (`tones/phase_optimum.py`): with the rotors locked at one speed, the quietest
+  relative azimuths lower blade passage over a 200 m square footprint under a 24 m hover by
+  9.90 dB in free field (the loudest raise it 3.53 dB), each certified the global optimum by a
+  semidefinite bound to 0.000 dB. The incoherent part does not lock: with it the benefit is
+  1.40 dB at most.
+
 ### Database screen
 
 The load-time screen ([MANUAL](MANUAL.md#screening-a-database)) on the databases shipped when it was

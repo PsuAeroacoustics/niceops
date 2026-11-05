@@ -274,6 +274,21 @@ the sources only in format 2. Things to keep:
   broadband` with tones unless `DatabaseLoadOptions::tones_evaluated`, and warns for `total`.
   Putting the refusal in the constructor covers every other tool that loads a database; `run()`
   sets the flag.
+- **A replayed rotor turns at its logged rate** (`--rotor_history`, `ToneEvaluator::Group::replayed`):
+  the replayed sources are one coherent group exempt from the shared-rate check a sync group
+  takes, since free-running rotors differ by 0.2-2 %; each takes its own logged azimuth and rate
+  at every state. Test: `replayed rotors interfere at their logged azimuths, and sound at their
+  logged rates` (its unequal-rate pair).
+- **`tone_speed_exponent` scales both parts of a tone** (`StateTones::amplitude_scales`): the
+  phase-locked pressure by (|Omega_run| / |Omega_db|)^nu and the incoherent part's power by its
+  square. The speed test carries an incoherent part so that dropping its scale fails
+  (`a tone's pressure follows its rotor's speed where the database gives tone_speed_exponent`).
+- **An incoherent part is level only, added in energy per source** (`ToneSource::incoherent_db`):
+  it takes the tone's own arrivals with no directivity phase or azimuth, so its direct and
+  reflected arrivals still interfere, and it is never summed into a sync group. Its -inf is no
+  data and is filled from the neighboring cells, as a tone's is: a writer must give a quiet
+  direction a finite floor. PANAM's measured writer once wrote a non-negative fit's zeros as
+  -inf, and the fill put energy beside them (a 5 dB spike through the off-receiver ground ratio).
 - **Multirotor axes share the helicopter's three slots** (`ConditionAxes`, THEORY 2.1):
   `condition(i)` is (x, z, M_h) there, `blend_at` hands the query to `blend_multirotor`, and the
   helicopter code is untouched, branch for branch, so its blends are the old ones to the bit.
