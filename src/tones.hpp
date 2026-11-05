@@ -160,6 +160,8 @@ public:
         // A run-time group (--sync_group), whose shaft rates are held at their
         // mean.
         bool forced = false;
+        // The --rotor_history group: each member at its own logged rate.
+        bool replayed = false;
     };
 
     // `band_gains` are the run's (A-weighting and band limits, a_weighting_gains);

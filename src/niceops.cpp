@@ -3019,7 +3019,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             std::string members;
             for (const std::size_t s : g.sources)
                 members += (members.empty() ? "" : ", ") + database.tone_sources()[s].tag;
-            log("Tones: ", g.forced ? "run-time group " : g.sources.size() > 1 ? "sync group " : "source ", g.name,
+            log("Tones: ", g.replayed ? "replayed group " : g.forced ? "run-time group "
+                    : g.sources.size() > 1 ? "sync group " : "source ", g.name,
                     g.sources.size() > 1 ? " (" + members + ")" : std::string(), g.coherent ? ", coherent" : ", in energy",
                     ".");
         }

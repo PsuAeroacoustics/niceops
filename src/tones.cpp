@@ -191,6 +191,7 @@ ToneEvaluator::ToneEvaluator(const Database& database, const ToneRunOptions& opt
         Group g;
         g.name = "rotor history";
         g.coherent = coherent;
+        g.replayed = true;
         for (const auto& [tag, history] : options.rotor_history)
         {
             const auto it = index.find(tag);
@@ -273,7 +274,7 @@ ToneEvaluator::ToneEvaluator(const Database& database, const ToneRunOptions& opt
     const std::size_t n_conditions = database.condition_count();
     for (const auto& g : groups_)
     {
-        if (g.forced || g.sources.size() < 2)
+        if (g.forced || g.replayed || g.sources.size() < 2)
             continue;
         for (std::size_t i = 0; i < n_conditions; i++)
         {

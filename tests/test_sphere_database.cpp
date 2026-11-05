@@ -3267,6 +3267,13 @@ TEST_CASE("replayed rotors interfere at their logged azimuths, and sound at thei
     const double null
             = ToneRun("niceops_tones_history_null.nod", omni_tones({"front", "rear"}, ""), apart).power(observer);
     REQUIRE(null < 1e-12 * one);
+    // Rotors the database has at different rates (a measured multirotor's) replay together.
+    auto unequal = omni_tones({"front", "rear"}, "");
+    unequal.shaft_rates = {rate, -1.1 * rate};
+    ToneRunOptions replayed;
+    replayed.rotor_history = {{"front", history(0.0, rate)}, {"rear", history(0.0, rate)}};
+    const double unequal_pair = ToneRun("niceops_tones_history_unequal.nod", unequal, replayed).power(observer);
+    REQUIRE(std::fabs(10.0 * std::log10(unequal_pair / one) - 20.0 * std::log10(2.0)) < 1e-9);
     // A rotor logged at another rate sounds at it: shaft order 4 of 2 pi 100 rad/s is 400 Hz.
     ToneRunOptions faster;
     faster.rotor_history = {{"front", history(0.0, 2.0 * pi * 100.0)}};
