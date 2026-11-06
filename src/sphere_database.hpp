@@ -99,6 +99,14 @@ enum class SphereFrameKind
 
 // "level" or "flight_path"; nullopt for anything else.
 std::optional<SphereFrameKind> parse_sphere_frame(const std::string& name);
+
+// Whether the database file at `path` records its whole vehicle at the root
+// (main_rotor_radius_meters, main_rotor_tip_speed_meters_per_sec,
+// vehicle_weight_newtons and air_density_kg_m3, all finite), read without
+// loading it: what a run given no -v takes in place of the default vehicle file
+// (database_vehicle, state_condition.hpp), for the manifest before any database
+// is loaded.
+bool database_records_vehicle(const std::string& path);
 const char* to_string(SphereFrameKind frame);
 
 // Whether a database's band spectrum (and dBA) already holds its pure tones

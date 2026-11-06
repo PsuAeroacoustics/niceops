@@ -444,6 +444,22 @@ const char* to_string(ConditionOrigin origin)
     return "measured";
 }
 
+bool database_records_vehicle(const std::string& path)
+{
+    int ncid = 0;
+    if (nc_open(path.c_str(), NC_NOWRITE, &ncid) != NC_NOERR)
+        return false;
+    bool all = true;
+    for (const char* name : {"main_rotor_radius_meters", "main_rotor_tip_speed_meters_per_sec",
+                 "vehicle_weight_newtons", "air_density_kg_m3"})
+    {
+        double value = std::numeric_limits<double>::quiet_NaN();
+        all = all && get_scalar(ncid, name, &value, true) == NC_NOERR && std::isfinite(value);
+    }
+    nc_close(ncid);
+    return all;
+}
+
 std::optional<SphereFrameKind> parse_sphere_frame(const std::string& name)
 {
     if (name == "level")

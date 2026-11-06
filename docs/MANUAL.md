@@ -100,7 +100,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `-t`, `--trajectoryfile` | Trajectory CSV ([Trajectories](#trajectories)). Repeat for several flight paths. Default the demo track. |
 | `--operations` | A CSV of operations, one row per track flown, with its count and optionally its database, vehicle, clock, lateral offset and air ([An operations file](#an-operations-file)). Replaces `-t`. |
 | `-d`, `--database` | netCDF noise database. Once, or once per trajectory. Default `databases/S-76D_load_factors.nod`. |
-| `-v`, `--vehicle` | JSON vehicle file ([Vehicle file](#vehicle-file)). Once, or once per trajectory. Without it, the database's own vehicle where it records all of it (rotor radius and tip speed, weight and air density, as panam writes them), with the atmosphere it was built in; else `databases/S-76D.json`. |
+| `-v`, `--vehicle` | JSON vehicle file ([Vehicle file](#vehicle-file)). Once, or once per trajectory. Without it, the database's own vehicle where it records all of it (rotor radius and tip speed, weight and air density, as panam writes them), with the temperature and pressure it was built in but not its humidity (the spectral path then needs `--humidity`); else `databases/S-76D.json`. A recorded vehicle that is not plausible is refused. A multirotor database records no main rotor, so it needs `-v`. |
 | `-o`, `--output` | SEL output file, once per trajectory. Default `integrated/197421_LAE.csv`. With several tracks and one name (or none), each is named after its track. |
 | `-b`, `--observer` | Scattered observer file ([Observers](#observers)); replaces the default grid. |
 | `--grid` | Observer grid bounds: `xmin xmax ymin ymax`; the grid starts at each minimum and stops short of each maximum. Default −1500 … 1475 m in 25 m steps (120 values per axis); −4921.26 … 4839.24 ft. |
@@ -1696,7 +1696,7 @@ such as `count (per year)`, is refused, and `wind_direction` may say only `(deg)
 | `count` | Operations per average day. Any positive number, fractions included. | 1. |
 | `day`, `evening`, `night` | Operations per average day in each period, in place of `count` and `local_time` (below). Each zero or more, and a row's three add up to more than zero. | 0. |
 | `local_time` | `HH:MM` or `HH:MM:SS` (00:00 to 23:59:59), local time by `--utc_offset`, at the track's first state. It replaces any clock the track carries. | The track's own clock, or `--start_utc`. |
-| `database`, `vehicle` | As `-d` and `-v`. | The one `-d` or `-v` given; refused without it. |
+| `database`, `vehicle` | As `-d` and `-v`. | The one `-d` or `-v` given. Without `-d`, refused. Without `-v`, the row's database's own vehicle where it records one, else refused. |
 | `output` | This row's SEL file, as `-o`. | Named after the row (below). |
 | `atmosphere` | As `--atmosphere`. | See the air, below. |
 | `wind_speed`, `wind_direction`, `wind_height` | Joined as `--wind`'s `speed,direction[,height]`: the speed names its unit (`8kt`), the direction is a compass bearing, the height is in `--units`. The first two go together. | See the air, below. |
@@ -1934,7 +1934,8 @@ refused:
   reports the states the database would clamp on each axis (advance ratio, path angle, C<sub>T</sub>)
   or hold at `--max_load_factor` (default 2 g, as in niceops), with the stretches of time they
   span, so a procedure can be kept inside its database before any acoustics run. `--no-qsam`
-  matches niceops's `--no-qsam`. A vehicle file that disagrees with the database is refused as
+  matches niceops's `--no-qsam`. Without `--vehicle` it takes the vehicle the database records,
+  as niceops does without `-v`. A vehicle file that disagrees with the database is refused as
   niceops refuses it, and `--accept_vehicle_mismatch` maps the states anyway. The procedure is calm, so the database's speed reference makes
   no difference. How much of the footprint those states carry is what `--provenance_file`
   reports.

@@ -3,6 +3,7 @@
 #include <cmath>
 #include <string>
 
+#include "atmosphere.hpp"
 #include "sphere_database.hpp"
 #include "trajectory.hpp"
 #include "util/constants.hpp"
@@ -144,22 +145,35 @@ void check_vehicle(const dimensional_data& vehicle, const Database& database, co
     }
 }
 
-std::optional<dimensional_data> database_vehicle(const Database& database)
+std::optional<dimensional_data> database_vehicle(const Database& database, const std::string& name)
 {
-    if (!(std::isfinite(database.rotor_radius()) && std::isfinite(database.tip_speed())
-                && std::isfinite(database.vehicle_weight()) && std::isfinite(database.air_density())))
+    const double radius = database.rotor_radius(), tip_speed = database.tip_speed(),
+                 weight = database.vehicle_weight(), rho = database.air_density();
+    if (!(std::isfinite(radius) && std::isfinite(tip_speed) && std::isfinite(weight) && std::isfinite(rho)))
         return std::nullopt;
+    // What it records has to be a vehicle, as a vehicle file's numbers do: a zero
+    // or negative value would make every CT and mu infinite or NaN.
+    if (!(radius > 0.0 && tip_speed > 0.0 && weight > 0.0 && rho > 0.0))
+    {
+        input_error("Database ", name, " records its vehicle at the root, but not one that can fly: rotor radius ",
+                radius, " m, tip speed ", tip_speed, " m/s, weight ", weight, " N, air density ", rho,
+                " kg/m^3. Give a vehicle file (-v).");
+    }
     dimensional_data vehicle;
-    vehicle.radius = database.rotor_radius();
-    vehicle.tip_speed = database.tip_speed();
-    vehicle.weight = database.vehicle_weight();
-    vehicle.rho = database.air_density();
+    vehicle.radius = radius;
+    vehicle.tip_speed = tip_speed;
+    vehicle.weight = weight;
+    vehicle.rho = rho;
+    // The temperature and pressure the database was built in go with its
+    // density, as a vehicle file's Atmosphere section does.  Its humidity does
+    // not: that is the sphere-build day's, and the spectral path refuses to
+    // assume a humidity nobody chose for this prediction (--humidity, or a
+    // vehicle file that gives one).
     if (const auto& built = database.build_atmosphere())
     {
         vehicle.atmosphere.temperature = built->temperature_kelvin;
         vehicle.atmosphere.pressure = built->pressure_kpa;
-        vehicle.atmosphere.relative_humidity = built->relative_humidity_percent;
-        vehicle.temperature_given = vehicle.pressure_given = vehicle.humidity_given = true;
+        vehicle.temperature_given = vehicle.pressure_given = true;
     }
     else
     {
@@ -167,7 +181,37 @@ std::optional<dimensional_data> database_vehicle(const Database& database)
         constexpr double dry_air_gas_constant = 287.05; // J/(kg K)
         vehicle.atmosphere.pressure = vehicle.rho * dry_air_gas_constant * vehicle.atmosphere.temperature / 1000.0;
     }
+    // As configure_vehicle checks a file's air (a density in the wrong unit
+    // shows up in the pressure it implies).
+    for (const auto& problem :
+            {temperature_problem(vehicle.atmosphere.temperature), pressure_problem(vehicle.atmosphere.pressure)})
+    {
+        if (!problem.empty())
+            input_error("Database ", name, ", the vehicle it records at the root: ", problem);
+    }
+    // A density in the wrong unit (g/m^3, or lb/ft^3) would put every CT off
+    // by orders of magnitude; air anywhere a rotorcraft flies is 0.3 to 2 kg/m^3.
+    // (PANAM records the vehicle file's density, which need not be the build
+    // atmosphere's, so the two are not compared.)
+    if (!(vehicle.rho >= 0.3 && vehicle.rho <= 2.0))
+        input_error("Database ", name, " records an air density of ", vehicle.rho,
+                " kg/m^3 at the root, which is not air (0.3 to 2 kg/m^3); is it in another unit? "
+                "Give a vehicle file (-v).");
     return vehicle;
+}
+
+VehicleChoice choose_vehicle(const Database& database, const std::string& database_name,
+        const std::string& vehicle_file, bool vehicle_given)
+{
+    if (!vehicle_given)
+    {
+        if (auto vehicle = database_vehicle(database, database_name))
+            return {*vehicle, database_name + " (its root vehicle)", true};
+        if (vehicle_file.empty())
+            input_error("No vehicle file was given (-v, --vehicle, or an operations file's vehicle column), and ",
+                    database_name, " records no vehicle at its root: give one.");
+    }
+    return {configure_vehicle(vehicle_file), vehicle_file, false};
 }
 
 } // namespace niceops

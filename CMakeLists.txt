@@ -430,6 +430,8 @@ target_link_libraries(check_band_frames niceops_core)
 # Format 2 databases for the tone runs (tones_*): pure-tone rotors added to a spectral database.
 add_executable(make_tone_database tests/make_tone_database.cpp)
 target_link_libraries(make_tone_database niceops_core)
+add_executable(make_vehicle_database tests/make_vehicle_database.cpp)
+target_link_libraries(make_vehicle_database niceops_core)
 # What --raster_file wrote, against the grid files the same run wrote.
 add_executable(check_raster tests/check_raster.cpp)
 target_link_libraries(check_raster niceops_core)
@@ -805,7 +807,35 @@ set_tests_properties(procedure_check_agrees_with_niceops PROPERTIES FIXTURES_REQ
 add_test(NAME procedure_check_refuses_wrong_vehicle COMMAND niceops_procedure tests/data/procedure_envelope.json -o integrated/procedure_envelope_s76.csv --check databases/B407_fixed_load_factor.nod --vehicle databases/S-76D.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(procedure_check_refuses_wrong_vehicle PROPERTIES PASS_REGULAR_EXPRESSION "Vehicle main rotor tip speed disagrees: databases/S-76D.json gives 220 m/s.*so the run is refused")
 add_test(NAME procedure_check_needs_vehicle COMMAND niceops_procedure tests/data/procedure_envelope.json -o integrated/procedure_envelope_nov.csv --check databases/B407_fixed_load_factor.nod WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(procedure_check_needs_vehicle PROPERTIES PASS_REGULAR_EXPRESSION "--check maps the states through the vehicle's rotor: give --vehicle")
+set_tests_properties(procedure_check_needs_vehicle PROPERTIES PASS_REGULAR_EXPRESSION "No vehicle file was given.*records no vehicle at its root: give one")
+# A database that records its whole vehicle at the root supplies it to a run given no -v
+# (choose_vehicle): the S-76D's own numbers give the -v run's footprint to the bit (at one
+# --temperature, since the database's air is its own), a lighter
+# recorded weight moves it, the manifest names the database as the vehicle, and
+# niceops_procedure --check takes the same vehicle.
+add_test(NAME root_vehicle_database COMMAND make_vehicle_database databases/S-76D_load_factors.nod integrated/root_vehicle.nod 6.705 220.0 49033.25 1.225 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME root_vehicle_light_database COMMAND make_vehicle_database databases/S-76D_load_factors.nod integrated/root_vehicle_light.nod 6.705 220.0 39226.6 1.225 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(root_vehicle_database root_vehicle_light_database PROPERTIES FIXTURES_SETUP root_vehicle_databases)
+set(ROOT_VEHICLE_RUN --no-spectral --no-ground_effect --temperature 300.71 --gridstep 4000 -L warn)
+add_test(NAME root_vehicle_run COMMAND niceops -d integrated/root_vehicle.nod ${ROOT_VEHICLE_RUN} -o integrated/root_vehicle.csv -S integrated/root_vehicle_state.csv --manifest integrated/root_vehicle_manifest.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME root_vehicle_file_run COMMAND niceops -d integrated/root_vehicle.nod -v databases/S-76D.json ${ROOT_VEHICLE_RUN} -o integrated/root_vehicle_file.csv -S integrated/root_vehicle_file_state.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME root_vehicle_light_run COMMAND niceops -d integrated/root_vehicle_light.nod ${ROOT_VEHICLE_RUN} -o integrated/root_vehicle_light.csv -S integrated/root_vehicle_light_state.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(root_vehicle_run root_vehicle_file_run root_vehicle_light_run PROPERTIES FIXTURES_REQUIRED root_vehicle_databases FIXTURES_SETUP root_vehicle_runs)
+add_test(NAME root_vehicle_is_the_file COMMAND ${CMAKE_COMMAND} -E compare_files integrated/root_vehicle.csv integrated/root_vehicle_file.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME root_vehicle_weight_moves_footprint COMMAND golden_compare integrated/root_vehicle_light.csv integrated/root_vehicle.csv 0.001 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME root_vehicle_in_manifest COMMAND ${CMAKE_COMMAND} -E cat integrated/root_vehicle_manifest.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(root_vehicle_is_the_file root_vehicle_weight_moves_footprint root_vehicle_in_manifest PROPERTIES FIXTURES_REQUIRED root_vehicle_runs)
+set_tests_properties(root_vehicle_weight_moves_footprint PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+set_tests_properties(root_vehicle_in_manifest PROPERTIES PASS_REGULAR_EXPRESSION "vehicle \\(database root\\)")
+# An operations row with no vehicle and no -v takes its database's, and is refused if it records none.
+add_test(NAME root_vehicle_operations_run COMMAND niceops -d integrated/root_vehicle.nod --operations tests/data/operations/count1.csv ${ROOT_VEHICLE_RUN} -o integrated/root_vehicle_ops.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(root_vehicle_operations_run PROPERTIES FIXTURES_REQUIRED root_vehicle_databases FIXTURES_SETUP root_vehicle_ops_run)
+add_test(NAME root_vehicle_operations_is_the_run COMMAND ${CMAKE_COMMAND} -E compare_files integrated/root_vehicle_ops.csv integrated/root_vehicle.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(root_vehicle_operations_is_the_run PROPERTIES FIXTURES_REQUIRED "root_vehicle_ops_run;root_vehicle_runs")
+add_test(NAME operations_need_a_vehicle COMMAND niceops -d databases/S-76D_load_factors.nod --operations tests/data/operations/count1.csv ${ROOT_VEHICLE_RUN} -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_need_a_vehicle PROPERTIES PASS_REGULAR_EXPRESSION "records no vehicle at its root: give one")
+add_test(NAME root_vehicle_procedure_check COMMAND niceops_procedure tests/data/procedure_envelope.json -o integrated/procedure_root_vehicle.csv --check integrated/root_vehicle.nod WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(root_vehicle_procedure_check PROPERTIES FIXTURES_REQUIRED root_vehicle_databases PASS_REGULAR_EXPRESSION "of 301 states")
 add_test(NAME procedure_check_needs_a_positive_load_factor COMMAND niceops_procedure tests/data/procedure_envelope.json -o integrated/procedure_envelope_zero.csv --check databases/B407_fixed_load_factor.nod --vehicle databases/B407.json --max_load_factor 0 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(procedure_check_needs_a_positive_load_factor PROPERTIES PASS_REGULAR_EXPRESSION "--max_load_factor: Value 0 not in range")
 add_test(NAME procedure_refuses_going_underground COMMAND niceops_procedure tests/data/procedure_underground.json -o integrated/procedure_underground.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

@@ -530,8 +530,10 @@ TEST_CASE("a database records its sphere frame, and an unknown one is refused", 
 }
 
 // The vehicle a run takes without -v: the database's own, when its root records
-// all of it (panam writes the rotor, the weight and, now, the air density the
-// weight coefficient was formed with), with the atmosphere it was built in.
+// all of it (panam writes the rotor, the weight and the air density the weight
+// coefficient was formed with), with the temperature and pressure it was built
+// in but not its humidity.  niceops, its exports and niceops_procedure --check
+// all take it through choose_vehicle.
 TEST_CASE("a database that records its whole vehicle supplies it", "[sphere_database]")
 {
     const auto sphere = test::demo_database().interpolate_sphere(0.15, -4.0, 0.006);
@@ -550,8 +552,17 @@ TEST_CASE("a database that records its whole vehicle supplies it", "[sphere_data
     put("main_rotor_radius_meters", 5.334);
     put("main_rotor_tip_speed_meters_per_sec", 230.7);
     put("vehicle_weight_newtons", 22064.9625);
-    // Without the density, no vehicle: the default vehicle file stands.
-    REQUIRE(!database_vehicle(Database(path)));
+    // Without the density, no vehicle: the default vehicle file stands, and an
+    // operations row with none (an empty file) is refused.
+    REQUIRE(!database_vehicle(Database(path), path));
+    REQUIRE(!database_records_vehicle(path));
+    {
+        const auto chosen = choose_vehicle(Database(path), path, "databases/S-76D.json", false);
+        REQUIRE((!chosen.from_database && chosen.source == "databases/S-76D.json"));
+    }
+    REQUIRE_THROWS_WITH(choose_vehicle(Database(path), path, "", false),
+            Catch::Matchers::ContainsSubstring("records no vehicle at its root"));
+
     put("air_density_kg_m3", 1.07);
     {
         int ncid = 0;
@@ -562,17 +573,43 @@ TEST_CASE("a database that records its whole vehicle supplies it", "[sphere_data
             REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, name, NC_DOUBLE, 1, &value) == NC_NOERR);
         REQUIRE(nc_close(ncid) == NC_NOERR);
     }
-    const auto vehicle = database_vehicle(Database(path));
+    REQUIRE(database_records_vehicle(path));
+    const auto vehicle = database_vehicle(Database(path), path);
     REQUIRE(vehicle);
     REQUIRE(vehicle->radius == 5.334);
     REQUIRE(vehicle->tip_speed == 230.7);
     REQUIRE(vehicle->weight == 22064.9625);
     REQUIRE(vehicle->rho == 1.07);
-    // The atmosphere the database was built in, as a vehicle file's would be.
     REQUIRE(vehicle->atmosphere.temperature == 288.15);
     REQUIRE(vehicle->atmosphere.pressure == 99.5);
-    REQUIRE(vehicle->atmosphere.relative_humidity == 70.0);
-    REQUIRE((vehicle->temperature_given && vehicle->pressure_given && vehicle->humidity_given));
+    REQUIRE((vehicle->temperature_given && vehicle->pressure_given));
+    // The build day's humidity is not this prediction's: left unset, so the
+    // spectral path refuses to assume it.
+    REQUIRE(!vehicle->humidity_given);
+    REQUIRE(vehicle->atmosphere.relative_humidity == dimensional_data {}.atmosphere.relative_humidity);
+
+    // Without -v the database's; with -v the file, whatever the database says.
+    const auto own = choose_vehicle(Database(path), path, "databases/S-76D.json", false);
+    REQUIRE((own.from_database && own.vehicle.rho == 1.07));
+    REQUIRE(own.source == path + " (its root vehicle)");
+    const auto given = choose_vehicle(Database(path), path, "databases/S-76D.json", true);
+    REQUIRE((!given.from_database && given.source == "databases/S-76D.json" && given.vehicle.rho != 1.07));
+
+    // A recorded vehicle that cannot be one is refused, not used or passed over.
+    put("air_density_kg_m3", 0.0);
+    REQUIRE_THROWS_WITH(database_vehicle(Database(path), path), Catch::Matchers::ContainsSubstring("not one that can fly"));
+    put("air_density_kg_m3", 1070.0);        // g/m^3
+    REQUIRE_THROWS_WITH(database_vehicle(Database(path), path), Catch::Matchers::ContainsSubstring("which is not air"));
+    put("air_density_kg_m3", 1.07);
+    {
+        int ncid = 0;
+        REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+        REQUIRE(nc_redef(ncid) == NC_NOERR);
+        const double pascals = 99500.0;        // kPa written as Pa
+        REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, "build_pressure_kPa", NC_DOUBLE, 1, &pascals) == NC_NOERR);
+        REQUIRE(nc_close(ncid) == NC_NOERR);
+    }
+    REQUIRE_THROWS_WITH(database_vehicle(Database(path), path), Catch::Matchers::ContainsSubstring("the vehicle it records"));
     std::filesystem::remove(path);
 }
 

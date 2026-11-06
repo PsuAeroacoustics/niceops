@@ -12,6 +12,7 @@
 #include <string>
 
 #include "condition_selection.hpp"
+#include "trajectory.hpp"
 
 namespace niceops {
 
@@ -104,9 +105,24 @@ void check_vehicle(const dimensional_data& vehicle, const Database& database, co
         bool accept_mismatch);
 
 // The vehicle a database records at its root (rotor radius and tip speed,
-// weight, and the air density its weight coefficient was formed with), with
-// the atmosphere it was built in; nullopt unless it records all four.  A run
-// given no -v takes it in place of the default vehicle file.
-std::optional<dimensional_data> database_vehicle(const Database& database);
+// weight, and the air density its weight coefficient was formed with), with the
+// temperature and pressure it was built in but not its humidity; nullopt unless
+// it records all four.  A database that records them implausibly is refused,
+// naming `name`.
+std::optional<dimensional_data> database_vehicle(const Database& database, const std::string& name);
+
+// The vehicle a run, an export or niceops_procedure --check takes: the vehicle
+// file when one was given; else the database's root vehicle where it records
+// one; else `vehicle_file` (the default), and refused if that is empty (an
+// operations row with no vehicle).  `source` names it for logs, refusals and
+// the manifest.
+struct VehicleChoice
+{
+    dimensional_data vehicle;
+    std::string source;
+    bool from_database = false;
+};
+VehicleChoice choose_vehicle(const Database& database, const std::string& database_name,
+        const std::string& vehicle_file, bool vehicle_given);
 
 } // namespace niceops
