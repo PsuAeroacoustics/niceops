@@ -3174,8 +3174,7 @@ than for SEL.
 - **Pure tones off the straight, level-ground path, and the spheres' near field.** Tones over
   plates, tables, terrain, screening, refraction and urban tables take the band path's
   correction (§4.4), and `--buildings` is refused with tones. The spheres' near field is
-  corrected to first order only (§4.4): the $O(R^{-2})$ terms, and an axial null that the
-  first-order term cannot fill, remain.
+  corrected to first order only (§4.4): the $O(R^{-2})$ terms remain.
 - **Buildings**, except through an urban table at its microphones or `--buildings` (§6.5). The
   rays among buildings leave out what §6.5 lists ("What the rays leave out"); they are straight,
   in uniform air over a level floor, so `--buildings` is refused with `--refraction`,
