@@ -18,7 +18,8 @@ the code, start with the [README](../README.md); developers start at
 - [Noise databases](#noise-databases): [Source coherence](#source-coherence) · [Shipped databases](#shipped-databases) · [Spectra](#spectra) · [Screening a database](#screening-a-database)
   · [Choosing spheres: blending and `--blend`](#choosing-spheres-blending-and---blend) · [The
   load-factor law below 1 g](#the-load-factor-law-below-1-g) · [Pure-tone sources (format
-  2)](#pure-tone-sources-format-2) · [Speed reference](#speed-reference) · [The density in
+  2)](#pure-tone-sources-format-2) · [Multirotor databases](#multirotor-databases) · [Speed
+  reference](#speed-reference) · [The density in
   C<sub>T</sub>](#the-density-in-ct) · [The sphere's nose](#the-spheres-nose) · [Reading the sphere's
   angles](#reading-the-spheres-angles)
 - [Propagation](#propagation): [Broadband and spectral paths](#broadband-and-spectral-paths) ·
@@ -300,8 +301,10 @@ WGS84 track's `--path_smoothing`, and after `--trim`): its altitude datum and `-
 disagree, or an AC track's z is not height above the ground. A `--trim` that leaves fewer than
 two states is refused, naming where the track's crop ends. An observer file must keep one
 width and yield at least one observer. An `--atmosphere` file must be finite, reach every state,
-and name its wind units. A database must vary in μ, γ and (unless `fixed_load_factor`)
-C<sub>T</sub>, with no two spheres at one condition, and no group may hold the netCDF fill value
+and name its wind units. A helicopter database must vary in μ, γ and (unless `fixed_load_factor`)
+C<sub>T</sub>, a multirotor one in at least one of its axes ([Multirotor
+databases](#multirotor-databases)), with no two spheres at one condition, and no group may hold
+the netCDF fill value
 (a group the builder never wrote). A format 2 database's pure-tone sources are checked as
 [Pure-tone sources](#pure-tone-sources-format-2) describes. Air must be plausible: a temperature in °C,
 a pressure in Pa or a humidity fraction is refused. The vehicle file must agree with the
@@ -516,13 +519,11 @@ path angle, so the export is pitched nose-up by the condition's flight path angl
 level sphere, and records `sphere_frame = flight_path`: an AAM deck flown at AOA 0 then hears
 what NICEOPS hears. A database is level unless it records `sphere_frame = flight_path` (WOPWOP's
 predicted spheres, kept in their own frame); NICEOPS then reads it in that frame, its nose the
-velocity climb included, and exports it unrotated. Any other `sphere_frame` is refused. AAM's
+velocity, climb included, and exports it unrotated. Any other `sphere_frame` is refused. AAM's
 levels at the sphere radius carry the absorption out to it, so a lossless database
 (`sphere_levels_lossless = 1`) is exported with α(f) times the radius taken off each band, in the
 vehicle file's air under the first `--temperature`, `--pressure` and `--humidity` given; the log
 names that air.
-A database that records `sphere_levels_lossless = 1` (predicted spheres, with no absorption
-between the hub and the sphere) is absorbed from the hub rather than from the sphere's surface.
 Third-octave bands (10 Hz to 10 kHz, nominal or exact centers) are written as AAM's broadband
 sphere type (`BB`), any other band set as narrowband (`NB`). A third-octave database that reaches
 past 10 kHz (or below 10 Hz) is still `BB`: the bands outside are left out of the file, with a
@@ -614,7 +615,7 @@ sixth. It acts where a run turns a rotor at a speed the database does not, under
 or in a `--sync_group` at the members' mean rate; the frequencies follow the run's rate either way.
 
 A source may also carry, beside each tone's amplitude and phase, an `incoherent_amplitude` over the
-same grid: the level, dB re 20 uPa at the sphere radius, of what the rotor radiates at that shaft
+same grid: the level, dB re 20 µPa at the sphere radius, of what the rotor radiates at that shaft
 order without a stable phase (from unsteady loading, say). As in the tones' own grids, -inf is no
 data, filled from the neighboring cells: give a quiet direction a low finite level. The run adds it
 in energy, each rotor on its own whatever its sync group, with the tone's own frequency, ground
@@ -622,8 +623,8 @@ and speed scaling. A source gives it at every condition or at none.
 
 | Option | What it does |
 | --- | --- |
-| `--rotor_azimuth tag=deg,...` | Sets each named rotor's azimuth, in degrees in its own sense of rotation: the synchrophasing angle. Repeatable. Default: the azimuth each rotor's phases were locked to (its `azimuth`, which panam's PT build records), which reproduces the phasing it was predicted with; without one, the stored phases as they are. |
-| `--rotor_history FILE` | Replays rotors from a log: a CSV of `time` (s, the trajectory's) and, for each rotor, `<tag>_azimuth` (degrees in its own sense of rotation, wrapped or not) and `<tag>_rate` (rad/s, either sign). The named rotors add coherently with each other, each at its logged azimuth and at its logged shaft rate's frequencies at every state: free-running rotors heard with the interference they had. Every state must lie within the log; a rotor cannot be both replayed and set by `--rotor_azimuth` or grouped by `--sync_group`. Samples must be close enough that each step turns less than half a turn more or less than the rate says. |
+| `--rotor_azimuth tag=deg,...` | Sets each named rotor's azimuth, in degrees in its own sense of rotation: the synchrophasing angle. Repeatable. Default: the azimuth each rotor's phases were locked to (the `azimuth` the database records for it), which reproduces the phasing it was predicted with; without one, the stored phases as they are. |
+| `--rotor_history FILE` | Replays rotors from a log: a CSV of `time` (s, the trajectory's) and, for each rotor, `<tag>_azimuth` (degrees in its own sense of rotation, wrapped or not) and `<tag>_rate` (rad/s, either sign). The named rotors add coherently with each other (in energy under `--tone_coherence energy`), each at its logged azimuth and at its logged shaft rate's frequencies at every state: free-running rotors heard with the interference they had. Every state must lie within the log; a rotor cannot be both replayed and set by `--rotor_azimuth` or grouped by `--sync_group`. Samples must be close enough that each step turns less than half a turn more or less than the rate says. Only rotors whose phases are tied to their azimuth can be replayed. |
 | `--sync_group tag,tag,...` | Adds the named rotors coherently, replacing their database groups, at their mean shaft rate (logged). Repeatable, one group each. Only rotors whose phases are tied to their azimuth can join one. |
 | `--tone_coherence coherent\|energy` | `energy` adds every rotor in energy, each keeping its own ground interference: the level with no synchrophasing. Default `coherent`. |
 | `--tone_ground frequency\|band` | `frequency` (default) reflects each tone at its own frequency where the path allows; `band` applies the band model's correction to free-field tones. |
@@ -651,10 +652,13 @@ when they pass a tenth of all. It does not fill a rotor's axial null directly ov
 the far field alone.
 
 **Limits.** A tone run evaluates every state (the quick peak search covers the bands only), so it
-is slower than the same run without tones. The near field is corrected to first order only. Refused, naming why: `--no-spectral`, `--db_cutoff`, `--buildings` and `--gpu`,
+is slower than the same run without tones. The near field is corrected to first order only.
+
+Refused, naming why: `--no-spectral`, `--db_cutoff`, `--buildings` and `--gpu`,
 `--export_sphere` and `--export_aam` (which would leave the tones out), a sync group whose rotors
-turn at different rates, a `--sync_group` or `--rotor_azimuth` naming a rotor the database does
-not carry, and a `--sync_group` member whose phases are not tied to its azimuth.
+turn at different rates, a `--sync_group`, `--rotor_azimuth` or `--rotor_history` naming a rotor
+the database does not carry, and a `--sync_group` or `--rotor_history` rotor whose phases are not
+tied to its azimuth.
 
 The loader refuses a source missing from any condition, a tone that is not a whole shaft order of
 its source's shaft rate, a rotor whose sense of rotation changes between conditions, a source
@@ -771,7 +775,9 @@ upper half, a direction above the tip-path plane reads its mirror image below.
 ### Broadband and spectral paths
 
 The sphere gives the level at its surface, radius R<sub>s</sub>, and it is carried over the range
-r ≥ R<sub>s</sub> to the microphone. The **broadband** path (a database without spectra, or
+r ≥ R<sub>s</sub> to the microphone. A database that records `sphere_levels_lossless = 1` (predicted
+spheres, with no absorption between the hub and the sphere) is absorbed from the hub rather than
+from the sphere's surface. The **broadband** path (a database without spectra, or
 `--no-spectral`) applies spherical spreading and the database's EAA, its A-weighted attenuation
 per 1000 m; no ground, atmosphere or refraction model applies. The **spectral** path spreads each
 band the same way, absorbs it at its own ISO 9613-1 coefficient, applies the ground, receiver,
@@ -1862,7 +1868,9 @@ The build also makes tools for building tracks (`niceops_procedure`), profiles
 (`niceops_build_atmosphere`) and tables (`niceops_propagation_table`, `niceops_urban_table`), for
 the field among buildings (`niceops_point_field`, and `niceops_fdtd_field` as its full-wave
 reference), and for checking the propagation models (`niceops_pe_compare`, `niceops_benchmark`).
-They share the `--units` convention (feet by default) and the profile format.
+They share the `--units` convention (feet by default) and the profile format. Only `niceops`
+evaluates pure tones: the others refuse a `band_content = broadband` tone database, and warn that a
+`total` one runs on its bands alone ([Pure-tone sources](#pure-tone-sources-format-2)).
 
 ### `niceops_procedure`
 

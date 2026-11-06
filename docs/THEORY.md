@@ -131,7 +131,7 @@ in $M_h$: a state off the database's $M_h$ takes its spheres as they are.
 
 ### 2.2 The sphere database
 
-A database (`.nod`, netCDF) holds one sphere per operating condition $(\mu, \gamma, C_T)$. Each
+A database (`.nod`, netCDF) holds one sphere per operating condition $(\mu, \gamma, C_T)$, or a\nmultirotor's $(x, z, M_h)$ (§2.1). Each
 sphere gives the A-weighted level $L_\mathrm{sph}(\phi, \theta)$, an excess-attenuation factor
 $\mathrm{EAA}(\phi, \theta)$, and optionally one-third-octave band levels
 $L_{\mathrm{sph},b}(\phi, \theta)$, all on the sphere of radius $R_s$ around the rotor hub. The
@@ -500,8 +500,8 @@ energy. When the bands already hold the tones (`total`), the bands are used alon
 
 **The source at a state.** Each source's hub, shaft rate $\Omega_r$ and tone frequencies are
 the blend-weighted means of its conditions' (the weights of §2.3); the hub, stored in the sphere
-frame, is placed at $\mathbf{x}_r = \mathbf{x}_c + c_f\,\hat{\mathbf{n}} + c_s\,\hat{\mathbf{s}}
-+ c_u\,\hat{\mathbf{u}}$ about the state's position, with the frame of §2.4. The tones are shaft
+frame, is placed at $\mathbf{x}_r = \mathbf{x}_c + c_f\,\hat{\mathbf{e}} + c_s\,\hat{\mathbf{s}}
++ c_u\,\hat{\mathbf{n}}$ about the state's position, with the frame of §2.4. The tones are shaft
 orders $m$ in the emission frame, $f_e = m\lvert\Omega_r\rvert/2\pi$, so unlike the bands they
 are Doppler-shifted below. $\Omega_r > 0$ is counterclockwise seen from above (about the sphere
 frame's up axis). On a multirotor database (§2.1) each condition stores the rotor's speed ratio
@@ -527,9 +527,9 @@ $f = f_e/D$, $D = 1 - \mathbf{V}\cdot\hat{\mathbf{k}}/c$.
 e^{-ikR}/R$ at reception):
 
 $$
-a = 10^{(L_A(\hat{\mathbf{k}}) - \alpha(f)\,\ell)/20}\, \frac{R_s}{\max(L, R_s)}\,
+a = 10^{(L_A(\hat{\mathbf{k}}) - \alpha(f)\,\ell)/20}\, \frac{R_s}{\max(L, r_0)}\,
   e^{\,i\left(\varphi_A(\hat{\mathbf{k}}) + m\psi_r + 2\pi f_e \delta\right)},
-\qquad \ell = \max(L - R_a,\ R_s [\text{lossless}],\ 0).
+\qquad \ell = \max(L, r_0) - R_a.
 $$
 
 $L_A$ is the tone's level at the sphere radius $R_s$, interpolated in dB over the grid cell and
@@ -548,7 +548,8 @@ $$
 
 At the grid's nodes it is the stored phase. Each tone is unwound only where that makes its phase
 the smoother of the two on the grid (its widest step between neighboring cells within 20 dB of
-its peak), which is the phase the resolution check of §2.2 judges.
+its peak), which is the phase the resolution check judges: a tone whose phase steps more than 90°
+between neighboring cells within 20 dB of its peak is not resolved, and is summed in energy.
 $\psi_r$ is the rotor's azimuth (`--rotor_azimuth`, in its own sense of rotation); by default the
 azimuth its phases were locked to (the source's `azimuth`, the first sphere's), which reproduces
 the phasing it was predicted with, and zero, the stored rotor-locked phase itself, where the
@@ -650,7 +651,7 @@ same cell, weights and unwinding). Each arrival's phasor becomes
 
 $$
 a = \Big(A + \frac{i}{2kR}\,C\Big)\,10^{-\alpha(f)\ell/20}\,\frac{R_s}{R}\,
-  e^{\,i(m\psi_r + 2\pi f_e\delta)}, \qquad R = \max(L, R_s),
+  e^{\,i(m\psi_r + 2\pi f_e\delta)}, \qquad R = \max(L, r_0),
 $$
 
 with the term capped at twice the tone's largest $\lvert A\rvert$ over the sphere, which only a
