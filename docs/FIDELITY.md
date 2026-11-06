@@ -13,7 +13,10 @@ This page keeps three kinds of evidence apart:
 - **Numerical accuracy against a reference solver.** A model is set against an exact solution,
   or against a full-wave parabolic equation (PE). A PE reference is not a measurement.
 - **Accuracy against measurements.** Predictions are scored against the 2017 Noise Abatement
-  flight test ([Data sets](#data-sets)), and one urban case against a published measurement
+  flight test ([Data sets](#data-sets)), the 2019 test at Coyle Field ([The S-76D at Coyle
+  Field](#the-s-76d-at-coyle-field-2019)), the hexacopter's 2023 hovers ([Rotor tones of a
+  hovering hexacopter](#rotor-tones-of-a-hovering-hexacopter-mid-state-2023)), and one urban case
+  against a published measurement
   ([NLR Drone DigiCity](#a-loudspeaker-among-buildings-nlr-drone-digicity)).
 
 The historical grazing-incidence reports in `reports/` record successive hypotheses and
@@ -2371,10 +2374,9 @@ PT build. Harness `tones/`: `wopwop_tandem.py` and `wopwop_flyover.py`.
   200 m, where its first-order phase error is 6.5° at blade passage. What remains close in is the
   overhead axial null, which NICEOPS keeps 35-40 dB deeper than PSU-WOPWOP's direct prediction
   below 150 m (the first-order term fills it by 2 dB), and windows near the null on their way in.
-  Counting every band within 20 dB of its own peak over the pass, as an earlier version of this
-  comparison did, also takes in the receding pass's weak bands at 79-100 Hz (25-30 dB, near the
-  2 s FFT's leakage from the loud tones), where NICEOPS reads 15-27 dB lower: that gave the larger
-  short-range means (6 dB at 150-250 m) this table replaces.
+  Counting every band within 20 dB of its own peak over the pass takes in the receding pass's weak
+  bands at 79-100 Hz (25-30 dB, near the 2 s FFT's leakage from the loud tones), where NICEOPS
+  reads 15-27 dB lower (6 dB at 150-250 m).
 
 ### `--db_cutoff` and SEL
 

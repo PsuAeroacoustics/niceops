@@ -41,7 +41,7 @@ Sources are in `src/`; a name without an extension means its `.cpp` and `.hpp`.
 | Area | Sources | Notes |
 | --- | --- | --- |
 | Command line, the observer loop, metrics; hot loop, SEL window, windowed peak search, load time, rejected optimizations | `niceops.cpp`, `sphere_database.cpp`, `util/sel.hpp`, `util/parallel.hpp` | [performance.md](performance.md) |
-| Sphere database, Delaunay and exact predicates, the sphere lookup, `--blend` (including `nearest`/`aam`), legacy repair, broadband vs spectral | `sphere_database`, `predicates`, `delaunay`, `interpolator`, `condition_selection` | [database.md](database.md) |
+| Sphere database, Delaunay and exact predicates, the sphere lookup, `--blend` (including `nearest`/`aam`), legacy repair, broadband vs spectral; format 2 pure tones (`--rotor_*`, `--tone_*`, `--sync_group`), multirotor axes, `--condition_density`, `--source_radius` | `sphere_database`, `predicates`, `delaunay`, `interpolator`, `condition_selection`, `tones`, `sphere_laplacian` | [database.md](database.md) |
 | ISO 9613-1, the `RayPath` seam, `--atmosphere`, `--wind`, the profile builder | `atmosphere`, `propagation.hpp`, `atmosphere_profile`, `atmosphere_builder` | [atmosphere.md](atmosphere.md) |
 | `--refraction linear` / `stratified`, shadow zones, `ShadowTransition`, ducts, `--tunneling` | `refraction`, `stratified`, `airy` | [refraction.md](refraction.md) |
 | Parabolic equation (split-step Padé, Crank–Nicolson), benchmark exact solutions, `--propagation_table` | `pe`, `pade_propagator`, `exact_solutions`, `propagation_table`, `pe_table`, `util/lanes.hpp`, `tools/` | [pe.md](pe.md) |

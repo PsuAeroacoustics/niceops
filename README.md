@@ -1,11 +1,11 @@
 # NICEOPS
 
 **N**oise **I**nformed **C**ommunity **E**nvironment **O**perations **P**lanning **S**ystem is a
-helicopter noise footprint tool. It predicts ground-level dBA noise exposure over an observer
+rotorcraft noise footprint tool. It predicts ground-level dBA noise exposure over an observer
 grid (or a scattered observer set) from a flight trajectory and a rotor-noise "sphere" database.
 
-1. Blend the database spheres that bracket each state's operating condition (advance ratio,
-   flight path angle, thrust coefficient), and read the level toward each observer.
+1. Blend the database spheres that bracket each state's operating condition (advance ratio, flight
+   path angle and C_T, or a multirotor's momentum axes); read the level and each rotor's tones.
 2. Carry it to the ground: a broadband database uses its own excess-attenuation factor; a
    database with spectra is propagated band by band, with ISO 9613-1 absorption, ground
    reflection, and optionally a stratified, windy atmosphere's refraction, terrain and buildings.

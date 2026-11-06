@@ -261,6 +261,7 @@ for:
   needed to find it);
 - `--full_history`;
 - `--db_cutoff` (which culls on its own terms);
+- a format 2 database's tones (`band_content broadband`: the bound is on the bands alone);
 - any database with a negative excess-attenuation factor, where dropping that term is not a
   loss.
 
