@@ -6151,13 +6151,17 @@ int run(int argc, char* argv[])
         for (const auto& f : database_files)
             request.manifest.add_database(f);
         // The vehicle each path takes: a file, or, with none given, its
-        // database's root where that records one (choose_vehicle).
+        // database's root where that records one (choose_vehicle).  Each
+        // database is asked once, however many rows share it.
+        std::map<std::string, bool> records_vehicle;
         for (std::size_t i = 0; i < std::max(vehicle_files.size(), database_files.size()); i++)
         {
             const auto& vehicle = vehicle_files[std::min(i, vehicle_files.size() - 1)];
             const auto& database = database_files[std::min(i, database_files.size() - 1)];
-            if (vehicle_option->count() == 0 && (operations_file.empty() || vehicle.empty())
-                    && database_records_vehicle(database))
+            const bool default_vehicle = vehicle_option->count() == 0 && (operations_file.empty() || vehicle.empty());
+            if (default_vehicle && !records_vehicle.count(database))
+                records_vehicle[database] = database_records_vehicle(database);
+            if (default_vehicle && records_vehicle[database])
                 request.manifest.add_input("vehicle (database root)", database);
             else
                 request.manifest.add_input("vehicle", vehicle);

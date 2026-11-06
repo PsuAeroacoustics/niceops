@@ -147,10 +147,20 @@ void check_vehicle(const dimensional_data& vehicle, const Database& database, co
 
 std::optional<dimensional_data> database_vehicle(const Database& database, const std::string& name)
 {
+    // A database records its vehicle when it records the air density (panam
+    // writes it with the rotor and the weight); the shipped databases do not,
+    // and keep the default vehicle file.  One that records it must record the
+    // rest, finite: a NaN there is a corrupt record, not a missing one.
+    if (!database.air_density_recorded())
+        return std::nullopt;
     const double radius = database.rotor_radius(), tip_speed = database.tip_speed(),
                  weight = database.vehicle_weight(), rho = database.air_density();
     if (!(std::isfinite(radius) && std::isfinite(tip_speed) && std::isfinite(weight) && std::isfinite(rho)))
-        return std::nullopt;
+    {
+        input_error("Database ", name, " records an air density at the root, so its vehicle, but not all of it: "
+                "main_rotor_radius_meters ", radius, ", main_rotor_tip_speed_meters_per_sec ", tip_speed,
+                ", vehicle_weight_newtons ", weight, ", air_density_kg_m3 ", rho, ". Give a vehicle file (-v).");
+    }
     // What it records has to be a vehicle, as a vehicle file's numbers do: a zero
     // or negative value would make every CT and mu infinite or NaN.
     if (!(radius > 0.0 && tip_speed > 0.0 && weight > 0.0 && rho > 0.0))
@@ -169,11 +179,16 @@ std::optional<dimensional_data> database_vehicle(const Database& database, const
     // not: that is the sphere-build day's, and the spectral path refuses to
     // assume a humidity nobody chose for this prediction (--humidity, or a
     // vehicle file that gives one).
-    if (const auto& built = database.build_atmosphere())
+    // Each read on its own: a database may record them without a humidity.
+    if (const auto& temperature = database.build_temperature())
     {
-        vehicle.atmosphere.temperature = built->temperature_kelvin;
-        vehicle.atmosphere.pressure = built->pressure_kpa;
-        vehicle.temperature_given = vehicle.pressure_given = true;
+        vehicle.atmosphere.temperature = *temperature;
+        vehicle.temperature_given = true;
+    }
+    if (const auto& pressure = database.build_pressure())
+    {
+        vehicle.atmosphere.pressure = *pressure;
+        vehicle.pressure_given = true;
     }
     else
     {

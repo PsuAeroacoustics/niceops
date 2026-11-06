@@ -449,15 +449,10 @@ bool database_records_vehicle(const std::string& path)
     int ncid = 0;
     if (nc_open(path.c_str(), NC_NOWRITE, &ncid) != NC_NOERR)
         return false;
-    bool all = true;
-    for (const char* name : {"main_rotor_radius_meters", "main_rotor_tip_speed_meters_per_sec",
-                 "vehicle_weight_newtons", "air_density_kg_m3"})
-    {
-        double value = std::numeric_limits<double>::quiet_NaN();
-        all = all && get_scalar(ncid, name, &value, true) == NC_NOERR && std::isfinite(value);
-    }
+    int varid = 0;
+    const bool recorded = nc_inq_varid(ncid, "air_density_kg_m3", &varid) == NC_NOERR;
     nc_close(ncid);
-    return all;
+    return recorded;
 }
 
 std::optional<SphereFrameKind> parse_sphere_frame(const std::string& name)
@@ -1222,7 +1217,10 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
         rotor_radius_ = root_value;
     if (NC_NOERR == get_scalar(file_ncid, "vehicle_weight_newtons", &root_value))
         vehicle_weight_newtons_ = root_value;
-    if (NC_NOERR == get_scalar(file_ncid, "air_density_kg_m3", &root_value))
+    // Recorded, whatever its value: a recorded density says the root holds the
+    // vehicle (database_vehicle), so a NaN there is refused, not passed over.
+    air_density_recorded_ = NC_NOERR == get_scalar(file_ncid, "air_density_kg_m3", &root_value, true);
+    if (air_density_recorded_)
         air_density_ = root_value;
     speed_reference_ = read_speed_reference(file_ncid);
     azimuth_reference_ = read_azimuth_reference(file_ncid);
@@ -1342,6 +1340,8 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
     const auto build_humidity = read_double_attribute(file_ncid, "build_relative_humidity_percent");
     if (build_temperature && build_pressure && build_humidity)
         build_atmosphere_ = BuildAtmosphere{*build_temperature, *build_pressure, *build_humidity};
+    build_temperature_ = build_temperature;
+    build_pressure_ = build_pressure;
     rotor_rpm_ = read_double_attribute(file_ncid, "rotor_rpm");
     coherence_record_ = read_coherence_record(file_ncid);
     if (!coherence_record_.empty())
@@ -3320,6 +3320,7 @@ Database::Sphere Database::interpolate_sphere(double advance_ratio, double fligh
     sphere.rotor_rpm = rotor_rpm_;
     sphere.rotor_radius = rotor_radius_;
     sphere.vehicle_weight_newtons = vehicle_weight_newtons_;
+    sphere.air_density = air_density_;
     sphere.sphere_frame = sphere_frame_kind_;
     sphere.levels_lossless = levels_lossless_;
     sphere.thrust_coefficient_density = thrust_coefficient_density_;
@@ -4257,7 +4258,8 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
     };
     RootScalar root_scalars[] = {{"main_rotor_tip_speed_meters_per_sec", sphere.tip_speed, 0},
             {"main_rotor_radius_meters", sphere.rotor_radius, 0},
-            {"vehicle_weight_newtons", sphere.vehicle_weight_newtons, 0}};
+            {"vehicle_weight_newtons", sphere.vehicle_weight_newtons, 0},
+            {"air_density_kg_m3", sphere.air_density, 0}};
     for (auto& scalar : root_scalars)
     {
         if (std::isfinite(scalar.value))

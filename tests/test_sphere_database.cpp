@@ -563,7 +563,23 @@ TEST_CASE("a database that records its whole vehicle supplies it", "[sphere_data
     REQUIRE_THROWS_WITH(choose_vehicle(Database(path), path, "", false),
             Catch::Matchers::ContainsSubstring("records no vehicle at its root"));
 
+    // A recorded density that is not a number is a corrupt record, not a missing one.
+    put("air_density_kg_m3", std::numeric_limits<double>::quiet_NaN());
+    REQUIRE(database_records_vehicle(path));
+    REQUIRE_THROWS_WITH(database_vehicle(Database(path), path), Catch::Matchers::ContainsSubstring("but not all of it"));
     put("air_density_kg_m3", 1.07);
+    {
+        // The build temperature and pressure are taken without a build humidity.
+        int ncid = 0;
+        REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+        REQUIRE(nc_redef(ncid) == NC_NOERR);
+        for (const auto& [name, value] : {std::pair {"build_temperature_K", 280.0}, {"build_pressure_kPa", 95.0}})
+            REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, name, NC_DOUBLE, 1, &value) == NC_NOERR);
+        REQUIRE(nc_close(ncid) == NC_NOERR);
+        const auto partial = database_vehicle(Database(path), path);
+        REQUIRE((partial && partial->atmosphere.temperature == 280.0 && partial->atmosphere.pressure == 95.0));
+        REQUIRE((partial->temperature_given && partial->pressure_given && !partial->humidity_given));
+    }
     {
         int ncid = 0;
         REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
@@ -594,6 +610,18 @@ TEST_CASE("a database that records its whole vehicle supplies it", "[sphere_data
     REQUIRE(own.source == path + " (its root vehicle)");
     const auto given = choose_vehicle(Database(path), path, "databases/S-76D.json", true);
     REQUIRE((!given.from_database && given.source == "databases/S-76D.json" && given.vehicle.rho != 1.07));
+
+    // An exported sphere carries the density with the rotor and the weight, so it
+    // reloads to the same vehicle.
+    {
+        const auto exported = (std::filesystem::temp_directory_path() / "niceops_root_vehicle_export.nod").string();
+        write_sphere(Database(path).interpolate_sphere(0.15, -4.0, 0.006), exported);
+        const auto reloaded = database_vehicle(Database(exported), exported);
+        REQUIRE(reloaded);
+        REQUIRE((reloaded->radius == 5.334 && reloaded->tip_speed == 230.7 && reloaded->weight == 22064.9625
+                && reloaded->rho == 1.07));
+        std::filesystem::remove(exported);
+    }
 
     // A recorded vehicle that cannot be one is refused, not used or passed over.
     put("air_density_kg_m3", 0.0);
