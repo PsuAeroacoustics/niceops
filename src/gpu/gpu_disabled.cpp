@@ -75,6 +75,16 @@ const char* Device::backend()
     return "none";
 }
 
+std::string Device::why_none()
+{
+    return "";
+}
+
+bool compile_only(const std::vector<std::string>&)
+{
+    return false;
+}
+
 std::string Device::name() const
 {
     none();
