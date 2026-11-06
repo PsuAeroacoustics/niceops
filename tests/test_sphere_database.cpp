@@ -529,6 +529,140 @@ TEST_CASE("a database records its sphere frame, and an unknown one is refused", 
     std::filesystem::remove(path);
 }
 
+// The vehicle a run takes without -v: the database's own, when its root records
+// all of it (panam writes the rotor, the weight and the air density the weight
+// coefficient was formed with), with the temperature and pressure it was built
+// in but not its humidity.  niceops, its exports and niceops_procedure --check
+// all take it through choose_vehicle.
+TEST_CASE("a database that records its whole vehicle supplies it", "[sphere_database]")
+{
+    const auto sphere = test::demo_database().interpolate_sphere(0.15, -4.0, 0.006);
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_root_vehicle.nod").string();
+    write_sphere(sphere, path);
+    auto put = [&](const char* name, double value) {
+        int ncid = 0, var = 0;
+        REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+        REQUIRE(nc_redef(ncid) == NC_NOERR);
+        if (nc_inq_varid(ncid, name, &var) != NC_NOERR)
+            REQUIRE(nc_def_var(ncid, name, NC_DOUBLE, 0, nullptr, &var) == NC_NOERR);
+        REQUIRE(nc_enddef(ncid) == NC_NOERR);
+        REQUIRE(nc_put_var_double(ncid, var, &value) == NC_NOERR);
+        REQUIRE(nc_close(ncid) == NC_NOERR);
+    };
+    put("main_rotor_radius_meters", 5.334);
+    put("main_rotor_tip_speed_meters_per_sec", 230.7);
+    put("vehicle_weight_newtons", 22064.9625);
+    // Without the density, no vehicle: the default vehicle file stands, and an
+    // operations row with none (an empty file) is refused.
+    REQUIRE(!database_vehicle(Database(path), path));
+    REQUIRE(!database_records_vehicle(path));
+    {
+        const auto chosen = choose_vehicle(Database(path), path, "databases/S-76D.json", false);
+        REQUIRE((!chosen.from_database && chosen.source == "databases/S-76D.json"));
+    }
+    REQUIRE_THROWS_WITH(choose_vehicle(Database(path), path, "", false),
+            Catch::Matchers::ContainsSubstring("records no vehicle at its root"));
+
+    // A recorded density that is not a number is a corrupt record, not a missing one.
+    put("air_density_kg_m3", std::numeric_limits<double>::quiet_NaN());
+    REQUIRE(database_records_vehicle(path));
+    REQUIRE_THROWS_WITH(database_vehicle(Database(path), path), Catch::Matchers::ContainsSubstring("but not all of it"));
+    put("air_density_kg_m3", 1.07);
+    {
+        // The build temperature and pressure are taken without a build humidity.
+        int ncid = 0;
+        REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+        REQUIRE(nc_redef(ncid) == NC_NOERR);
+        for (const auto& [name, value] : {std::pair {"build_temperature_K", 280.0}, {"build_pressure_kPa", 95.0}})
+            REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, name, NC_DOUBLE, 1, &value) == NC_NOERR);
+        REQUIRE(nc_close(ncid) == NC_NOERR);
+        const auto partial = database_vehicle(Database(path), path);
+        REQUIRE((partial && partial->atmosphere.temperature == 280.0 && partial->atmosphere.pressure == 95.0));
+        REQUIRE((partial->temperature_given && partial->pressure_given && !partial->humidity_given));
+    }
+    {
+        int ncid = 0;
+        REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+        REQUIRE(nc_redef(ncid) == NC_NOERR);
+        for (const auto& [name, value] : {std::pair {"build_temperature_K", 288.15},
+                     {"build_pressure_kPa", 99.5}, {"build_relative_humidity_percent", 70.0}})
+            REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, name, NC_DOUBLE, 1, &value) == NC_NOERR);
+        REQUIRE(nc_close(ncid) == NC_NOERR);
+    }
+    REQUIRE(database_records_vehicle(path));
+    const auto vehicle = database_vehicle(Database(path), path);
+    REQUIRE(vehicle);
+    REQUIRE(vehicle->radius == 5.334);
+    REQUIRE(vehicle->tip_speed == 230.7);
+    REQUIRE(vehicle->weight == 22064.9625);
+    REQUIRE(vehicle->rho == 1.07);
+    REQUIRE(vehicle->atmosphere.temperature == 288.15);
+    REQUIRE(vehicle->atmosphere.pressure == 99.5);
+    REQUIRE((vehicle->temperature_given && vehicle->pressure_given));
+    // The build day's humidity is not this prediction's: left unset, so the
+    // spectral path refuses to assume it.
+    REQUIRE(!vehicle->humidity_given);
+    REQUIRE(vehicle->atmosphere.relative_humidity == dimensional_data {}.atmosphere.relative_humidity);
+
+    // Without -v the database's; with -v the file, whatever the database says.
+    const auto own = choose_vehicle(Database(path), path, "databases/S-76D.json", false);
+    REQUIRE((own.from_database && own.vehicle.rho == 1.07));
+    REQUIRE(own.source == path + " (its root vehicle)");
+    const auto given = choose_vehicle(Database(path), path, "databases/S-76D.json", true);
+    REQUIRE((!given.from_database && given.source == "databases/S-76D.json" && given.vehicle.rho != 1.07));
+
+    // An exported sphere carries the density with the rotor and the weight, so it
+    // reloads to the same vehicle.
+    {
+        const auto exported = (std::filesystem::temp_directory_path() / "niceops_root_vehicle_export.nod").string();
+        write_sphere(Database(path).interpolate_sphere(0.15, -4.0, 0.006), exported);
+        const auto reloaded = database_vehicle(Database(exported), exported);
+        REQUIRE(reloaded);
+        REQUIRE((reloaded->radius == 5.334 && reloaded->tip_speed == 230.7 && reloaded->weight == 22064.9625
+                && reloaded->rho == 1.07));
+        std::filesystem::remove(exported);
+    }
+
+    // A recorded vehicle that cannot be one is refused, not used or passed over.
+    put("air_density_kg_m3", 0.0);
+    REQUIRE_THROWS_WITH(database_vehicle(Database(path), path), Catch::Matchers::ContainsSubstring("not one that can fly"));
+    put("air_density_kg_m3", 1070.0);        // g/m^3
+    REQUIRE_THROWS_WITH(database_vehicle(Database(path), path), Catch::Matchers::ContainsSubstring("which is not air"));
+    put("air_density_kg_m3", 1.07);
+    {
+        int ncid = 0;
+        REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+        REQUIRE(nc_redef(ncid) == NC_NOERR);
+        const double pascals = 99500.0;        // kPa written as Pa
+        REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, "build_pressure_kPa", NC_DOUBLE, 1, &pascals) == NC_NOERR);
+        REQUIRE(nc_close(ncid) == NC_NOERR);
+    }
+    REQUIRE_THROWS_WITH(database_vehicle(Database(path), path), Catch::Matchers::ContainsSubstring("the vehicle it records"));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("a database of bands other than one-third octaves is refused", "[sphere_database]")
+{
+    // panam records the bands it built from (band_type).  NICEOPS's weighting,
+    // absorption and EPNL take one-third octaves; a 1/12-octave, narrowband or
+    // pure-tone database is refused, one that says third_octave read.
+    const auto sphere = test::demo_database().interpolate_sphere(0.15, -4.0, 0.006);
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_band_type.nod").string();
+    write_sphere(sphere, path);
+    auto set_band_type = [&](const std::string& value) {
+        int ncid = 0;
+        REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+        REQUIRE(nc_redef(ncid) == NC_NOERR);
+        REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, "band_type", value.size(), value.c_str()) == NC_NOERR);
+        REQUIRE(nc_close(ncid) == NC_NOERR);
+    };
+    set_band_type("third_octave");
+    REQUIRE(Database(path).root_attributes().at("band_type") == "third_octave");
+    set_band_type("twelfth_octave");
+    REQUIRE_THROWS_WITH(Database(path), Catch::Matchers::ContainsSubstring("band_type 'twelfth_octave'"));
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("Spectra survive interpolation and re-export", "[sphere_database]")
 {
     // Spectra are optional, and none of the shipped databases has any.
@@ -4002,4 +4136,37 @@ TEST_CASE("a shaft-order tone is interpolated with its phase unwound about the s
     const Database database(path);
     REQUIRE(database.tone_sources()[0].unwind_order == std::vector<int> {0, 0});
     std::filesystem::remove(path);
+}
+
+TEST_CASE("band_type pure_tone passes only a format 2 database that lists tone sources", "[sphere_database][format2]")
+{
+    // A format 2 database carries its tones beside its band spheres, so its
+    // band_type may say pure_tone; a file of tone spheres alone, read as bands,
+    // would be weighted and absorbed as one-third octaves, so it is refused.
+    auto set_pure_tone = [](const std::string& path) {
+        int ncid = 0;
+        REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+        REQUIRE(nc_redef(ncid) == NC_NOERR);
+        const std::string value = "pure_tone";
+        REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, "band_type", value.size(), value.c_str()) == NC_NOERR);
+        REQUIRE(nc_close(ncid) == NC_NOERR);
+    };
+    const auto tones = write_tone_test_database("niceops_band_type_tones.nod", ToneFixture {});
+    set_pure_tone(tones);
+    REQUIRE(Database(tones).database_version() == 2);
+
+    const auto sphere = test::demo_database().interpolate_sphere(0.15, -4.0, 0.006);
+    const auto plain = (std::filesystem::temp_directory_path() / "niceops_band_type_plain.nod").string();
+    write_sphere(sphere, plain);
+    set_pure_tone(plain);
+    REQUIRE_THROWS_WITH(Database(plain), Catch::Matchers::ContainsSubstring("band_type 'pure_tone'"));
+    int ncid = 0, version_var = 0;
+    REQUIRE(nc_open(plain.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+    REQUIRE(nc_inq_varid(ncid, "database_version", &version_var) == NC_NOERR);
+    const int two = 2;
+    REQUIRE(nc_put_var_int(ncid, version_var, &two) == NC_NOERR);
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+    REQUIRE_THROWS_WITH(Database(plain), Catch::Matchers::ContainsSubstring("band_type 'pure_tone'"));
+    std::filesystem::remove(tones);
+    std::filesystem::remove(plain);
 }

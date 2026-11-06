@@ -99,6 +99,13 @@ enum class SphereFrameKind
 
 // "level" or "flight_path"; nullopt for anything else.
 std::optional<SphereFrameKind> parse_sphere_frame(const std::string& name);
+
+// Whether the database file at `path` records its vehicle at the root (it
+// records air_density_kg_m3, which panam writes with the rotor and the weight),
+// read without loading it: what a run given no -v takes in place of the default
+// vehicle file (database_vehicle, state_condition.hpp, which refuses a record
+// that is not whole), for the manifest before any database is loaded.
+bool database_records_vehicle(const std::string& path);
 const char* to_string(SphereFrameKind frame);
 
 // Whether a database's band spectrum (and dBA) already holds its pure tones
@@ -801,6 +808,9 @@ public:
         double tip_speed = std::numeric_limits<double>::quiet_NaN();
         double rotor_radius = std::numeric_limits<double>::quiet_NaN();
         double vehicle_weight_newtons = std::numeric_limits<double>::quiet_NaN();
+        // The air density the weight coefficient was formed with (root
+        // air_density_kg_m3), so an export reloads to the same vehicle.
+        double air_density = std::numeric_limits<double>::quiet_NaN();
         // The main rotor's speed, which the coherence model's rotor delay
         // takes; unset where the source recorded none.
         std::optional<double> rotor_rpm;
@@ -845,6 +855,13 @@ public:
     {
         return vehicle_weight_newtons_;
     }
+    // The air density (kg/m^3) the weight coefficient was formed with, from the
+    // root variable air_density_kg_m3, or NaN.  With the three above it is the
+    // whole vehicle a run needs (database_vehicle, state_condition.hpp).
+    double air_density() const
+    {
+        return air_density_;
+    }
 
     // Which velocity the flight conditions were taken from, as the root
     // attribute speed_reference records it.  Absent means the ground, which is
@@ -869,6 +886,21 @@ public:
     const std::optional<BuildAtmosphere>& build_atmosphere() const
     {
         return build_atmosphere_;
+    }
+    // The build temperature (K) and pressure (kPa) each on its own, recorded
+    // or not, whether or not the humidity was (database_vehicle).
+    const std::optional<double>& build_temperature() const
+    {
+        return build_temperature_;
+    }
+    const std::optional<double>& build_pressure() const
+    {
+        return build_pressure_;
+    }
+    // Whether the root records air_density_kg_m3 at all (its value may be NaN).
+    bool air_density_recorded() const
+    {
+        return air_density_recorded_;
     }
     const std::optional<double>& rotor_rpm() const
     {
@@ -1231,10 +1263,13 @@ private:
     double tip_speed_ = std::numeric_limits<double>::quiet_NaN();
     double rotor_radius_ = std::numeric_limits<double>::quiet_NaN();
     double vehicle_weight_newtons_ = std::numeric_limits<double>::quiet_NaN();
+    double air_density_ = std::numeric_limits<double>::quiet_NaN();
     SpeedReference speed_reference_ = SpeedReference::ground;
     std::optional<AzimuthReference> azimuth_reference_;
     bool upper_hemisphere_measured_ = false;
     std::optional<BuildAtmosphere> build_atmosphere_;
+    std::optional<double> build_temperature_, build_pressure_;
+    bool air_density_recorded_ = false;
     std::optional<double> rotor_rpm_;
     CoherenceRecord coherence_record_;
     // Per grid cell and condition, parallel to grid, the share of the cell

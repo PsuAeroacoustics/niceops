@@ -100,7 +100,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `-t`, `--trajectoryfile` | Trajectory CSV ([Trajectories](#trajectories)). Repeat for several flight paths. Default the demo track. |
 | `--operations` | A CSV of operations, one row per track flown, with its count and optionally its database, vehicle, clock, lateral offset and air ([An operations file](#an-operations-file)). Replaces `-t`. |
 | `-d`, `--database` | netCDF noise database. Once, or once per trajectory. Default `databases/S-76D_load_factors.nod`. |
-| `-v`, `--vehicle` | JSON vehicle file ([Vehicle file](#vehicle-file)). Once, or once per trajectory. Default `databases/S-76D.json`. |
+| `-v`, `--vehicle` | JSON vehicle file ([Vehicle file](#vehicle-file)). Once, or once per trajectory. Without it, the database's own vehicle where it records all of it (rotor radius and tip speed, weight and air density, as panam writes them), with the temperature and pressure it was built in but not its humidity (the spectral path then needs `--humidity`); else `databases/S-76D.json`. A recorded vehicle that is not plausible is refused. A multirotor database records no main rotor, so it needs `-v`. |
 | `-o`, `--output` | SEL output file, once per trajectory. Default `integrated/197421_LAE.csv`. With several tracks and one name (or none), each is named after its track. |
 | `-b`, `--observer` | Scattered observer file ([Observers](#observers)); replaces the default grid. |
 | `--grid` | Observer grid bounds: `xmin xmax ymin ymax`; the grid starts at each minimum and stops short of each maximum. Default −1500 … 1475 m in 25 m steps (120 values per axis); −4921.26 … 4839.24 ft. |
@@ -469,8 +469,9 @@ A database (`.nod`, netCDF) holds one group per operating condition: advance rat
 path angle γ and thrust coefficient C<sub>T</sub>. Each group stores one sphere around the rotor:
 scattered (φ, θ) channels of the overall A-weighted level and of the EAA excess-attenuation
 factor, and optionally per-band spectra. A `fixed_load_factor` database stores 1 g spheres only
-and carries the load factor by an analytic law. Databases are built by panam, from measured or
-computed hemispheres. [THEORY §2](THEORY.md#2-the-source) describes how they are read.
+and carries the load factor by an analytic law. A database of bands other than one-third octaves
+(one that records another `band_type`) is refused, except a format 2 database's pure tones.
+Databases are built by panam, from measured or computed hemispheres. [THEORY §2](THEORY.md#2-the-source) describes how they are read.
 
 ### Source coherence
 
@@ -606,8 +607,15 @@ their amplitude and phase over the sphere grid.
   of every rotor at each observer, with its phase, Doppler shift and the ground at its own
   frequency, and adds it to the bands. Rotors in one sync group (the database's `sync_group`, for
   rotors whose phases are tied to their azimuth) add coherently; every other rotor adds in energy.
+  A rotor whose `phase_reference` is `relative` adds alone but keeps the interference of its own
+  direct and reflected arrivals; one with `none` adds wholly in energy. A database sync group that
+  names either only warns, and that rotor adds alone.
 - **`band_content = total`**: the band spectrum and dBA already hold the tones; the run uses them,
   as for any other database, and warns that the tones are not added again.
+
+How close the tones come to PSU-WOPWOP's own prediction and to a measured hexacopter is in
+FIDELITY: [Pure tones against PSU-WOPWOP](FIDELITY.md#pure-tones-against-psu-wopwop) and [Rotor
+tones of a hovering hexacopter](FIDELITY.md#rotor-tones-of-a-hovering-hexacopter-mid-state-2023).
 
 A root attribute `tone_speed_exponent` (default 0) scales each tone's pressure as its rotor's
 shaft rate in the run over the database's, raised to that power: 3 gives the level as rpm to the
@@ -681,6 +689,8 @@ the state's own hover rotor speed, as the share of it the database records.
 
 - **The vehicle file needs a weight.** Its rotor radius is checked against the database's; its
   tip speed and weight are not compared, since these axes are scaled by them.
+- **A state below 0.1 g** (in free fall, say) has no hover to scale by: its axes are formed at
+  0.1 g, and a warning counts such states.
 - **No law in the hover tip Mach number:** a state off the database's range takes the nearest
   spheres as they are, with the clamped states counted in a warning.
 - **Refused, naming why:** `--blend aam`, whose search is in airspeed and path angle;
@@ -1686,7 +1696,7 @@ such as `count (per year)`, is refused, and `wind_direction` may say only `(deg)
 | `count` | Operations per average day. Any positive number, fractions included. | 1. |
 | `day`, `evening`, `night` | Operations per average day in each period, in place of `count` and `local_time` (below). Each zero or more, and a row's three add up to more than zero. | 0. |
 | `local_time` | `HH:MM` or `HH:MM:SS` (00:00 to 23:59:59), local time by `--utc_offset`, at the track's first state. It replaces any clock the track carries. | The track's own clock, or `--start_utc`. |
-| `database`, `vehicle` | As `-d` and `-v`. | The one `-d` or `-v` given; refused without it. |
+| `database`, `vehicle` | As `-d` and `-v`. | The one `-d` or `-v` given. Without `-d`, refused. Without `-v`, the row's database's own vehicle where it records one, else refused. |
 | `output` | This row's SEL file, as `-o`. | Named after the row (below). |
 | `atmosphere` | As `--atmosphere`. | See the air, below. |
 | `wind_speed`, `wind_direction`, `wind_height` | Joined as `--wind`'s `speed,direction[,height]`: the speed names its unit (`8kt`), the direction is a compass bearing, the height is in `--units`. The first two go together. | See the air, below. |
@@ -1924,7 +1934,8 @@ refused:
   reports the states the database would clamp on each axis (advance ratio, path angle, C<sub>T</sub>)
   or hold at `--max_load_factor` (default 2 g, as in niceops), with the stretches of time they
   span, so a procedure can be kept inside its database before any acoustics run. `--no-qsam`
-  matches niceops's `--no-qsam`. A vehicle file that disagrees with the database is refused as
+  matches niceops's `--no-qsam`. Without `--vehicle` it takes the vehicle the database records,
+  as niceops does without `-v`. A vehicle file that disagrees with the database is refused as
   niceops refuses it, and `--accept_vehicle_mismatch` maps the states anyway. The procedure is calm, so the database's speed reference makes
   no difference. How much of the footprint those states carry is what `--provenance_file`
   reports.

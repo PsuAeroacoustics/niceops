@@ -256,6 +256,10 @@ public:
     // LengthUnit in util/constants.hpp.
     Trajectory(const std::string& filename, const std::string& vehicle_filename,
             const GeodeticInput& geodetic = {}, LengthUnit unit = feet);
+    // The same with the vehicle already read (database_vehicle, a database's
+    // own).
+    Trajectory(const std::string& filename, const dimensional_data& vehicle_data,
+            const GeodeticInput& geodetic = {}, LengthUnit unit = feet);
 
     // The frame a geodetic file was projected through, or nullopt when the
     // trajectory was already Cartesian.  Lets a run adopt the frame its first

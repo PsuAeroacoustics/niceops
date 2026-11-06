@@ -908,6 +908,12 @@ struct PathJob
     std::string trajectory;
     std::string database;
     std::string vehicle;
+    // No -v was given (nor an operations file's vehicle): `vehicle` is the
+    // default file, which a database recording its own vehicle replaces.
+    bool vehicle_default = false;
+    // Set by process_trajectory: the vehicle is the database's root one, and
+    // `vehicle` names it so (choose_vehicle).
+    bool vehicle_from_database = false;
     std::string output;
     std::string state;
     // --write_atmosphere: where the --wind profile goes; empty for nowhere.
@@ -1190,8 +1196,11 @@ AtmosphereProfile wind_profile(const Trajectory& trajectory, const PathJob& job,
     if (std::isnan(options.humidity_override) && !vehicle.humidity_given)
     {
         input_error("--wind builds the humidity profile from the surface humidity, and none is set "
-                    "(no --humidity, and ", job.vehicle, " gives none). Give --humidity, or add "
-                    "\"relative humidity\" to the vehicle file or its Atmosphere section.");
+                    "(no --humidity, and ", job.vehicle, " gives none). ",
+                    job.vehicle_from_database
+                            ? "Give --humidity, or a vehicle file (-v) with \"relative humidity\"."
+                            : "Give --humidity, or add \"relative humidity\" to the vehicle file or its "
+                              "Atmosphere section.");
     }
     if (const auto problem = temperature_problem(surface.temperature); !problem.empty())
         input_error("--wind: the surface temperature from ", job.vehicle, ": ", problem);
@@ -1255,7 +1264,7 @@ AtmosphereProfile wind_profile(const Trajectory& trajectory, const PathJob& job,
 // Compute one trajectory's footprint and write its outputs, returning the
 // trajectory itself for the single-path plotting block.  Anything that throws
 // in here condemns this trajectory alone; the caller catches and moves on.
-Trajectory process_trajectory(const Database& database, const PathJob& job,
+Trajectory process_trajectory(const Database& database, const PathJob& path_job,
         const RunOptions& options, const std::vector<Vec3>& observers,
         const std::vector<double>& microphone_heights, const std::vector<std::int64_t>& ground_class_ids,
         const std::vector<double>& x_obs,
@@ -1265,8 +1274,18 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     auto& lamax = totals.lamax;
     auto& nax = totals.nax;
     auto& coverage = totals.coverage;
+    // The vehicle: the -v file, or, given none, the one the database records
+    // at its root (panam's, with the air density), else the default file.
+    PathJob job = path_job;
+    const auto chosen = choose_vehicle(database, job.database, job.vehicle, !job.vehicle_default);
+    job.vehicle = chosen.source;
+    job.vehicle_from_database = chosen.from_database;
+    if (chosen.from_database)
+        log("Vehicle from the database's root: no -v given, and ", job.database, " records its vehicle.");
+    // Where the vehicle's atmosphere came from, for the run's summary.
+    const char* vehicle_source = chosen.from_database ? "database root" : "vehicle file";
     // Create trajectory from CSV data
-    Trajectory trajectory(job.trajectory, job.vehicle, options.geodetic, options.unit);
+    Trajectory trajectory(job.trajectory, chosen.vehicle, options.geodetic, options.unit);
     // Ground effect is on by default, but it acts on per-band levels, so it is
     // applied only where the spectral path runs on a database that has spectra.
     const bool ground_effect = options.ground_effect && options.spectral && database.has_spectra();
@@ -2311,7 +2330,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         // states its own configuration rather than leaving it in the log file.
         const char* humidity_from = options.atmosphere ? "the --atmosphere profile's ground level"
                 : !std::isnan(options.humidity_override) ? "--humidity"
-                : trajectory.vehicle.humidity_given ? "vehicle file" : "default, not given";
+                : trajectory.vehicle.humidity_given ? vehicle_source : "default, not given";
         const double receiver = options.ground.receiver_height / options.unit.to_meters;
         std::cout << "Physics: "
                   << (spectral ? "spectral, per-band ISO 9613-1 absorption" : "broadband, database EAA factor")
@@ -2421,14 +2440,16 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         // Where each value came from, so a default is not mistaken for a
         // measurement: the vehicle file usually gives a temperature and a
         // density, derives the pressure from them, and gives no humidity at all.
-        const auto origin = [](bool overridden, const char* option, bool given, const char* otherwise) {
-            return std::string(overridden ? option : given ? "vehicle file" : otherwise);
+        const auto origin = [&](bool overridden, const char* option, bool given, const char* otherwise) {
+            return std::string(overridden ? option : given ? vehicle_source : otherwise);
         };
         const auto& vehicle = trajectory.vehicle;
         const std::string temperature_from = origin(!std::isnan(options.temperature_override),
                 "--temperature", vehicle.temperature_given, "default");
         const std::string pressure_from = origin(!std::isnan(options.pressure_override), "--pressure",
-                vehicle.pressure_given, "from the vehicle file's density and temperature");
+                vehicle.pressure_given,
+                job.vehicle_from_database ? "from the database's density and the temperature"
+                                          : "from the vehicle file's density and temperature");
         const std::string humidity_from = origin(!std::isnan(options.humidity_override), "--humidity",
                 vehicle.humidity_given, "default");
         log("Propagating spectra: ", retained, " of ", bands.size(), " bands within ",
@@ -2443,8 +2464,12 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         {
             input_error("Relative humidity is not set (no --humidity, and ", job.vehicle,
                     " gives none), and the spectral path needs it: absorption depends strongly on "
-                    "it. Give --humidity, add \"relative humidity\" to the vehicle file or its "
-                    "Atmosphere section, or pass --atmosphere.");
+                    "it. ",
+                    job.vehicle_from_database
+                            ? "Give --humidity, a vehicle file (-v) with \"relative humidity\", or "
+                              "--atmosphere."
+                            : "Give --humidity, add \"relative humidity\" to the vehicle file or its "
+                              "Atmosphere section, or pass --atmosphere.");
         }
         // Say what that atmosphere costs at the extremes actually in play, so a
         // wrong humidity is visible in the log rather than only in the answer.
@@ -5191,7 +5216,11 @@ OperationRun expand_operations(const std::string& operations_file, PerPathLists 
     for (const auto& row : rows)
     {
         databases.push_back(file_for(row, row.database, database_given, lists.database_files, "database", "-d"));
-        vehicles.push_back(file_for(row, row.vehicle, vehicle_given, lists.vehicle_files, "vehicle", "-v"));
+        // A row without a vehicle, and no -v: its database's own (choose_vehicle,
+        // which refuses one that records none).
+        vehicles.push_back(row.vehicle.empty() && !vehicle_given
+                        ? std::string()
+                        : file_for(row, row.vehicle, vehicle_given, lists.vehicle_files, "vehicle", "-v"));
         // A row's output cell beats -o; one row keeps -o as given, and
         // several are named after their rows, beside it.
         if (!row.output.empty())
@@ -6121,8 +6150,22 @@ int run(int argc, char* argv[])
             request.manifest.add_input("trajectory", f);
         for (const auto& f : database_files)
             request.manifest.add_database(f);
-        for (const auto& f : vehicle_files)
-            request.manifest.add_input("vehicle", f);
+        // The vehicle each path takes: a file, or, with none given, its
+        // database's root where that records one (choose_vehicle).  Each
+        // database is asked once, however many rows share it.
+        std::map<std::string, bool> records_vehicle;
+        for (std::size_t i = 0; i < std::max(vehicle_files.size(), database_files.size()); i++)
+        {
+            const auto& vehicle = vehicle_files[std::min(i, vehicle_files.size() - 1)];
+            const auto& database = database_files[std::min(i, database_files.size() - 1)];
+            const bool default_vehicle = vehicle_option->count() == 0 && (operations_file.empty() || vehicle.empty());
+            if (default_vehicle && !records_vehicle.count(database))
+                records_vehicle[database] = database_records_vehicle(database);
+            if (default_vehicle && records_vehicle[database])
+                request.manifest.add_input("vehicle (database root)", database);
+            else
+                request.manifest.add_input("vehicle", vehicle);
+        }
         request.manifest.add_input("observers", observer_file);
         for (const auto& f : atmosphere_files)
         {
@@ -6544,8 +6587,13 @@ int run(int argc, char* argv[])
             // --blend and --load_factor_correction apply here as in a run: an
             // exported sphere is what a state at this condition would hear.
             auto export_blend = blend_options;
+            // The vehicle a run of this database would take (choose_vehicle),
+            // read only where it is needed.
+            const auto export_vehicle = [&] {
+                return choose_vehicle(database, front_database, vehicle_files.front(), vehicle_option->count() > 0);
+            };
             if (export_blend.policy == BlendPolicy::aam && std::isnan(database.tip_speed()))
-                export_blend.tip_speed = configure_vehicle(vehicle_files.front()).tip_speed;
+                export_blend.tip_speed = export_vehicle().vehicle.tip_speed;
             if (export_blend.load_factor_correction == LoadFactorCorrection::two_sided
                     && !database.fixed_load_factor())
             {
@@ -6565,15 +6613,15 @@ int run(int argc, char* argv[])
                 // line; fall back to the vehicle file for older databases.
                 const double tip_speed = !std::isnan(database.tip_speed())
                         ? database.tip_speed()
-                        : configure_vehicle(vehicle_files.front()).tip_speed;
+                        : export_vehicle().vehicle.tip_speed;
                 // A lossless sphere carries no absorption to its radius and AAM's
                 // levels do: it takes the air's, the vehicle file's under the first
                 // --temperature, --pressure and --humidity given, as a run would.
                 std::vector<double> export_absorption;
                 if (sphere.levels_lossless)
                 {
-                    const auto vehicle = configure_vehicle(vehicle_files.front());
-                    Atmosphere export_air = vehicle.atmosphere;
+                    const auto chosen_vehicle = export_vehicle();
+                    Atmosphere export_air = chosen_vehicle.vehicle.atmosphere;
                     if (!temperature_overrides.empty() && !std::isnan(temperature_overrides.front()))
                         export_air.temperature = temperature_overrides.front();
                     if (!pressure_overrides.empty() && !std::isnan(pressure_overrides.front()))
@@ -6584,7 +6632,7 @@ int run(int argc, char* argv[])
                     log("--export_aam: ", front_database, "'s levels are lossless, so the AAM sphere takes "
                             "absorption out to its radius (", sphere.radius, " m) in ", export_air.temperature,
                             " K, ", export_air.pressure, " kPa, ", export_air.relative_humidity, " % RH (",
-                            vehicle_files.front(), " under --temperature/--pressure/--humidity).");
+                            chosen_vehicle.source, " under --temperature/--pressure/--humidity).");
                 }
                 write_aam_sphere(sphere, aam_file, tip_speed, sphere.levels_lossless ? &export_absorption : nullptr);
             }
@@ -7497,6 +7545,8 @@ int run(int argc, char* argv[])
             job.epnl = epnl_files.empty() ? std::string() : epnl_files[path_index];
             job.band_frames = band_frames_files.empty() ? std::string() : band_frames_files[path_index];
             job.vehicle = vehicle_files[path_index];
+            // No -v, and no operations file's vehicle for this row.
+            job.vehicle_default = vehicle_option->count() == 0 && (operations_file.empty() || job.vehicle.empty());
             job.output = out_files[path_index];
             job.state = state_files.empty() ? std::string() : state_files[path_index];
             job.atmosphere_out = atmosphere_out_files.empty() ? std::string()

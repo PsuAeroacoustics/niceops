@@ -141,7 +141,9 @@ EpnlResult effective_perceived_noise_level(const std::vector<PnlSpectrum>& histo
 // Where each of the 24 PNL bands sits among a database's band centers: the
 // band whose center is within 5 percent of the nominal one (nominal and exact
 // base-ten or base-two centers differ by at most 1.6 percent; neighboring
-// third-octave bands are 26 percent apart).  `missing` receives the nominal
+// third-octave bands are 26 percent apart), and which has a neighbor a third of
+// an octave from it, so that a 1/12-octave band near the center does not stand
+// in for the third-octave band.  `missing` receives the nominal
 // centers no band matches, and an entry of the result is then meaningless.
 std::array<std::size_t, pnl_band_count> pnl_band_indices(const std::vector<double>& band_centers,
         std::vector<double>& missing);

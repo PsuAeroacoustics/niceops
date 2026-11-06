@@ -59,12 +59,15 @@ void check_envelope(const std::string& track, LengthUnit unit, const std::string
 {
     GeodeticInput geodetic;
     geodetic.resample_dt = 0.5;
-    Trajectory trajectory(track, vehicle_file, geodetic, unit);
     const Database database(database_file);
     if (database.multirotor())
         input_error("niceops_procedure --check maps states to advance ratio, flight path angle and C_T, and ",
                 database_file, " is in multirotor axes (x, z, M_h). Refused.");
-    check_vehicle(trajectory.vehicle, database, vehicle_file, accept_vehicle_mismatch);
+    // The vehicle niceops would take (choose_vehicle): the file given, else the
+    // database's root vehicle, so the two map a state the same way.
+    const auto chosen = choose_vehicle(database, database_file, vehicle_file, !vehicle_file.empty());
+    Trajectory trajectory(track, chosen.vehicle, geodetic, unit);
+    check_vehicle(trajectory.vehicle, database, chosen.source, accept_vehicle_mismatch);
     BlendOptions blend;
     blend.tip_speed = trajectory.vehicle.tip_speed;
     const auto& states = trajectory.states;
@@ -121,8 +124,9 @@ int main(int argc, char* argv[])
     bool accept_vehicle_mismatch = false;
     app.add_option("--check", check_database,
             "Report the states this database (.nod) would clamp on each axis, or hold at "
-            "--max_load_factor, as niceops maps them. Needs --vehicle.");
-    app.add_option("--vehicle", vehicle, "Vehicle file (JSON) for --check.");
+            "--max_load_factor, as niceops maps them. Needs --vehicle unless the database records its own.");
+    app.add_option("--vehicle", vehicle,
+            "Vehicle file (JSON) for --check; without it, the vehicle the database records at its root.");
     app.add_option("--max_load_factor", max_load_factor,
             "For --check: niceops's --max_load_factor, in g (default 2).")
             ->check(CLI::PositiveNumber);
@@ -138,8 +142,6 @@ int main(int argc, char* argv[])
     {
         const auto procedure = read_procedure(input);
         const auto states = fly(procedure);
-        if (!check_database.empty() && vehicle.empty())
-            input_error("--check maps the states through the vehicle's rotor: give --vehicle.");
         const LengthUnit unit = unit_name == "m" ? meters : feet;
         write_procedure_track(output, states, unit);
         std::printf("Wrote %s: %zu states over %.1f s.\n", output.c_str(), states.size(),

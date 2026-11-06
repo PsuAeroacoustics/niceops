@@ -930,9 +930,14 @@ void read_static_states(const std::string& filename, const LabeledCsv& csv,
 
 Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_filename,
         const GeodeticInput& geodetic, LengthUnit unit)
+    : Trajectory(filename, configure_vehicle(vehicle_filename), geodetic, unit)
 {
-    // Get vehicle data
-    vehicle = configure_vehicle(vehicle_filename);
+}
+
+Trajectory::Trajectory(const std::string& filename, const dimensional_data& vehicle_data,
+        const GeodeticInput& geodetic, LengthUnit unit)
+{
+    vehicle = vehicle_data;
 
     // D: filename.splitter('.').retro.take(1).array()[0] -- the last '.' segment
     auto dotpos = filename.rfind('.');
