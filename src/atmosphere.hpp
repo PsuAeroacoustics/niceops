@@ -37,6 +37,12 @@ struct Atmosphere
     // absorption coefficients were fitted against.
     double sound_speed() const;
 
+    // Density of the air treated as dry, kg/m^3: p / (R T) with R = 287.05
+    // J/(kg K), the relation the vehicle file's pressure is derived from when it
+    // gives none (trajectory.cpp).  Humidity lowers it by under 1 percent at
+    // flight-test conditions.  --condition_density atmosphere takes C_T with it.
+    double density() const;
+
     // Saturation vapor pressure, kPa.
     double saturation_pressure() const;
 

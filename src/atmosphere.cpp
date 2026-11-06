@@ -48,6 +48,12 @@ double Atmosphere::sound_speed() const
     return 343.2 * std::sqrt(temperature / reference_temperature);
 }
 
+double Atmosphere::density() const
+{
+    constexpr double dry_air_gas_constant = 287.05; // J/(kg K)
+    return pressure * 1000.0 / (dry_air_gas_constant * temperature);
+}
+
 double Atmosphere::saturation_pressure() const
 {
     return reference_pressure

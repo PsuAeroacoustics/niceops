@@ -42,6 +42,7 @@ leaves the result unchanged. The demo case has 6,551 states and 14,400 observers
 | $\lg$ | base-10 logarithm |
 | $r$ | slant range from source to observer |
 | $R_s$ | the database's sphere radius |
+| $r_0$ | the source radius (`--source_radius`; $R_s$ by default) |
 | $h_s$, $h_r$ | source and receiver heights above the ground plane |
 | $d$ | horizontal distance |
 | $\beta = 1/Z$ | normalized surface admittance ($Z$ the normalized impedance) |
@@ -76,8 +77,24 @@ $$
 The Q-SAM path angle is the velocity's angle to the tip-path plane. It is the angle at which a
 steady flight condition presents the same rotor inflow, which is what lets steady-flight spheres
 represent a maneuvering state. At $\lvert\mathbf{u}\rvert = 0$ both path angles are taken as zero
-(§3). $\rho$ is the vehicle file's density in every case, including when `--temperature` or
-`--pressure` sets the propagation atmosphere.
+(§3).
+
+**The density.** By default (`--condition_density vehicle`) $\rho$ is the vehicle file's density
+in every case, including when `--temperature` or `--pressure` sets the propagation atmosphere.
+`--condition_density atmosphere` forms $C_T$ with the run's air at the state's height $z$
+instead, the trajectory's $C_T$ scaled by the ratio of the two densities:
+
+$$
+C_T = \frac{n\,W}{\rho(z)\,V_\mathrm{tip}^2\,\pi R^2}, \qquad
+\rho(z) = \frac{p(z)}{R_d\,T(z)}, \qquad R_d = 287.05\ \mathrm{J/(kg\,K)},
+$$
+
+with $p$ and $T$ from the `--atmosphere` profile at $z$ (its pressure hydrostatic from the surface
+when it gives none, §4.3), or else uniform: `--temperature` and `--pressure` over the vehicle
+file's. Where neither is given the run's air is the vehicle file's own, and $\rho(z)$ is the
+density that file states. The air is taken as dry; humidity lowers the density by under 1
+percent at flight-test conditions. A database's root attribute `thrust_coefficient_density`
+records which density its $C_T$ axis was formed with (`vehicle`, absent, or `run`).
 
 **The speed reference.** $\mathbf{u}$ is taken in the reference the database records it was
 built with, over the ground if it records none; `--speed_reference` overrides it, and an
@@ -86,6 +103,31 @@ less the profile's wind at the state's height, turned into the local frame by th
 rotation of §3. The same velocity sets the sphere's nose (§2.4). The load factor, and so $C_T$,
 stays inertial: the rotor's thrust balances the aircraft's acceleration over the ground whatever
 the air does.
+
+**Multirotor databases.** A database whose root attribute `condition_axes` is `multirotor` gives
+its conditions in momentum similarity's axes instead. A fixed-pitch multirotor holds its thrust
+coefficient nearly fixed and sets its thrust by rotor speed, so neither $\mu$ on one tip speed nor
+$C_T$ indexes it. With the database's rotor count $N$, rotor radius $R$ and hover thrust
+coefficient $C_{T,h}$ (per rotor, $T/(\rho\pi R^2(\Omega R)^2)$), the vehicle file's weight $W$,
+the load factor $n$ and thrust direction $\hat{\mathbf{n}}$ above, and the air-relative velocity
+$\mathbf{u}$ (in the speed reference above):
+
+$$
+v_h = \sqrt{\frac{nW}{2\rho N\pi R^2}}, \qquad
+\Omega_h R = \sqrt{\frac{nW}{N\rho\pi R^2 C_{T,h}}}, \qquad
+x = \frac{\lvert\mathbf{u} - (\mathbf{u}\cdot\hat{\mathbf{n}})\hat{\mathbf{n}}\rvert}{v_h}, \qquad
+z = \frac{\mathbf{u}\cdot\hat{\mathbf{n}}}{v_h}, \qquad
+M_h = \frac{\Omega_h R}{c} .
+$$
+
+$v_h$ is the hover induced velocity and $\Omega_h$ the shaft rate that hovers at this weight and
+density; $x$ and $z$ are the in-plane and axial air speed over $v_h$ (hover the origin, $z > 0$ a
+climb), and $M_h$ is the multirotor's loading axis, the counterpart of $C_T$. $\rho$ is the run's
+air at the state's height by default (`--condition_density atmosphere`; `vehicle` takes the
+vehicle file's), and $c$ the run's sound speed there. The load factor is held at 0.1 below it. The
+conditions blend over $(x, z, M_h)$ as over $(\mu, \gamma, C_T)$ (§2.3), leaving out an axis the
+database does not vary (one built at one weight and air holds one $M_h$). There is no scaling law
+in $M_h$: a state off the database's $M_h$ takes its spheres as they are.
 
 ### 2.2 The sphere database
 
@@ -98,6 +140,15 @@ flight test [5], and the broadband AW139, B205 and S-76D databases from the medi
 helicopter noise abatement flight test [6]. Measured levels are propagated back from the
 microphones to $R_s$ ("depropagated") through each run's own atmosphere. The received spectra
 keep their Doppler shift (§11).
+
+A format 2 database may also carry pure-tone sources, one per rotor, in every condition: each a
+hub position in the sphere frame, a signed shaft rate, shaft-order tones whose amplitude and phase
+are given over the same grid, and a `phase_reference`. Under `rotor_azimuth` the stored amplitude
+is the far-field directivity with the rotor's azimuth removed, $\hat{A} = A\,e^{-im\psi_\mathrm{ref}}$,
+so rotors on one shaft rate combine coherently; `relative` phases are known between directions
+only, and `none` carries amplitude alone. Rotors held at a fixed phase to each other share a
+`sync_group`. A predicted sphere is centered on its rotor's hub and carries no absorption to its
+radius (`sphere_levels_lossless`). §4.4 evaluates the tones.
 
 ### 2.3 Blending the spheres
 
@@ -245,18 +296,34 @@ and the other corners' weights are renormalized.
 **The frame.** In steady flight $\hat{\mathbf{n}}$ is vertical and the nose horizontal, so the
 sphere is level, as PANAM's spheres and NORAH2's hemispheres are. AAM's sphere is fixed to the
 body, whose pitch is the deck's angle of attack plus the flight path angle; with AOA 0 its
-nose is the velocity, the level frame pitched nose-up by $\gamma$. PANAM pitches such spheres to
-level as it builds, and a database whose root `sphere_frame` is anything but `level` is
-refused. `--export_aam` writes the other way: each cell of the exported grid is a direction in
-the flight-path frame at the exported $\gamma$, $(f, s, d)$ (forward, starboard, down), read at
-its level direction
+nose is the velocity, the level frame pitched nose-up by $\gamma$. PANAM pitches measured spheres
+to level as it builds. A database whose root `sphere_frame` is `flight_path` (WOPWOP's predicted
+spheres, kept in their own frame so their phase is not re-interpolated) is read in that frame
+instead. Its nose is $\mathbf{v}$ itself, climb included, and its up the part of $\hat{\mathbf{n}}$
+perpendicular to it:
+
+$$
+\hat{\mathbf{e}} = \frac{\mathbf{v}}{\lvert\mathbf{v}\rvert}, \qquad
+\hat{\mathbf{n}}' = \frac{\hat{\mathbf{n}} - (\hat{\mathbf{n}}\cdot\hat{\mathbf{e}})\,\hat{\mathbf{e}}}
+  {\lvert\hat{\mathbf{n}} - (\hat{\mathbf{n}}\cdot\hat{\mathbf{e}})\,\hat{\mathbf{e}}\rvert}, \qquad
+\hat{\mathbf{s}} = \hat{\mathbf{e}} \times \hat{\mathbf{n}}' ,
+$$
+
+with the angles as above on $(\hat{\mathbf{e}}, \hat{\mathbf{n}}', \hat{\mathbf{s}})$. In level flight
+($\mathbf{v} \perp \hat{\mathbf{n}}$) this is the level frame. With no velocity, or one along
+$\hat{\mathbf{n}}$ (a vertical climb), the frame is the level one with its fallback; near hover
+$\mathbf{v}$ is already the heading (the nose, above). Any other `sphere_frame` is refused.
+`--export_aam` writes a level database the other way: each cell of the exported grid is a
+direction in the flight-path frame at the exported $\gamma$, $(f, s, d)$ (forward, starboard,
+down), read at its level direction
 
 $$
 f_\ell = f\cos\gamma + d\sin\gamma, \qquad s_\ell = s, \qquad d_\ell = -f\sin\gamma + d\cos\gamma
 $$
 
 with the stencil above. AAM pitches it back by the track's $\gamma$, so a deck flown at AOA 0
-hears the levels NICEOPS hears. At $\gamma = 0$ the export is the sphere's own grid.
+hears the levels NICEOPS hears. At $\gamma = 0$, or from a flight-path database, the export is the
+sphere's own grid.
 
 ## 3. Trajectories
 
@@ -344,14 +411,25 @@ A database without spectra, or a run with `--no-spectral`, propagates the A-weig
 directly:
 
 $$
-L = L_\mathrm{sph}(\phi,\theta) - 20 \lg\frac{\max(r, R_s)}{R_s} -
-  \mathrm{EAA}(\phi,\theta)\,\frac{\max(r, R_s) - R_s}{1000\ \mathrm{m}} + \Delta L_n .
+L = L_\mathrm{sph}(\phi,\theta) - 20 \lg\frac{\max(r, r_0)}{R_s} -
+  \mathrm{EAA}(\phi,\theta)\,\frac{\max(r, r_0) - R_s}{1000\ \mathrm{m}} + \Delta L_n .
 $$
 
 EAA is the A-weighted atmospheric attenuation over 1000 m in the database's build atmosphere.
 PANAM writes it as the difference between the A-weighted level with and without absorption over
-that distance. Spreading is capped at the sphere surface: inside $R_s$ the sphere level is
-taken as is.
+that distance. Spreading is capped at the source radius $r_0$, by default the sphere surface:
+inside $R_s$ the sphere level is then taken as is. A source much smaller than its sphere (a
+multirotor on a 100 ft sphere) sets $r_0 < R_s$: between $r_0$ and $R_s$ both terms are gains,
+the inverse of the build's depropagation of the microphones inside the radius out to it, and
+below $r_0$ the level is held.
+
+**Lossless spheres.** A measured sphere is depropagated to $R_s$, so its levels already carry the
+absorption from the hub to the sphere, and absorption runs from $R_s$ outward. A predicted sphere
+(root attribute `sphere_levels_lossless = 1`) has none, and absorption runs from the hub: the
+excess attenuation above becomes $\mathrm{EAA}\,\max(r, R_s)/1000\ \mathrm{m}$, and $\max(\ell - R_s, 0)$
+in §4.2 becomes $\max(\ell, R_s)$. Inside $R_s$ the level is the surface's, absorbed over the
+radius. Rays among buildings (§6.5) absorb over their whole length and so add back the part
+inside the sphere for measured spheres only.
 
 ### 4.2 The spectral path
 
@@ -359,11 +437,12 @@ When the database carries spectra (the default for such a database), each band $
 propagated separately:
 
 $$
-L_b = L_{\mathrm{sph},b}(\phi,\theta) - 20 \lg\frac{\max(r, R_s)}{R_s} -
-  \alpha_b \max(\ell - R_s, 0) + \Delta L_n - \Delta L_{\mathrm{extra},b} + 10 \lg G_b .
+L_b = L_{\mathrm{sph},b}(\phi,\theta) - 20 \lg\frac{\max(r, r_0)}{R_s} -
+  \alpha_b \left(\max(\ell, r_0) - R_s\right)^{+} + \Delta L_n - \Delta L_{\mathrm{extra},b} + 10 \lg G_b .
 $$
 
-$r$ is the spreading range, $\ell$ the absorbed path length ($\ell = r$ on a straight ray), $G_b$
+$r$ is the spreading range, $\ell$ the absorbed path length ($\ell = r$ on a straight ray),
+$(x)^{+}$ is $\max(x, 0)$ at the default $r_0 = R_s$ and $x$ itself when $r_0 < R_s$, $G_b$
 the ground or receiver power ratio (§5, §6), and $\Delta L_{\mathrm{extra},b}$ any shadow-zone
 loss or table correction (§8, §9.3). The bands are then weighted and summed in energy (§10.1).
 
@@ -411,6 +490,197 @@ $[z_o, z_s]$, a first-order approximation; the ray's own arc length is what it m
 Pressure in the profile, when not given, is hydrostatic for dry air:
 $p(z) = p(0) \exp\!\left(-\frac{g}{R_d}\int_0^z \frac{dz'}{T}\right)$, with
 $R_d = 287.05$ J/(kg K), from the surface pressure of the vehicle file or `--pressure`.
+
+### 4.4 Pure tones (format 2)
+
+A format 2 database may carry pure-tone sources beside its spheres, one per rotor (§2.2). When
+its band spectrum leaves the tones out (`band_content = broadband`), every tone of every source
+is evaluated at each of its arrivals at an observer, with its phase, and added to the bands in
+energy. When the bands already hold the tones (`total`), the bands are used alone.
+
+**The source at a state.** Each source's hub, shaft rate $\Omega_r$ and tone frequencies are
+the blend-weighted means of its conditions' (the weights of §2.3); the hub, stored in the sphere
+frame, is placed at $\mathbf{x}_r = \mathbf{x}_c + c_f\,\hat{\mathbf{n}} + c_s\,\hat{\mathbf{s}}
++ c_u\,\hat{\mathbf{u}}$ about the state's position, with the frame of §2.4. The tones are shaft
+orders $m$ in the emission frame, $f_e = m\lvert\Omega_r\rvert/2\pi$, so unlike the bands they
+are Doppler-shifted below. $\Omega_r > 0$ is counterclockwise seen from above (about the sphere
+frame's up axis). On a multirotor database (§2.1) each condition stores the rotor's speed ratio
+$s_r = \lvert\Omega_r\rvert/\Omega_h$ at that condition, and the state's shaft rate is the
+blended ratio times its own hover shaft rate, $\Omega_r = \mathrm{sign}(\Omega_r)\,
+\bar{s}_r\,\Omega_h$, which carries the state's weight and air into the tones' frequencies.
+
+**An arrival.** Each hub reaches a point $\mathbf{x}_p$ (the observer, or its image in the
+ground plane) along a straight path. With the hub moving at the state's velocity $\mathbf{V}$
+and every arrival of the state received at one time, $T = \lvert\mathbf{x}_o - \mathbf{x}_c\rvert/c$
+after the state's, its emission time $\delta$ (relative to the state's) solves
+
+$$
+c\,(T - \delta) = \left\lvert \mathbf{x}_p - (\mathbf{x}_r + \mathbf{V}\delta) \right\rvert ,
+$$
+
+the root before reception of $(c^2 - V^2)\delta^2 - 2(c^2T - \mathbf{d}\cdot\mathbf{V})\delta +
+(c^2T^2 - d^2) = 0$, $\mathbf{d} = \mathbf{x}_p - \mathbf{x}_r$. The path length is
+$L = c(T - \delta)$, the direction leaving the hub $\hat{\mathbf{k}}$, and the received frequency
+$f = f_e/D$, $D = 1 - \mathbf{V}\cdot\hat{\mathbf{k}}/c$.
+
+**Its phasor**, in the $e^{+i\omega t}$ convention the spheres are written in ($p \propto A\,
+e^{-ikR}/R$ at reception):
+
+$$
+a = 10^{(L_A(\hat{\mathbf{k}}) - \alpha(f)\,\ell)/20}\, \frac{R_s}{\max(L, R_s)}\,
+  e^{\,i\left(\varphi_A(\hat{\mathbf{k}}) + m\psi_r + 2\pi f_e \delta\right)},
+\qquad \ell = \max(L - R_a,\ R_s [\text{lossless}],\ 0).
+$$
+
+$L_A$ is the tone's level at the sphere radius $R_s$, interpolated in dB over the grid cell and
+the conditions with the band spectrum's weights (empty entries dropped as there), with the
+blend's load-factor correction; $\varphi_A$ is the argument of the complex amplitudes summed with
+the same weights, which needs no unwrapping and does not dip where neighbors' phases differ.
+Shaft order $m$ of a rotor turning at $\Omega_r$ winds its phase as $e^{+i\sigma m\alpha}$
+about the shaft, $\sigma = \mathrm{sign}(\Omega_r)$ and $\alpha$ the direction's azimuth
+about the sphere frame's up axis toward starboard. The sum is taken over the unwound amplitudes
+$A\,e^{-i\sigma m\alpha_j}$ at the cells $j$, and the result multiplied by $e^{+i\sigma
+m\alpha}$ at the direction itself:
+
+$$
+\varphi_A = \arg\Big(e^{\,i\sigma m\alpha}\sum_j w_j A_j\, e^{-i\sigma m\alpha_j}\Big) .
+$$
+
+At the grid's nodes it is the stored phase. Each tone is unwound only where that makes its phase
+the smoother of the two on the grid (its widest step between neighboring cells within 20 dB of
+its peak), which is the phase the resolution check of §2.2 judges.
+$\psi_r$ is the rotor's azimuth (`--rotor_azimuth`, in its own sense of rotation); by default the
+azimuth its phases were locked to (the source's `azimuth`, the first sphere's), which reproduces
+the phasing it was predicted with, and zero, the stored rotor-locked phase itself, where the
+database records none. $\alpha(f)$ is the path's absorption (§4.3) at the received
+frequency, interpolated between the band centers linearly in $\lg f$ and $\lg\alpha$. $R_a$ is
+where absorption starts, the sphere radius or, for lossless spheres, 0 (§2.2). With `--rotor_history`, $\psi_r$ and $\Omega_r$ are each
+replayed rotor's logged azimuth and shaft rate at the state's time, and the replayed rotors are one
+coherent group: the sum below is then the instantaneous one of free-running rotors, which beats as
+their azimuths drift apart.
+Where the database gives `tone_speed_exponent` $\nu$, each tone's pressure (direct and
+reflected) is scaled by $(|\Omega_r| / |\Omega_{r,0}|)^{\nu}$, the run's shaft rate (logged, or the
+sync group's mean) over the database's $\Omega_{r,0}$: $\nu = 3$ is the level as rpm to the sixth of
+a hovering rotor's tones [79]. Without the attribute $\nu = 0$ and the amplitudes are
+the stored ones.
+
+**Incoherent part.** A source may give each tone an incoherent level $I(\mathbf{n})$
+(`incoherent_amplitude`): the rms pressure at $R_s$ of what the rotor radiates at that shaft order
+with no stable phase against its azimuth. It takes the tone's arrivals with $|A|$ replaced by
+$I$ and no directivity phase or azimuth term, so its direct and reflected arrivals keep their
+path difference, and adds in energy for each source alone,
+
+$$
+P_I = |I_d|^2 + |I_r|^2 + 2\gamma\,\mathrm{Re}(I_d \bar{I}_r),
+$$
+
+scaled by $(|\Omega_r| / |\Omega_{r,0}|)^{2\nu}$ like the tone's power. Taking no directivity phase
+treats the part as radiated from the hub, with no phase difference between the directions of a
+source's two arrivals.
+
+**In wind** $\mathbf{W}$ (the profile's, averaged over the heights between the ground and the
+state) the solve is the same in the frame moving with the air, where sound travels at $c$: the
+hub moves at $\mathbf{V} - \mathbf{W}$ and the point, at rest on the ground, is received at
+$\mathbf{x}_p - \mathbf{W}T$, so
+
+$$
+c\,(T - \delta) = \left\lvert \mathbf{x}_p - \mathbf{W}T - (\mathbf{x}_r + (\mathbf{V} - \mathbf{W})\delta) \right\rvert ,
+\qquad
+f = f_e\,\frac{1 + \mathbf{W}\cdot\hat{\mathbf{k}}/c}{1 - (\mathbf{V} - \mathbf{W})\cdot\hat{\mathbf{k}}/c},
+$$
+
+with $\hat{\mathbf{k}}$ the wave normal in that frame, along which the directivity is read (the
+spheres are the rotor's in still air at its airspeed). The paths stay straight. $\mathbf{W} = 0$
+is the still-air solve above, to the bit.
+
+Between two hubs a distance $\mathbf{d}$ apart the emission times differ, in the far field, by
+$\hat{\mathbf{k}}\cdot\mathbf{d}/(c(1 - \mathbf{M}\cdot\hat{\mathbf{k}}))$, so their phasors by
+$e^{+i\omega\,\hat{\mathbf{k}}\cdot\mathbf{d}/(c(1-\mathbf{M}\cdot\hat{\mathbf{k}}))}$: the
+whole-vehicle form PSU-WOPWOP's per-rotor spheres sum to.
+
+**Over the ground** (`--tone_ground frequency`, the default), the image arrival also carries the
+reflection coefficient of §5.2 at its own frequency and grazing angle,
+$a_r \leftarrow a_r\,\overline{Q(f_r)}\,e^{-2(k\sigma_r\cos\vartheta)^2}$: $Q$ is written for
+$e^{-i\omega t}$, so it enters conjugated. The admittance is the ground model's, tabulated at
+96 points per octave and interpolated in $\lg f$. The geometry is the band model's (§5): the
+plane $z = 0$, the hub's height above it, the model's receiver height $h_r$ and the horizontal
+separation. The direct arrival is the observer's own, as the band path's direct level is; the
+image arrival goes to the image of a receiver $h_r$ up at the observer's horizontal position, and
+is carried onto the observer's direct arrival by the ratio of the two fields there,
+$a_r \leftarrow a_d\,a_r/a_v$, with $a_v$ the direct arrival at that receiver. An observer at
+$h_r$ is that receiver, and $a_r$ stands as it is. So at one frequency the tone's ground is
+$\lvert 1 + Q\,(R_1/R_2)\,e^{-ik(R_2-R_1)}\rvert^2$ of the band model's own $R_1$, $R_2$ for any
+observer height. A source's direct and reflected arrivals add with the turbulence
+coherence $T(f)$ of §5.3 on their cross term, taken from the state's center as there:
+
+$$
+P = \lvert S_d\rvert^2 + \lvert S_r\rvert^2 + 2\,T(f)\,\mathrm{Re}\left(S_d\,\overline{S_r}\right).
+$$
+
+**Sums.** In a coherent group (§2.2 sync groups of rotor-locked sources, or `--sync_group`) $S_d$
+and $S_r$ are the members' direct and reflected phasors summed harmonic by harmonic, and $f$ is
+the first member's direct received frequency. A run-time group holds its members at their mean
+shaft rate. Every other source sums alone, and sources add in energy. A tone without phase
+(`phase_reference = none`, or one whose phase the grid does not resolve) drops the cross term.
+Each $P$ is filed into the band whose edges (halfway between centers in $\lg f$) hold $f$, and
+counts in the A-weighted level as $P\,10^{A(f)/10}$, weighted at its own frequency, where that
+band is inside the band limits. A tone received outside every band is not counted.
+
+**The band fallback.** Plate microphones, propagation tables, terrain, screening, refraction and
+urban tables have no per-frequency form: there the tones are evaluated in free field (direct
+arrivals only) and each band's tone power is multiplied by the band path's own ratio
+$G_b = 10^{(L_b - L_b^{\mathrm{free}})/10}$ of its level with every term to its straight-ray
+free-field level. `--tone_ground band` takes the fallback everywhere.
+
+**The near field** (`--tone_near_field on`, the default). The spheres hold the far-field
+directivity $A(\mathbf{n})$, $R e^{ikR}p$ as $R \to \infty$ about the hub. At a finite range the
+field of any time-periodic source in uniform flight is, to first order (the Atkinson-Wilcox
+expansion of the field outside the source, in the frame moving with it),
+
+$$
+R\,e^{ikR}\,p_R(\mathbf{n}) = A(\mathbf{n}) + \frac{i}{2kR}\,\Delta_{\mathbf{n}}\big[D(\mathbf{n})\,A(\mathbf{n})\big]
++ O(R^{-2}), \qquad D = 1 - \mathbf{M}\cdot\mathbf{n},
+$$
+
+in the $e^{+i\omega t}$ convention of the spheres, with $k = 2\pi f_e/c$ at the emission frequency,
+$\mathbf{M}$ the condition's flight Mach vector in the sphere frame and $\Delta_{\mathbf{n}}$ the
+Laplace-Beltrami operator on the unit sphere of emission directions. $C = \Delta[DA]$ is taken
+once per tone and condition when the database loads, on the grid, and interpolated as $A$ is (the
+same cell, weights and unwinding). Each arrival's phasor becomes
+
+$$
+a = \Big(A + \frac{i}{2kR}\,C\Big)\,10^{-\alpha(f)\ell/20}\,\frac{R_s}{R}\,
+  e^{\,i(m\psi_r + 2\pi f_e\delta)}, \qquad R = \max(L, R_s),
+$$
+
+with the term capped at twice the tone's largest $\lvert A\rvert$ over the sphere, which only a
+range within a wavelength or two of the hub reaches. $\mathbf{M}$ lies along the nose in the
+flight-path frame and climbs at the condition's flight path angle in the level frame; its speed is
+a multirotor condition's `airspeed`, or a helicopter condition's advance ratio times the
+database's tip speed, over $c = 340.29$ m/s ($D$ depends on $c$ only to second order); without
+either it is zero ($D = 1$, as in hover). A tone without phase on the grid takes no term.
+
+$\Delta$ is second-order differences on the $(\phi, \theta)$ grid, $\Delta f = f_{\theta\theta} +
+\cot\theta\, f_\theta + f_{\phi\phi}/\sin^2\theta$ ($\theta$ from the nose), periodic across a full
+circle's seam and extended evenly across the horizontal plane for a lower hemisphere (the other
+half being its mirror image, §2.4). Where it varies less there, the unwound
+$B = f e^{-i\sigma m\alpha}$ is differentiated instead and the winding restored exactly,
+
+$$
+\Delta\big(e^{i n\alpha}B\big) = e^{i n\alpha}\Big[\Delta B + 2in\,\nabla\alpha\cdot\nabla B
+ - \frac{n^2}{\sin^2\beta}\,B\Big], \qquad n = \sigma m,
+$$
+
+$\alpha$ being harmonic away from the shaft ($\beta$ the angle from it), so a coarse grid
+differentiates a smooth function; never for $\lvert n\rvert = 1$ (whose $B$, like $\sin\beta$,
+has a cone point on the shaft) or on the shaft itself. The grid's poles and an open edge take a
+quadratic least-squares fit over the nodes within two grid steps, in the tangent plane.
+
+The first-order term is reliable while it is small against $A$; the run counts the arrivals where
+it exceeds half of $\lvert A\rvert$ there (a null being filled, or the expansion stretched,
+$(m+1)c/(2\lvert\Omega\rvert R) \gtrsim 1/2$ for a rotor). The term vanishes as $R\to\infty$,
+and for a source whose $A$ is uniform in hover. `--tone_near_field off` is the far field alone,
+$a$ of the phasor above with $C = 0$, to the bit.
 
 ## 5. Ground effect
 
@@ -2536,7 +2806,7 @@ A run interpolates the table multilinearly in dB and applies it in place of the 
 refraction models, with the straight-line direction and range:
 
 $$
-L_b = L_{\mathrm{sph},b} - 20\lg\frac{\max(r, R_s)}{R_s} - \alpha_b \max(r - R_s, 0) + \Delta L_n + \Delta L .
+L_b = L_{\mathrm{sph},b} - 20\lg\frac{\max(r, r_0)}{R_s} - \alpha_b \left(\max(r, r_0) - R_s\right)^{+} + \Delta L_n + \Delta L .
 $$
 
 A table that declares `includes_absorption` drops the $\alpha_b$ term. A pair the table does
@@ -2895,9 +3165,16 @@ than for SEL.
 
 ## 11. What is not modeled
 
-- **Doppler frequency shift.** The spheres carry the measured, Doppler-shifted spectra, and
-  NICEOPS applies no shift. A database whose spheres have had the shift removed is refused. The
-  source's motion enters only through the reception-time factor $1 + \dot r/c$ (§10.2).
+- **Doppler frequency shift of the bands.** The spheres carry the measured, Doppler-shifted
+  spectra, and NICEOPS applies no shift to them. A database whose spheres have had the shift
+  removed is refused. The source's motion enters only through the reception-time factor
+  $1 + \dot r/c$ (§10.2). A format 2 database's pure tones are the exception: they are emission
+  shaft orders, and each arrival is shifted (§4.4).
+- **Pure tones off the straight, level-ground path, and the spheres' near field.** Tones over
+  plates, tables, terrain, screening, refraction and urban tables take the band path's
+  correction (§4.4), and `--buildings` is refused with tones. The spheres' near field is
+  corrected to first order only (§4.4): the $O(R^{-2})$ terms, and an axial null that the
+  first-order term cannot fill, remain.
 - **Buildings**, except through an urban table at its microphones or `--buildings` (§6.5). The
   rays among buildings leave out what §6.5 lists ("What the rays leave out"); they are straight,
   in uniform air over a level floor, so `--buildings` is refused with `--refraction`,
@@ -3000,3 +3277,4 @@ than for SEL.
 76. "Noise Standards: Definitions," California Code of Regulations, Title 21, Sec. 5001.
 77. "Environmental Protection, Volume I — Aircraft Noise," Annex 16 to the Convention on International Civil Aviation, 8th ed., International Civil Aviation Organization, Montréal, July 2017.
 78. "Noise Standards: Aircraft Type and Airworthiness Certification," Advisory Circular AC 36-4D, Federal Aviation Administration, Washington, DC, 12 October 2017.
+79. Valente, V. T., "Multiple Rotor Acoustic Control," Ph.D. Dissertation, Department of Aerospace Engineering, The Pennsylvania State University, University Park, PA, 2024.

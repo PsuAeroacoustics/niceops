@@ -244,6 +244,8 @@ add_library(niceops_core STATIC
   src/airy.cpp
   src/exact_solutions.cpp
   src/weighting.cpp
+  src/tones.cpp
+  src/sphere_laplacian.cpp
   src/pnl.cpp
   src/band_frames.cpp
   src/faddeeva.cpp
@@ -365,6 +367,7 @@ add_executable(niceops_unit_tests
   tests/test_procedure.cpp
   tests/test_iota.cpp
   tests/test_sphere_database.cpp
+  tests/test_near_field.cpp
   tests/test_geodetic.cpp
   tests/test_terrain.cpp
   tests/test_screening.cpp
@@ -424,6 +427,9 @@ add_executable(golden_compare tests/golden_compare.cpp)
 # What --epnl_file and --band_frames wrote, checked against each other and the SEL.
 add_executable(check_band_frames tests/check_band_frames.cpp)
 target_link_libraries(check_band_frames niceops_core)
+# Format 2 databases for the tone runs (tones_*): pure-tone rotors added to a spectral database.
+add_executable(make_tone_database tests/make_tone_database.cpp)
+target_link_libraries(make_tone_database niceops_core)
 # What --raster_file wrote, against the grid files the same run wrote.
 add_executable(check_raster tests/check_raster.cpp)
 target_link_libraries(check_raster niceops_core)
@@ -1346,6 +1352,26 @@ set_tests_properties(buildings_far_run buildings_far_sampled_run buildings_far_r
 add_test(NAME buildings_far_is_open_without_ground COMMAND golden_compare integrated/buildings_far.csv integrated/buildings_far_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME buildings_far_sampled_is_open COMMAND golden_compare integrated/buildings_far_sampled.csv integrated/buildings_far_reference.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_far_is_open_without_ground buildings_far_sampled_is_open PROPERTIES FIXTURES_REQUIRED buildings_far_runs)
+# --source_radius (Database::source_radius): spreading and absorption run on inside the sphere radius
+# down to it.  Microphones 1.5-24 m from the short track, inside the B407's 30.48 m sphere: the
+# point-source model among a far building (its rays weighed inside the sphere) is the open run, the
+# windowed peak search is the march, and a run whose microphones are all outside the sphere is the
+# run without the flag.
+set(URBAN_NEAR niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tests/data/urban_track_short.csv --frame_bearing 210 -b tests/data/urban_near_observers.csv -L warn --source_radius 3.28)
+add_test(NAME source_radius_open_run COMMAND ${URBAN_NEAR} --no-ground_effect -o integrated/source_radius_open.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME source_radius_marched_run COMMAND ${URBAN_NEAR} --no-ground_effect -D integrated/source_radius_dnl.csv -o integrated/source_radius_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME source_radius_buildings_run COMMAND ${URBAN_NEAR} --buildings tests/data/urban_far_building.csv --floor_absorption 1 --phase_interval 90 --state_tolerance 0 --no-gpu -o integrated/source_radius_buildings.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME source_radius_outside_run COMMAND ${URBAN_DISTRICT_SHORT} --no-ground_effect --source_radius 3.28 -o integrated/source_radius_outside.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(source_radius_open_run source_radius_marched_run source_radius_buildings_run source_radius_outside_run PROPERTIES FIXTURES_SETUP source_radius_runs)
+add_test(NAME source_radius_windowed_is_exact COMMAND golden_compare integrated/source_radius_open.csv integrated/source_radius_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME source_radius_buildings_far_is_open COMMAND golden_compare integrated/source_radius_buildings.csv integrated/source_radius_open.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(source_radius_windowed_is_exact source_radius_buildings_far_is_open PROPERTIES FIXTURES_REQUIRED source_radius_runs)
+add_test(NAME source_radius_outside_is_default COMMAND golden_compare integrated/source_radius_outside.csv integrated/buildings_far_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(source_radius_outside_is_default PROPERTIES FIXTURES_REQUIRED "source_radius_runs;buildings_far_runs")
+add_test(NAME source_radius_beyond_sphere_refused COMMAND ${URBAN_DISTRICT_SHORT} --no-ground_effect --source_radius 200 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(source_radius_beyond_sphere_refused PROPERTIES PASS_REGULAR_EXPRESSION "--source_radius must be above 0 and at most the database's sphere radius")
+add_test(NAME source_radius_zero_refused COMMAND ${URBAN_DISTRICT_SHORT} --no-ground_effect --source_radius 0 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(source_radius_zero_refused PROPERTIES PASS_REGULAR_EXPRESSION "--source_radius must be above 0, got 0")
 # The demo approach over the test district: its states sampled (the default) against every state
 # evaluated, within 0.01 dB of SEL at every microphone (0.001 measured; 0.003 on the full track).
 add_test(NAME buildings_every_state_run COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --state_tolerance 0 --no-gpu -o integrated/buildings_every_state.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -1798,6 +1824,76 @@ add_test(NAME min_load_factor_needs_two_sided COMMAND niceops --min_load_factor 
 set_tests_properties(min_load_factor_needs_two_sided PROPERTIES PASS_REGULAR_EXPRESSION "needs --load_factor_correction two_sided")
 add_test(NAME two_sided_needs_fixed_load_factor COMMAND niceops --no-spectral --no-ground_effect --load_factor_correction two_sided --gridstep 2000 -L warn -o integrated/two_sided_needs_fixed_load_factor.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(two_sided_needs_fixed_load_factor PROPERTIES PASS_REGULAR_EXPRESSION "is not one: its load factors are spheres")
+# --condition_density (state_condition.hpp).  Naming vehicle, the default, is the demo run to the
+# byte.  atmosphere in the vehicle file's own air takes the density that file states, so it is the
+# vehicle run to the byte too, and warns that the database's C_T was formed with the vehicle file's.
+# In colder air atmosphere moves the footprint (a denser air lowers every C_T), which vehicle does not.
+add_test(NAME condition_density_vehicle COMMAND niceops --no-spectral --no-ground_effect --condition_density vehicle ${DEMO_COARSE} -L warn -o integrated/condition_density_vehicle.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME condition_density_atmosphere COMMAND niceops --no-spectral --no-ground_effect --condition_density atmosphere ${DEMO_COARSE} -L warn -o integrated/condition_density_atmosphere.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(condition_density_atmosphere PROPERTIES PASS_REGULAR_EXPRESSION "the database records that its C_T axis used the vehicle file's")
+add_test(NAME condition_density_cold_vehicle COMMAND niceops --no-spectral --no-ground_effect --condition_density vehicle --temperature 253.15 ${DEMO_COARSE} -L warn -o integrated/condition_density_cold_vehicle.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME condition_density_cold_atmosphere COMMAND niceops --no-spectral --no-ground_effect --condition_density atmosphere --temperature 253.15 ${DEMO_COARSE} -L warn -o integrated/condition_density_cold_atmosphere.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(condition_density_vehicle condition_density_atmosphere condition_density_cold_vehicle condition_density_cold_atmosphere PROPERTIES FIXTURES_SETUP condition_density_runs)
+add_test(NAME condition_density_vehicle_is_golden COMMAND ${CMAKE_COMMAND} -E compare_files integrated/condition_density_vehicle.csv integrated/demo_coarse.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME condition_density_same_air_is_vehicle COMMAND ${CMAKE_COMMAND} -E compare_files integrated/condition_density_atmosphere.csv integrated/demo_coarse.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME condition_density_cold_moves_footprint COMMAND golden_compare integrated/condition_density_cold_atmosphere.csv integrated/condition_density_cold_vehicle.csv 0.001 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(condition_density_cold_moves_footprint PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+# A format 2 database's pure tones in a run (tones.hpp).  make_tone_database adds rotors to the B407
+# database: two in one sync group, one alone, and two whose bands already hold their tones.
+add_test(NAME tones_database COMMAND make_tone_database databases/B407_fixed_load_factor.nod integrated/tones_b407.nod WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME tones_database_one COMMAND make_tone_database databases/B407_fixed_load_factor.nod integrated/tones_b407_one.nod --sources 1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME tones_database_total COMMAND make_tone_database databases/B407_fixed_load_factor.nod integrated/tones_b407_total.nod --band_content total WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_database tones_database_one tones_database_total PROPERTIES FIXTURES_SETUP tone_databases)
+set(TONE_RUN -v databases/B407.json --humidity 20 --gridstep 4000 -L warn)
+add_test(NAME tones_run COMMAND niceops -d integrated/tones_b407.nod ${TONE_RUN} -o integrated/tones_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME tones_run_band COMMAND niceops -d integrated/tones_b407.nod ${TONE_RUN} --tone_ground band -o integrated/tones_run_band.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME tones_run_bands_alone COMMAND niceops -d databases/B407_fixed_load_factor.nod ${TONE_RUN} -o integrated/tones_run_bands_alone.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME tones_one_coherent COMMAND niceops -d integrated/tones_b407_one.nod ${TONE_RUN} -o integrated/tones_one_coherent.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME tones_one_energy COMMAND niceops -d integrated/tones_b407_one.nod ${TONE_RUN} --tone_coherence energy -o integrated/tones_one_energy.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME tones_antiphase COMMAND niceops -d integrated/tones_b407.nod ${TONE_RUN} --rotor_azimuth right0=11.25 -o integrated/tones_antiphase.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_run tones_run_band tones_one_coherent tones_one_energy tones_antiphase PROPERTIES FIXTURES_REQUIRED tone_databases)
+set_tests_properties(tones_run tones_run_band tones_run_bands_alone tones_one_coherent tones_one_energy tones_antiphase PROPERTIES FIXTURES_SETUP tone_runs)
+# One source: coherent and energy are the same sum, to the byte.  The tones add to the bands' levels
+# (a footprint above the bands alone), and turning one rotor of the pair half a cycle of shaft order 4
+# moves it.
+add_test(NAME tones_one_coherent_is_energy COMMAND ${CMAKE_COMMAND} -E compare_files integrated/tones_one_coherent.csv integrated/tones_one_energy.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME tones_add_to_the_bands COMMAND golden_compare integrated/tones_run.csv integrated/tones_run_bands_alone.csv 0.001 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_add_to_the_bands PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+add_test(NAME tones_azimuth_moves_footprint COMMAND golden_compare integrated/tones_antiphase.csv integrated/tones_run.csv 0.001 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_azimuth_moves_footprint PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+set_tests_properties(tones_one_coherent_is_energy tones_add_to_the_bands tones_azimuth_moves_footprint PROPERTIES FIXTURES_REQUIRED tone_runs)
+# Bands that hold the tones run alone, saying so; what the tones cannot go through is refused, naming why.
+add_test(NAME tones_total_runs_on_bands COMMAND niceops -d integrated/tones_b407_total.nod ${TONE_RUN} -o integrated/tones_total.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_total_runs_on_bands PROPERTIES PASS_REGULAR_EXPRESSION "the tones are not added")
+add_test(NAME tones_refuse_no_spectral COMMAND niceops -d integrated/tones_b407.nod ${TONE_RUN} --no-spectral -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_refuse_no_spectral PROPERTIES PASS_REGULAR_EXPRESSION "pure tones need the spectral path")
+add_test(NAME tones_refuse_db_cutoff COMMAND niceops -d integrated/tones_b407.nod ${TONE_RUN} --db_cutoff 40 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_refuse_db_cutoff PROPERTIES PASS_REGULAR_EXPRESSION "--db_cutoff does not combine with a database's pure tones")
+add_test(NAME tones_refuse_buildings COMMAND niceops -d integrated/tones_b407.nod -v databases/B407.json --humidity 20 --frame_bearing 210 -L warn --buildings tests/data/urban_buildings.csv -b tests/data/urban_observers.csv -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_refuse_buildings PROPERTIES PASS_REGULAR_EXPRESSION "--buildings does not evaluate pure tones")
+add_test(NAME tones_refuse_export COMMAND niceops -d integrated/tones_b407.nod --export_sphere integrated/never.nod --sphere_condition 0.1 0 0.006 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_refuse_export PROPERTIES PASS_REGULAR_EXPRESSION "would leave the rotor tones out")
+add_test(NAME tones_refuse_unknown_group COMMAND niceops -d integrated/tones_b407.nod ${TONE_RUN} --sync_group left0,tail -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_refuse_unknown_group PROPERTIES PASS_REGULAR_EXPRESSION "--sync_group names source tail, which the database does not carry")
+add_test(NAME tones_refuse_bad_azimuth COMMAND niceops -d integrated/tones_b407.nod ${TONE_RUN} --rotor_azimuth left0 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_refuse_bad_azimuth PROPERTIES PASS_REGULAR_EXPRESSION "give each source as tag=degrees")
+set_tests_properties(tones_total_runs_on_bands tones_refuse_no_spectral tones_refuse_db_cutoff tones_refuse_buildings tones_refuse_export tones_refuse_unknown_group tones_refuse_bad_azimuth PROPERTIES FIXTURES_REQUIRED tone_databases)
+# A multirotor database (condition_axes multirotor): the tone fixture restated in momentum similarity's axes,
+# run with a hexacopter's vehicle file; its axes take the run's air by default, and what cannot place a state is
+# refused.
+set(MULTIROTOR_RUN -d integrated/tones_multirotor.nod -v tests/data/hexacopter.json --humidity 20 --gridstep 4000 -L warn)
+add_test(NAME multirotor_database COMMAND make_tone_database databases/B407_fixed_load_factor.nod integrated/tones_multirotor.nod --multirotor 1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(multirotor_database PROPERTIES FIXTURES_SETUP multirotor_databases)
+add_test(NAME multirotor_run COMMAND niceops ${MULTIROTOR_RUN} -o integrated/multirotor_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(multirotor_run PROPERTIES PASS_REGULAR_EXPRESSION "hover tip Mach number M_h [0-9]+ of [0-9]+ states")
+add_test(NAME multirotor_refuse_aam COMMAND niceops ${MULTIROTOR_RUN} --blend aam -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(multirotor_refuse_aam PROPERTIES PASS_REGULAR_EXPRESSION "is in multirotor axes \\(x, z, M_h\\). Refused")
+add_test(NAME multirotor_refuse_export COMMAND niceops -d integrated/tones_multirotor.nod --export_sphere integrated/never.nod --sphere_condition 0.1 0 0.25 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(multirotor_refuse_export PROPERTIES PASS_REGULAR_EXPRESSION "take an operating condition as advance ratio")
+add_test(NAME multirotor_refuse_no_weight COMMAND niceops -d integrated/tones_multirotor.nod -v tests/data/hexacopter_no_weight.json --humidity 20 --gridstep 4000 -L warn -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(multirotor_refuse_no_weight PROPERTIES PASS_REGULAR_EXPRESSION "which scale by the vehicle's weight")
+set_tests_properties(multirotor_run multirotor_refuse_aam multirotor_refuse_export multirotor_refuse_no_weight PROPERTIES FIXTURES_REQUIRED multirotor_databases)
+set_tests_properties(condition_density_vehicle_is_golden condition_density_same_air_is_vehicle condition_density_cold_moves_footprint PROPERTIES FIXTURES_REQUIRED "condition_density_runs;demo_coarse_run")
 # The same over arrays/coyle_approach.csv, whose microphones stand at different
 # heights.  A grid's observers share one, so their mean coefficients are formed
 # once per state; these take the per-pair path the grid never reaches.

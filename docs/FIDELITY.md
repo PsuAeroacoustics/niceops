@@ -2301,6 +2301,81 @@ The states sampled agree with every state evaluated to 0.003 dB, as without scat
 20 ft agree with the default 4 m to 0.03 dB. Cost: 1.7 s on the GPU against 1.5 s specular, and
 3.8 s with `--no-gpu` against 3.4 s, each microphone's field built once for the run.
 
+### Pure tones against PSU-WOPWOP
+
+PSU-WOPWOP's tandem regression case (two 3-bladed rotors at 30.05 rad/s, hubs 12 m apart and 1 m
+apart in height, the rear turned 40° further, at 40 m/s in a 2.9° descent), its per-rotor
+far-field PT spheres on a 2.5° lower-hemisphere grid built into a format 2 database by panam's
+PT build. Harness `tones/`: `wopwop_tandem.py` and `wopwop_flyover.py`.
+
+| Check | Result |
+| --- | --- |
+| The database read back through `tone_directivity` at every grid node, against the spheres (level, and phase locked to each rotor's azimuth) | 125,404 tone-cells: worst 2.3e-6 dB, 2.5e-5°, relative 4.5e-7 |
+| Both rotors in their sync group, at the recorded azimuths, against PSU-WOPWOP's whole-vehicle sphere, band by band (bands to 100 Hz, which hold only the tones the grid resolves; 14,420 direction-bands within 20 dB of their peak) | rms 4.0 dB at 100 m, 0.43 at 1 km, 0.042 at 10 km, 0.0042 at 100 km (worst 0.059 dB): the far-field sphere about the center is the approximation at short range |
+| A flyover past 15 ground microphones (150 m start, x ±300 m, y ±200 m), ground off: each band's level over the pass against PSU-WOPWOP's direct prediction (bands to 100 Hz within 30 dB of the microphone's loudest) | front rotor alone: mean −0.58 dB, rms 1.1; tandem: −0.63, 1.3; rear turned 60°: −0.61, 1.1 |
+| The same flyover, turning the rear rotor 60° (half a cycle of the blade-passage tone): the change in each band, mean over the microphones | 50 Hz: PSU-WOPWOP +4.59 dB, NICEOPS +4.86; 79 Hz: −4.39, −3.93; 40 Hz: −0.75, −1.53; 25, 32, 63, 100 Hz: within 0.5 dB |
+
+- **Phase resolution.** Read as stored, the case's own 15° grid resolves only the blade-passage
+  tone (the others step more than 90° between cells and are summed in energy, as designed), and
+  2.5° resolves shaft orders to 33. Unwound about the shaft before it is interpolated (THEORY
+  4.4), the 15° grid resolves 18 of each rotor's 21-22 tones, every order to 54.
+- **Interpolation between nodes** (`tones/unwind_check.py`): the 15° database read by NICEOPS
+  at the 2.5° spheres' nodes, against those spheres, cells within 20 dB of each tone's peak.
+  Levels are the same either way (rms 0.12 dB at order 3 to 1.6 dB at 54).
+
+  | Shaft order | Phase error rms, stored | Unwound | Complex error rms, stored | Unwound |
+  | --- | --- | --- | --- | --- |
+  | 3 (blade passage) | 1.5° | 0.2° | 0.03 | 0.01 |
+  | 9 | 15° | 0.5° | 0.26 | 0.04 |
+  | 15 | 77° | 0.8° | 1.06 | 0.06 |
+  | 30 | 95° | 1.3° | 1.25 | 0.10 |
+  | 48 | 94° | 1.8° | 1.26 | 0.13 |
+  | 54 | 96° | 4.3° | 1.28 | 0.18 |
+  | 57-66 | 23-39° (unresolved either way) | the same | 0.33-0.55 | the same |
+
+  Over all 43 tones the median phase error rms falls from 94° to 1.4°, and the median complex
+  error from 1.23 to 0.10.
+- **The near-field correction against the exact field** (`[near_field]`). A rotating source of
+  compact monopoles and dipoles (three blades, tip Mach 0.6), its far-field directivity on a 5°
+  grid, and its exact field from the convected Green's function at R = 2-16 c/Ω, at the grid's
+  nodes within 20 dB of the peak (error relative to the peak):
+
+  | Case | R (c/Ω) | Far field alone | With the first-order term |
+  | --- | --- | --- | --- |
+  | hover, shaft order 3 | 2, 4, 8, 16 | 1.01, 0.49, 0.24, 0.12 | 0.39, 0.096, 0.024, 0.0064 |
+  | hover, order 6 | 2, 4, 8, 16 | 1.63, 0.85, 0.43, 0.21 | 1.36, 0.35, 0.089, 0.027 |
+  | M 0.2, order 3 | 2, 4, 8, 16 | 0.90, 0.43, 0.21, 0.11 | 0.32, 0.079, 0.020, 0.0056 |
+  | M 0.2, order 6 | 2, 4, 8, 16 | 1.39, 0.72, 0.36, 0.18 | 1.04, 0.26, 0.070, 0.022 |
+
+  The far field's error falls as 1/R, the corrected one's as about 1/R²; the term never adds
+  error, and once (m + 1) c / (2 |Ω| R) is under 1/2 it removes at least 70 % of it. The grid
+  Laplacian itself is held to spherical harmonics on 15°, 5° and 2.5° grids, full and lower
+  hemispheres: relative error 0.009-0.27, 0.0036-0.034 and 0.0009-0.0085 for degrees 1-8, second
+  order in the step.
+- **The near field in the flyover** (2 s windows, bands to 100 Hz within 20 dB of the window's
+  loudest band at that microphone; front rotor alone, without the near-field term / with it):
+
+  | Range at emission | Mean (dB) | rms (dB) |
+  | --- | --- | --- |
+  | below 150 m (mostly overhead) | −29.7 / −27.7 | 39.2 / 37.2 |
+  | 150-250 m | −3.6 / −3.2 | 10.5 / 9.9 |
+  | 250-400 m | −0.54 / −0.37 | 1.77 / 1.66 |
+  | 400-600 m | −0.34 / −0.26 | 0.69 / 0.63 |
+  | beyond 600 m | −0.67 / −0.64 | 1.13 / 1.10 |
+
+  The tandem: 150-250 m −3.7 / −3.3 dB (rms 9.4 / 9.1), 250-400 m −1.8 / −1.6 (5.4 / 5.2). Over the
+  whole pass the front rotor's mean moves from −0.58 to −0.41 dB (rms 1.11 to 0.99), the tandem's
+  from −0.63 to −0.44 (1.33 to 1.24); the phasing's effect is unchanged (50 Hz +4.82 dB with the
+  term, +4.86 without, against PSU-WOPWOP's +4.59). The term helps in every range and band, but it
+  is a small part of the short-range difference: this rotor (6.6 m, 30 rad/s) is 17 c/Ω out at
+  200 m, where its first-order phase error is 6.5° at blade passage. What remains close in is the
+  overhead axial null, which NICEOPS keeps 35-40 dB deeper than PSU-WOPWOP's direct prediction
+  below 150 m (the first-order term fills it by 2 dB), and windows near the null on their way in.
+  Counting every band within 20 dB of its own peak over the pass, as an earlier version of this
+  comparison did, also takes in the receding pass's weak bands at 79-100 Hz (25-30 dB, near the
+  2 s FFT's leakage from the loud tones), where NICEOPS reads 15-27 dB lower: that gave the larger
+  short-range means (6 dB at 150-250 m) this table replaces.
+
 ### `--db_cutoff` and SEL
 
 The cutoff is exact for an observer whose peak level reaches it, but an SEL exceeds its peak level
@@ -2439,6 +2514,44 @@ SEL, station atmosphere, plates:
   spheres. `S-76D_M3` was 4.5 dB below both, by 2.9 to 7.8 dB depending on direction, and its
   smaller error was that deficit cancelling the broadband path's own excess (+3.4 dB on the
   descents in the build).
+
+### Rotor tones of a hovering hexacopter (Mid-State, 2023)
+
+The PSU hexacopter (six two-bladed 14 in rotors, about 220 rad/s) hovered at 6, 12, 24 and 49 m
+over a line of ground plates on two days (runs HC1ZZC-13 and HC1ZZC-19), its rotor angles logged
+onboard. PANAM extracted each rotor's shaft orders phase-locked to its logged angle, fitted each
+rotor's order 2 (blade passage) and 4 to the plates' order sums over all six rotors (spinning
+modes k = m s and m s ± 1 about the shaft, s the sense of rotation; amplitudes referred to 220
+rad/s, pressure as the rate cubed), fitted what that leaves as each rotor's incoherent energy
+directivity, and wrote both into a format 2 database (`tone_speed_exponent` 3,
+`incoherent_amplitude`). NICEOPS replays each held-out segment with `--rotor_history` at the
+logged azimuths and speeds, the plates as free-field observers (each plate's response divided out
+of the measured sums). Harness `tones/`: `nice_holdout.py`, `incoherent.py`.
+
+Held out, fitted to the rest; means over each kind's folds. Leq: the energy mean over a segment
+at each plate, less the measured; rms over plates and segments. Beating: the correlation over time
+of predicted and measured power, against about 0 for the energy sum of the phase-locked parts.
+
+| Held out | Order | Leq (rms) | Phase-locked part alone | Beating |
+| --- | --- | --- | --- | --- |
+| The plates on the other side of the line | 2 | −1.02 (2.44) dB | −5.72 (6.20) dB | 0.38 |
+| | 4 | +0.49 (2.26) | −19.6 (20.3) | 0.01 |
+| Each height, from the other heights | 2 | −0.01 (1.98) | −4.66 (5.16) | 0.54 |
+| | 4 | +0.93 (2.36) | −23.0 (23.3) | 0.00 |
+| Each day, from the other (its timing offset fitted) | 2 | −0.47 (2.44) | −3.80 (4.50) | 0.56 |
+| | 4 | +0.06 (2.52) | −20.7 (21.3) | −0.04 |
+
+- **NICEOPS reproduces the fit's own prediction**: correlation 0.97 of the levels over time at
+  blade passage (0.81-0.84 at order 4, whose level barely moves), means within 0.07 dB.
+- **Blade passage is about half phase-locked** (37 % incoherent on one day, 65 % on the other),
+  and its interference between rotors is predicted held out; order 4 is about 97 % incoherent: 21.5 dB
+  above the extraction noise, but a fixed directivity per rotor explains 2 % of it in sample (14 %
+  with every azimuthal order), so it is carried in energy.
+- **Synchrophasing** (`tones/phase_optimum.py`): with the rotors locked at one speed, the quietest
+  relative azimuths lower blade passage over a 200 m square footprint under a 24 m hover by
+  9.90 dB in free field (the loudest raise it 3.53 dB), each certified the global optimum by a
+  semidefinite bound to 0.000 dB. The incoherent part does not lock: with it the benefit is
+  1.40 dB at most.
 
 ### Database screen
 

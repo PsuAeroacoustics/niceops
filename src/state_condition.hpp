@@ -7,6 +7,8 @@
 // procedure tool's envelope check (niceops_procedure --check) cannot map a
 // state differently.
 
+#include <limits>
+#include <optional>
 #include <string>
 
 #include "condition_selection.hpp"
@@ -16,6 +18,20 @@ namespace niceops {
 class Database;
 struct State;
 struct dimensional_data;
+
+// Which air density C_T is formed with (--condition_density): the vehicle
+// file's, which every database has been built and run with, or the run
+// atmosphere's at each state's height.  A database records which its C_T axis
+// used (root attribute thrust_coefficient_density, vehicle or run).
+enum class ConditionDensity
+{
+    vehicle,
+    atmosphere,
+};
+
+// "vehicle" or "atmosphere"; nullopt for anything else.
+std::optional<ConditionDensity> parse_condition_density(const std::string& name);
+const char* to_string(ConditionDensity density);
 
 struct StateCondition
 {
@@ -27,10 +43,34 @@ struct StateCondition
     // blend holds.
     bool load_capped = false;
     bool load_floored = false;
+    // A multirotor database's hover shaft rate Omega_h at the state, rad/s
+    // (multirotor_condition); NaN for a helicopter's.  The three fields above
+    // then hold (x, z, M_h).
+    double hover_rotor_speed = std::numeric_limits<double>::quiet_NaN();
 };
 
+// density_ratio is the vehicle file's density over the one C_T is to be
+// formed with (--condition_density atmosphere: the run's air at the state); the
+// trajectory's C_T, formed with the vehicle file's, is scaled by it.  1, the
+// default, leaves C_T untouched.
 StateCondition state_condition(const State& state, const Database& database, bool qsam,
-        double max_load_factor, const BlendOptions& blend);
+        double max_load_factor, const BlendOptions& blend, double density_ratio = 1.0);
+
+// A state's condition on a multirotor database (THEORY 2.1): momentum
+// similarity, from the vehicle's weight times the state's load factor, the air
+// density and sound speed at the state, and the database's rotor count, radius
+// and hover thrust coefficient,
+//
+//     v_h = sqrt(W / (2 rho N pi R^2)),   Omega_h R = sqrt(W / (N rho pi R^2 C_T,h)),
+//     x = |u - (u.n) n| / v_h,   z = (u.n) / v_h,   M_h = Omega_h R / c,
+//
+// with u the air-relative velocity and n the thrust direction.  The load factor
+// is held at minimum_load_factor below it (a state in free fall has no hover
+// to scale by), and condition.load_floored says so.  Returns (x, z, M_h) in the
+// advance_ratio, flight_path_angle and thrust_coefficient fields, and Omega_h.
+inline constexpr double multirotor_minimum_load_factor = 0.1;
+StateCondition multirotor_condition(const State& state, const Database& database, double weight_newtons,
+        double density, double sound_speed);
 
 // The ways a state's lookup is not its own condition, as bits: niceops's
 // --provenance_file shares and niceops_procedure --check's report.

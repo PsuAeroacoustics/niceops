@@ -221,6 +221,203 @@ Two consequences worth knowing:
 Regenerating the database with the current builder (panam, `DATABASE_FORMAT_VERSION = 1`) makes
 the fix-up unnecessary; the loader then trusts the file as written.
 
+## Format 2: frames, lossless spheres, density and pure-tone sources
+
+The first step of the multisphere and phase plan. The root attributes are read in any version;
+the sources only in format 2. Things to keep:
+
+- **The frame is chosen once, in `source_state`** (`sphere_frame_kind_`), so every path that
+  reads a sphere (the hot loop, the bounds, buildings, the GPU) gets the right frame through
+  `SourceState::frame`. `flight_path_sphere_frame` takes the nose as given, climb included,
+  which is what `nose_direction` already returns: the heading at hover, with its weighted climb.
+  Degenerate cases fall back to `sphere_frame`'s whole frame, not a half-built one. A level
+  flight-path database matches the same data labeled level to 1e-9, not to the bit: the two
+  frames normalize in a different order.
+- **Lossless absorption is one member, `absorption_start_`** (the sphere radius, or 0), used by
+  `eval` and `eval_spectrum`. For the default it is the radius, so the expressions are the old
+  ones to the bit. Inside the sphere a lossless level is the surface's absorbed over the radius,
+  in both paths, which is why `eval_spectrum` floors the path at the radius there. The urban
+  model's rays absorb over their whole length and add back the part inside the sphere; for a
+  lossless sphere they add back nothing (`absorbed_inside` in `urban_point.cpp`). The bounds stay
+  bounds: absorbing from the hub only lowers levels, and a gaining EAA already declines to bound.
+- **`--condition_density atmosphere` in the vehicle file's own air takes the density that file
+  states**, not one recomputed from the pressure the file derived from it, so the
+  `condition_density_same_air_is_vehicle` CTest is byte-identical. The ratio is applied only when
+  it is not 1. Only niceops forms states, so `state_condition` takes the ratio rather than a
+  profile.
+- **The sources are gridded over the sorted unique angles**, as a band amplitude is; format 2 has
+  no unsorted legacy to permute. Each source must be in every condition, keep its harmonics,
+  `phase_reference` and `sync_group`, and have every tone an integer order of its shaft rate
+  (relative 1e-5). Stored as complex float, pressure relative to the reference, in
+  `[(condition * cells + cell) * tones + tone]`, the layout the tone evaluation will read.
+- **The phase-resolution check** (`widest_phase_steps`) flags a tone at load if any condition has
+  a step of more than 90° between neighbors (phi, across the seam when phi spans the circle, and
+  theta) both within 20 dB of its peak. It warns, marks the tone energy-only, and refuses
+  nothing: decision 3 of the plan. It judges the phase as it will be interpolated: unwound about
+  the shaft where that is the smoother (below).
+- **A shaft-order tone is interpolated unwound** (`ToneSource::unwind_order`,
+  `cell_shaft_azimuth_`, `shaft_azimuth`). Harmonic m of a rotor winds its phase m times around
+  the shaft, which is what a coarse grid cannot follow: on PSU-WOPWOP's 15° tandem the widest
+  neighbor step ran 65-180° for orders 3-66. Multiplied by exp(-i sigma m alpha), sigma the sign
+  of the shaft rate and alpha the cell's azimuth about the sphere frame's up axis toward
+  starboard, the same spheres step at most 5-17° through order 36. The convention is pinned on
+  that tandem: PSU-WOPWOP's rotors turn at +30.05 rad/s about +z (counterclockwise seen from
+  above), their stored phase winds as exp(+i m alpha), and the other sign makes every order worse.
+  `tone_directivity` sums the unwound corners under the same weights and multiplies the result by
+  exp(+i sigma m alpha) at the direction itself, so the nodes give back the stored phase and the
+  level is untouched. Each tone takes the unwound phase only where its widest step is the smaller
+  (a strongly mixed harmonic, or a fixture whose phase does not wind, stays wound). What it buys
+  on the tandem is in [FIDELITY](../FIDELITY.md#pure-tones-against-psu-wopwop). Tests: `a shaft-order
+  tone is interpolated with its phase unwound about the shaft` (both senses, exact between nodes,
+  a non-winding phase left wound).
+- **Only niceops's run evaluates tones** (below), so the constructor refuses `band_content =
+  broadband` with tones unless `DatabaseLoadOptions::tones_evaluated`, and warns for `total`.
+  Putting the refusal in the constructor covers every other tool that loads a database; `run()`
+  sets the flag.
+- **A replayed rotor turns at its logged rate** (`--rotor_history`, `ToneEvaluator::Group::replayed`):
+  the replayed sources are one coherent group exempt from the shared-rate check a sync group
+  takes, since free-running rotors differ by 0.2-2 %; each takes its own logged azimuth and rate
+  at every state. Test: `replayed rotors interfere at their logged azimuths, and sound at their
+  logged rates` (its unequal-rate pair).
+- **`tone_speed_exponent` scales both parts of a tone** (`StateTones::amplitude_scales`): the
+  phase-locked pressure by (|Omega_run| / |Omega_db|)^nu and the incoherent part's power by its
+  square. The speed test carries an incoherent part so that dropping its scale fails
+  (`a tone's pressure follows its rotor's speed where the database gives tone_speed_exponent`).
+- **An incoherent part is level only, added in energy per source** (`ToneSource::incoherent_db`):
+  it takes the tone's own arrivals with no directivity phase or azimuth, so its direct and
+  reflected arrivals still interfere, and it is never summed into a sync group. Its -inf is no
+  data and is filled from the neighboring cells, as a tone's is: a writer must give a quiet
+  direction a finite floor. PANAM's measured writer once wrote a non-negative fit's zeros as
+  -inf, and the fill put energy beside them (a 5 dB spike through the off-receiver ground ratio).
+- **Multirotor axes share the helicopter's three slots** (`ConditionAxes`, THEORY 2.1):
+  `condition(i)` is (x, z, M_h) there, `blend_at` hands the query to `blend_multirotor`, and the
+  helicopter code is untouched, branch for branch, so its blends are the old ones to the bit.
+  `active_axes_` names the axes the database varies; only those are normalized and triangulated
+  (a database at one weight and air holds one M_h, and blends over (x, z), as a
+  fixed_load_factor one does over (mu, gamma)), and the blend pads the unused barycentric slots
+  with weight 0 on the first sphere, as before. A query off a constant axis sets that axis's
+  clamped flag. `--blend aam` is refused in `blend_multirotor` and in `run()`.
+
+### The multirotor schema (format 2, `condition_axes = multirotor`)
+
+What a builder writes, and the loader checks:
+
+| Where | Name | Meaning |
+| --- | --- | --- |
+| root attribute | `condition_axes` | `multirotor` |
+| root attribute | `rotor_count` | N, a whole number |
+| root attribute | `rotor_radius_m` | R, m |
+| root attribute | `hover_thrust_coefficient` | C_T,h per rotor, T / (rho pi R^2 (Omega R)^2), at hover |
+| root attribute | `thrust_coefficient_density` | `run`: the axes were formed with each condition's own air; anything else (or absent) is refused |
+| root variable | `fixed_load_factor` | 0 or absent; set, the database is refused |
+| condition group, scalar | `inplane_speed_ratio` | x >= 0, the in-plane air speed over v_h |
+| condition group, scalar | `axial_speed_ratio` | z, the air speed along the thrust over v_h, positive in climb |
+| condition group, scalar | `hover_tip_mach` | M_h = Omega_h R / c, > 0 |
+| condition group, scalars (optional) | `air_density`, `weight_n`, `airspeed`, `climb_rate` | informative; not read |
+| source subgroup, scalar | `speed_ratio` | the rotor's \|shaft_rate\| over Omega_h at that condition, > 0 |
+| source subgroup, scalar | `shaft_rate` | rad/s, signed: > 0 counterclockwise seen from above (the sphere frame's up axis); one sense at every condition |
+
+The helicopter scalars (`advance_ratio`, `flight_path_angle`, `thrust_coefficient`) are not read.
+Every other format 2 rule holds (sources, tones as whole shaft orders of `shaft_rate`, phase
+references, `band_content`). At a state, `multirotor_condition` (state_condition.cpp) forms
+v_h, Omega_h, x, z and M_h from the vehicle file's weight times the load factor (held at 0.1
+below it), the density `--condition_density` names (the run's air by default for these
+databases) and the run's sound speed at the state's height; `run()` writes Omega_h into the
+state's `Blend::hover_rotor_speed`, and `tone_shaft_rate` and `tone_frequencies` scale the
+blended speed ratios by it. `check_vehicle` compares only the rotor radius: the axes are
+normalized by weight, and no tip speed indexes them. Tests: `a multirotor state's x, z and M_h
+are momentum similarity's` (hover, level, climb, descent, a 1.5 g turn, a tilted disk, wind, the
+load-factor floor against hand values), `a multirotor database blends over the axes it varies; a
+node is its condition`, `a multirotor database refuses what it cannot place a state with`, and
+the CTests `multirotor_*`.
+
+## Pure tones in a run (`src/tones.hpp`, THEORY 4.4)
+
+The second step of the plan: the tones of a `band_content = broadband` database, per arrival,
+with phase. Things to keep:
+
+- **Nothing on the default path.** Every tone term is behind `tone_run` in `process_trajectory`:
+  a database without tones takes the old calls, and the goldens are byte-identical. A tone run
+  marches every state (`expand_from_peak` is off): the bounds are on the bands alone, and
+  `--db_cutoff` is refused for the same reason.
+- **`Database::tone_directivity` uses `eval_spectrum`'s cell and weights** (`cell_stencil`,
+  `blend_present`), so a tone and its bands are read at the same point. The level is blended in
+  dB, the phase is the argument of the complex sum under the same weights: no unwrapping, and no
+  dip between neighbors of different phase.
+- **One reception time per state** (`tone_arrival`): every arrival's emission time is solved
+  against the state's center's direct lag, so hubs and image arrivals compare. That is what gives
+  PSU-WOPWOP's far-field e^(+i omega n.d/(c(1 - M.n))) between hubs (`two hubs' relative phase`)
+  without any far-field approximation in the code.
+- **Q enters conjugated.** `spherical_reflection_coefficient` is written for e^(-i omega t); the
+  tones are in e^(+i omega t) like the spheres. The two-ray test (`a tone over the ground is the
+  exact two-ray sum`) holds the sign.
+- **One combining form for a source and a group** (`combine` in `evaluate`): a group of one adds
+  `0 + d`, which is `d`, so `--tone_coherence coherent` and `energy` agree to the bit for one
+  source (`one source sums the same coherently or in energy, to the bit`; CTest
+  `tones_one_coherent_is_energy`). The turbulence coherence is taken from the state's center for
+  the same reason.
+- **The band fallback reads the band path's own levels** (`with_tones` in `process_trajectory`):
+  with every term and in straight-ray free field, so every path (plates, tables, terrain,
+  screening, refraction, urban) gives its correction without its own tone code. The lambdas
+  already write band levels when given a buffer; a tone run gives them one even when no history
+  is kept. A band the database leaves empty there keeps the free field.
+- **Database sync groups must share a shaft rate at every condition**; a run-time group is held at
+  its members' mean instead. Only `rotor_azimuth` sources join a coherent group.
+- **The A-weighted level weights each tone at its own frequency**; outputs built from the band
+  levels afterwards (the C-weighted SEL, EPNL's PNLT, band histories and frames) see the tone's
+  power filed in its band and weight it as the band. `add_tone_power` writes that power into the
+  history's bands.
+- **The ground per frequency uses an admittance table** (`AdmittanceTable`, 96 points per octave),
+  not the band admittances: a tone's frequency is its own, Doppler-shifted. The ground table
+  (`GroundTable`) is the band model's and is not read for tones.
+- **The default phasing is each rotor's recorded azimuth** (`azimuth`, first sphere): the phases
+  are stored locked to it (Â = A e^(-i m psi_ref)), so evaluating them at it gives back the
+  phasing they were predicted with. Zero would put every rotor of a tandem at one blade azimuth,
+  which is not the vehicle that was predicted. A group whose members' recorded azimuths differ
+  between spheres by other than a common turn warns: one default cannot hold both.
+- **Wind is solved in the frame moving with the air** (`tone_arrival`'s `wind`): the hub at
+  V - W, the microphone received at x - W T. The wind is the profile's mean over the heights from
+  the ground to the state, the straight ray's own on the level ground the per-frequency path
+  runs on. Calm air takes the old arithmetic in its own branch, to the bit (`a tone in a uniform
+  wind`), so a run without a wind profile is unchanged.
+- **A predicted sphere's floor cells must stay finite.** The loader keeps a non-finite level as
+  an empty entry, which `tone_directivity` drops and renormalizes over, as the bands do for
+  unmeasured cells: a -inf written where a prediction is merely quiet fills a directivity null
+  with its neighbors' level. panam's PT build keeps PSU-WOPWOP's floor level there; on the tandem,
+  writing -inf put 15-33 dB into bands made of such tones.
+- **Verified against PSU-WOPWOP** in the validation harness (`tones/`): the database's cells
+  through `tone_directivity` to float precision; the coherent sum of a tandem's two rotor spheres
+  against PSU-WOPWOP's whole-vehicle sphere, converging as the range grows; and ground-microphone
+  band levels of a flyover against PSU-WOPWOP's direct prediction, with and without the near-field
+  term ([FIDELITY](../FIDELITY.md)).
+- Tested in `[tones]` (`test_sphere_database.cpp`) and the `tones_*` CTests, on databases
+  `make_tone_database` writes from B407's (two rotors at 110 and 220 Hz, 95 dB). Deferred: tones on
+  refracted and terrain paths per frequency, a bound for the peak search.
+- **The near-field term** (`--tone_near_field`, THEORY 4.4) is `ToneSource::near_field`, Lap[D A]
+  per condition, cell and tone, computed at load by `compute_tone_near_fields` with
+  `sphere_laplacian` (`src/sphere_laplacian.cpp`) and interpolated in `tone_directivity` with the
+  amplitude's own weights and unwinding. Keep:
+  - **Differentiate whichever of f and its unwound B varies less at each node** (relative differences
+    to its four grid neighbors; a tie unwinds). Unwinding everywhere fails twice: order +-1, whose B
+    is sin(beta) with a cone point on the shaft (its error grew as the grid was refined, 0.05 at 15°,
+    0.26 at 2.5°), and a tone whose content near the shaft does not wind, where B winds instead.
+    Choosing by the phase step alone, with a 20 dB floor, picked the wound form near the shaft for
+    pure modes (both scored zero there) and lost an order of magnitude.
+  - **A lower hemisphere is extended evenly across the horizontal plane**, the half Database reads
+    as its mirror image: one-sided fits at its edge were first order and ran to 0.3 relative.
+  - **Interior nodes take three-point differences** in (theta, phi); only the grid's poles, an open
+    edge and a theta edge without a pole take the tangent-plane quadratic fit (two grid steps).
+  - **The cap**, twice the tone's largest |A| over the sphere, only bites within a wavelength or two
+    of the hub; the counted condition, the term over half of |A| there, is the expansion's limit.
+  - **D's speed** is the condition's own (airspeed, or advance ratio times the root's tip speed),
+    over c = 340.29 m/s; a database without it gets D = 1 and a warning.
+  - Tested in `[near_field]` (`test_near_field.cpp`): spherical harmonics on 15°, 5° and 2.5° grids,
+    full and lower hemispheres, tolerance 0.25 (l h)^2 + 0.1 h; and a port of the rotating source of
+    PSU-WOPWOP's near-field check (exact convected Green's function) at R = 2-16 c/Ω, hover and
+    M 0.2, shaft orders 3 and 6: the corrected error falls as about 1/R^2, never exceeds the far
+    field's, and is under 0.3 of it where (m + 1) c / (2 |Ω| R) <= 1/2. `--tone_near_field off`
+    takes the M3 arithmetic unchanged, so its results are those of the far field alone, to the bit.
+
 ## Broadband and spectral propagation
 
 - **There is no 4x EAA multiplier.** `eval` applies EAA exactly as panam wrote it. The D

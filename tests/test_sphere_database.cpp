@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -16,11 +17,16 @@
 #include <iterator>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include <netcdf.h>
 
+#include "atmosphere.hpp"
 #include "sphere_database.hpp"
+#include "state_condition.hpp"
+#include "tones.hpp"
+#include "trajectory.hpp"
 #include "weighting.hpp"
 #include "util/logger.hpp"
 #include "demo_database.hpp"
@@ -493,21 +499,33 @@ TEST_CASE("azimuth_reference is read from the database root and survives export"
     REQUIRE(std::string(to_string(AzimuthReference::track)) == "track");
 }
 
-TEST_CASE("a database whose spheres are not level is refused", "[sphere_database]")
+TEST_CASE("a database records its sphere frame, and an unknown one is refused", "[sphere_database]")
 {
-    // NICEOPS's sphere is level, as PANAM's and NORAH2's are; AAM's is pitched by the
-    // flight path angle.  An export says level and reloads; a database recording the
-    // flight-path frame would be read gamma off, so it is refused.
+    // NICEOPS's sphere is level, as PANAM's and NORAH2's are; AAM's and WOPWOP's are in
+    // the flight path's frame.  An export says which, and reloads in it; a frame the
+    // loader does not know is refused, not read a flight path angle off.
     const auto sphere = test::demo_database().interpolate_sphere(0.15, -4.0, 0.006);
     const auto path = (std::filesystem::temp_directory_path() / "niceops_sphere_frame.nod").string();
     write_sphere(sphere, path);
     REQUIRE(Database(path).root_attributes().at("sphere_frame") == "level");
-    int ncid = 0;
-    REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
-    REQUIRE(nc_redef(ncid) == NC_NOERR);
-    REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, "sphere_frame", 11, "flight_path") == NC_NOERR);
-    REQUIRE(nc_close(ncid) == NC_NOERR);
-    REQUIRE_THROWS_WITH(Database(path), Catch::Matchers::ContainsSubstring("sphere_frame 'flight_path'"));
+    REQUIRE(Database(path).sphere_frame_kind() == SphereFrameKind::level);
+    const auto set_frame = [&](const std::string& frame) {
+        int ncid = 0;
+        REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+        REQUIRE(nc_redef(ncid) == NC_NOERR);
+        REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, "sphere_frame", frame.size(), frame.c_str()) == NC_NOERR);
+        REQUIRE(nc_close(ncid) == NC_NOERR);
+    };
+    set_frame("flight_path");
+    const Database flight_path(path);
+    REQUIRE(flight_path.sphere_frame_kind() == SphereFrameKind::flight_path);
+    // ... and its export says so in turn.
+    const auto reexported = (std::filesystem::temp_directory_path() / "niceops_sphere_frame_again.nod").string();
+    write_sphere(flight_path.interpolate_sphere(0.15, -4.0, 0.006), reexported);
+    REQUIRE(Database(reexported).sphere_frame_kind() == SphereFrameKind::flight_path);
+    std::filesystem::remove(reexported);
+    set_frame("pitched");
+    REQUIRE_THROWS_WITH(Database(path), Catch::Matchers::ContainsSubstring("sphere_frame 'pitched'"));
     std::filesystem::remove(path);
 }
 
@@ -1857,25 +1875,144 @@ TEST_CASE("an AAM export lays out its axes and amplitudes as the format says", "
     std::filesystem::remove(path);
 }
 
+TEST_CASE("an AAM export of a lossless sphere carries the absorption out to its radius", "[sphere_database][export]")
+{
+    // AAM's levels at the radius are absorbed out to it, and AAM absorbs only
+    // beyond: a lossless sphere (sphere_levels_lossless) takes alpha(f) R on the
+    // way out, or it reads loud at high frequency.  Level flight, so the payload
+    // is otherwise the sphere's own.
+    const Database& source = test::demo_database();
+    auto sphere = source.interpolate_sphere(0.15, 0.0, 0.006);
+    const std::size_t bands = 3;
+    sphere.frequencies = {125.0, 2000.0, 8000.0};
+    sphere.amplitudes.resize(sphere.cells.size() * bands);
+    for (std::size_t cell = 0; cell < sphere.cells.size(); cell++)
+        for (std::size_t band = 0; band < bands; band++)
+            sphere.amplitudes[cell * bands + band] = 60.0 + 0.25 * static_cast<double>(cell % 31) + 5.0 * band;
+    sphere.levels_lossless = true;
+    const std::vector<double> absorption = {0.0004, 0.009, 0.1};
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_aam_lossless.nc").string();
+    REQUIRE_THROWS_WITH(write_aam_sphere(sphere, path, 213.0),
+            Catch::Matchers::ContainsSubstring("needs the air's absorption"));
+    write_aam_sphere(sphere, path, 213.0, &absorption);
+    int ncid = 0, var = 0;
+    REQUIRE(nc_open(path.c_str(), NC_NOWRITE, &ncid) == NC_NOERR);
+    std::vector<std::size_t> rows;
+    for (std::size_t m = 0; m < sphere.phis.size(); m++)
+        if (std::fabs(sphere.phis[m]) <= 90.0)
+            rows.push_back(m);
+    std::vector<float> amplitude(rows.size() * sphere.thetas.size() * bands);
+    REQUIRE(nc_inq_varid(ncid, "AMPLITUDE", &var) == NC_NOERR);
+    REQUIRE(nc_get_var_float(ncid, var, amplitude.data()) == NC_NOERR);
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+    std::size_t k = 0;
+    for (const auto m : rows)
+        for (std::size_t n = 0; n < sphere.thetas.size(); n++)
+            for (std::size_t band = 0; band < bands; band++, k++)
+            {
+                const double lossless = sphere.amplitudes[(m * sphere.thetas.size() + n) * bands + band];
+                REQUIRE(amplitude[k] == static_cast<float>(lossless - absorption[band] * sphere.radius));
+            }
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("AAM's sphere type follows the band set", "[sphere_database][export]")
 {
     // BB is one-third octave bands 10-40 (TR Table 4-37), nominal or exact centers.
     std::vector<double> nominal = {10, 12.5, 16, 20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315,
             400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000};
     CHECK(aam_third_octave_bands(nominal));
+    // Exact base-2 centers over the whole set: 9.84 Hz (band 10) is 0.069 from n in
+    // 10 lg f, past the 0.05 the test once used, which wrote such sets as NB.
     std::vector<double> base_two;
-    for (int k = -10; k <= 10; k++)
+    for (int k = -20; k <= 10; k++)
         base_two.push_back(1000.0 * std::pow(2.0, k / 3.0));
     CHECK(aam_third_octave_bands(base_two));
+    CHECK(third_octave_band_numbers(base_two).front() == 10);
+    CHECK(third_octave_band_numbers(base_two).back() == 40);
     CHECK(aam_third_octave_bands({500.0}));
     // A 1/12-octave set, a band past 10 kHz, a repeated band and nothing are not.
     std::vector<double> twelfth;
     for (int k = 0; k < 12; k++)
         twelfth.push_back(1000.0 * std::pow(2.0, k / 12.0));
     CHECK_FALSE(aam_third_octave_bands(twelfth));
+    CHECK(third_octave_band_numbers(twelfth).empty());
     CHECK_FALSE(aam_third_octave_bands({8000.0, 12500.0}));
+    CHECK(third_octave_band_numbers({8000.0, 12500.0}) == std::vector<long>{39, 41});
     CHECK_FALSE(aam_third_octave_bands({1000.0, 1000.0}));
+    CHECK(third_octave_band_numbers({1000.0, 1000.0}).empty());
     CHECK_FALSE(aam_third_octave_bands({}));
+}
+
+TEST_CASE("an AAM export of third-octave bands past 10 kHz is BB, the bands outside left out",
+        "[sphere_database][export]")
+{
+    // Bands 37, 40, 41 and 42: still band levels, so BB with 5 and 10 kHz kept, not NB
+    // (AAM would read every band level as a tone's).  A level that is not finite is
+    // AAM's missing level, -999, as panam's writer has it.  Level flight, so the
+    // payload is the sphere's own.
+    const Database& source = test::demo_database();
+    auto sphere = source.interpolate_sphere(0.15, 0.0, 0.006);
+    sphere.frequencies = {5000.0, 10000.0, 12500.0, 16000.0};
+    const std::size_t bands = sphere.frequencies.size();
+    sphere.amplitudes.resize(sphere.cells.size() * bands);
+    for (std::size_t cell = 0; cell < sphere.cells.size(); cell++)
+        for (std::size_t band = 0; band < bands; band++)
+            sphere.amplitudes[cell * bands + band] = 30.0 + 0.25 * static_cast<double>(cell % 89) + 7.0 * band;
+    std::vector<std::size_t> rows;
+    for (std::size_t m = 0; m < sphere.phis.size(); m++)
+        if (std::fabs(sphere.phis[m]) <= 90.0 + 1e-9)
+            rows.push_back(m);
+    const std::size_t thetas = sphere.thetas.size();
+    auto at = [&](std::size_t row, std::size_t n, std::size_t band) {
+        return (rows[row] * thetas + n) * bands + band;
+    };
+    sphere.amplitudes[at(2, 3, 0)] = std::numeric_limits<double>::quiet_NaN();
+    sphere.amplitudes[at(4, 5, 1)] = std::numeric_limits<double>::infinity();
+    sphere.amplitudes[at(6, 7, 0)] = -std::numeric_limits<double>::infinity();
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_aam_export_wide.nc").string();
+    write_aam_sphere(sphere, path, 213.0);
+
+    int ncid = 0;
+    REQUIRE(nc_open(path.c_str(), NC_NOWRITE, &ncid) == NC_NOERR);
+    auto length = [&](const char* name) {
+        int dim = 0;
+        std::size_t n = 0;
+        REQUIRE(nc_inq_dimid(ncid, name, &dim) == NC_NOERR);
+        REQUIRE(nc_inq_dimlen(ncid, dim, &n) == NC_NOERR);
+        return n;
+    };
+    REQUIRE(length("PHI") == rows.size());
+    REQUIRE(length("THETA") == thetas);
+    REQUIRE(length("FREQUENCY") == 2);
+    auto read_floats = [&](const char* name, std::size_t n) {
+        int var = 0;
+        REQUIRE(nc_inq_varid(ncid, name, &var) == NC_NOERR);
+        std::vector<float> values(n);
+        REQUIRE(nc_get_var_float(ncid, var, values.data()) == NC_NOERR);
+        return values;
+    };
+    CHECK(read_floats("BB", 1)[0] == 1.0f);
+    CHECK(read_floats("NB", 1)[0] == 0.0f);
+    const auto frequency = read_floats("FREQUENCY", 2);
+    CHECK(frequency[0] == 5000.0f);
+    CHECK(frequency[1] == 10000.0f);
+    const auto amplitude = read_floats("AMPLITUDE", rows.size() * thetas * 2);
+    auto written = [&](std::size_t row, std::size_t n, std::size_t band) {
+        return amplitude[(row * thetas + n) * 2 + band];
+    };
+    for (std::size_t i = 0; i < rows.size(); i += 5)
+        for (std::size_t n = 0; n < thetas; n += 3)
+            for (std::size_t band = 0; band < 2; band++)
+                if (std::isfinite(sphere.amplitudes[at(i, n, band)]))
+                    REQUIRE(written(i, n, band) == static_cast<float>(sphere.amplitudes[at(i, n, band)]));
+    CHECK(written(2, 3, 0) == -999.0f);
+    CHECK(written(4, 5, 1) == -999.0f);
+    CHECK(written(6, 7, 0) == -999.0f);
+    for (const float value : amplitude)
+        REQUIRE(std::isfinite(value));
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+    std::filesystem::remove(path);
 }
 
 TEST_CASE("an AAM export is pitched by its flight path angle", "[sphere_database][export]")
@@ -2420,5 +2557,1449 @@ TEST_CASE("direction bounds hold for two-sided corrections and the other policie
         REQUIRE(std::isfinite(range));
         REQUIRE(db.eval(range, 0.0, 90.0, states[0].blend) <= cutoff + 1e-9);
     }
+    std::filesystem::remove(path);
+}
+
+// ---- Format 2 (multisphere and phase, milestone 1): the flight-path frame, lossless
+// spheres, the run's density in C_T, and the pure-tone sources' loader.
+
+namespace {
+
+void set_root_text(const std::string& path, const char* name, const std::string& value)
+{
+    int ncid = 0;
+    REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+    REQUIRE(nc_redef(ncid) == NC_NOERR);
+    REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, name, value.size(), value.c_str()) == NC_NOERR);
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+}
+
+void set_root_int(const std::string& path, const char* name, int value)
+{
+    int ncid = 0;
+    REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+    REQUIRE(nc_redef(ncid) == NC_NOERR);
+    REQUIRE(nc_put_att_int(ncid, NC_GLOBAL, name, NC_INT, 1, &value) == NC_NOERR);
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+}
+
+// Overwrite one variable with `value` in every condition group.
+void fill_group_variable(const std::string& path, const char* name, double value)
+{
+    int ncid = 0;
+    REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+    int n = 0;
+    REQUIRE(nc_inq_grps(ncid, &n, nullptr) == NC_NOERR);
+    std::vector<int> groups(static_cast<std::size_t>(n));
+    REQUIRE(nc_inq_grps(ncid, &n, groups.data()) == NC_NOERR);
+    for (const int group : groups)
+    {
+        int varid = 0;
+        REQUIRE(nc_inq_varid(group, name, &varid) == NC_NOERR);
+        int ndims = 0;
+        REQUIRE(nc_inq_varndims(group, varid, &ndims) == NC_NOERR);
+        std::vector<int> dims(static_cast<std::size_t>(ndims));
+        REQUIRE(nc_inq_vardimid(group, varid, dims.data()) == NC_NOERR);
+        std::size_t count = 1;
+        for (const int dim : dims)
+        {
+            std::size_t length = 0;
+            REQUIRE(nc_inq_dimlen(group, dim, &length) == NC_NOERR);
+            count *= length;
+        }
+        const std::vector<double> values(count, value);
+        REQUIRE(nc_put_var_double(group, varid, values.data()) == NC_NOERR);
+    }
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+}
+
+// A dBA that varies with direction, so a frame turned the wrong way shows.
+double directional_dba(std::size_t condition, std::size_t channel)
+{
+    return 100.0 + static_cast<double>(condition) + 1.5 * static_cast<double>(channel / 4)
+            - 0.7 * static_cast<double>(channel % 4);
+}
+
+// Pure-tone sources added to a three-condition, 4 x 4, two-band database
+// (write_shared_grid_test_database), laid out as format 2 is: each source a subgroup of
+// every condition group named by its tag, its tones' amplitude and phase over the
+// group's (PHI, THETA) grid.
+struct ToneFixture
+{
+    std::vector<std::string> tags = {"front", "rear"};
+    std::vector<double> shaft_rates = {40.0, -40.0};
+    std::vector<int> harmonics = {2, 4};
+    // The frequency of tone k of source s, or the exact shaft order when unset.
+    std::function<double(std::size_t, std::size_t)> frequency;
+    // The phase (deg) of tone k at grid cell (m, n).
+    std::function<double(std::size_t, std::size_t, std::size_t)> phase = [](std::size_t m, std::size_t n,
+                                                                            std::size_t k) {
+        return 10.0 * static_cast<double>(m) + 5.0 * static_cast<double>(n) + 30.0 * static_cast<double>(k);
+    };
+    std::string band_content = "total"; // empty: absent
+    std::string phase_reference = "rotor_azimuth"; // empty: absent
+    std::string sync_group = "main"; // empty: absent
+    std::string condition_axes; // empty: absent
+    int version = 2;
+    // Leave the second source out of the second condition.
+    bool drop_rear_from_condition_1 = false;
+    // The band centers of the spectrum beside the tones.
+    std::vector<double> bands = {500.0, 2000.0};
+    // The level (dB) of tone k of source s at grid cell (m, n); unset, a slope over
+    // the grid, the same for every source.
+    std::function<double(std::size_t, std::size_t, std::size_t, std::size_t)> amplitude;
+    // Each source's hub (forward, starboard, up), m; unset, +-1.5 m fore and aft,
+    // 0.3 m up.
+    std::function<std::array<double, 3>(std::size_t)> center;
+    // The rotor azimuth (deg) source s's phases were locked to at condition i
+    // (the optional azimuth); unset, none written.
+    std::function<double(std::size_t, std::size_t)> azimuth;
+    // Rows (channels) with phi descending, as write_shared_grid_test_database's
+    // reverse_phi_rows lays them out; the tones follow the same rows.
+    bool reverse_phi_rows = false;
+    // The root's tone_speed_exponent; NaN: none written.
+    double tone_speed_exponent = std::numeric_limits<double>::quiet_NaN();
+    // The incoherent_amplitude (dB) of tone k of source s at grid cell (m, n) at
+    // condition i; unset, none written.  Only the sources it is given for when
+    // `incoherent_sources` is not empty.
+    std::function<double(std::size_t, std::size_t, std::size_t, std::size_t)> incoherent;
+    std::vector<std::size_t> incoherent_sources;
+    // Leave incoherent_amplitude out of the second condition.
+    bool drop_incoherent_from_condition_1 = false;
+};
+
+std::string write_tone_test_database(const std::string& name, const ToneFixture& f)
+{
+    const auto path = write_shared_grid_test_database(name, fixed_load_factor_conditions, false, true, 30.48, {},
+            f.reverse_phi_rows, f.bands);
+    int ncid = 0;
+    REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+    REQUIRE(nc_redef(ncid) == NC_NOERR);
+    std::string list;
+    for (const auto& tag : f.tags)
+        list += (list.empty() ? "" : ",") + tag;
+    REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, "sources", list.size(), list.c_str()) == NC_NOERR);
+    if (!f.band_content.empty())
+        REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, "band_content", f.band_content.size(), f.band_content.c_str())
+                == NC_NOERR);
+    if (!f.condition_axes.empty())
+        REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, "condition_axes", f.condition_axes.size(),
+                        f.condition_axes.c_str())
+                == NC_NOERR);
+    if (std::isfinite(f.tone_speed_exponent))
+        REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, "tone_speed_exponent", NC_DOUBLE, 1, &f.tone_speed_exponent)
+                == NC_NOERR);
+    int n_groups = 0;
+    REQUIRE(nc_inq_grps(ncid, &n_groups, nullptr) == NC_NOERR);
+    std::vector<int> groups(static_cast<std::size_t>(n_groups));
+    REQUIRE(nc_inq_grps(ncid, &n_groups, groups.data()) == NC_NOERR);
+    struct SourceVars
+    {
+        int group, center, shaft_rate, harmonic, frequency, amplitude, phase, azimuth, incoherent;
+        std::size_t s, condition;
+    };
+    std::vector<SourceVars> vars;
+    const std::size_t n_tones = f.harmonics.size();
+    for (std::size_t i = 0; i < groups.size(); i++)
+    {
+        int phi_dim = 0, theta_dim = 0;
+        REQUIRE(nc_inq_dimid(groups[i], "PHI", &phi_dim) == NC_NOERR);
+        REQUIRE(nc_inq_dimid(groups[i], "THETA", &theta_dim) == NC_NOERR);
+        for (std::size_t s = 0; s < f.tags.size(); s++)
+        {
+            if (f.drop_rear_from_condition_1 && i == 1 && s == 1)
+                continue;
+            SourceVars v {0, 0, 0, 0, 0, 0, 0, -1, -1, s, i};
+            REQUIRE(nc_def_grp(groups[i], f.tags[s].c_str(), &v.group) == NC_NOERR);
+            int tone_dim = 0, xyz_dim = 0;
+            REQUIRE(nc_def_dim(v.group, "tone", n_tones, &tone_dim) == NC_NOERR);
+            REQUIRE(nc_def_dim(v.group, "xyz", 3, &xyz_dim) == NC_NOERR);
+            REQUIRE(nc_def_var(v.group, "center", NC_DOUBLE, 1, &xyz_dim, &v.center) == NC_NOERR);
+            REQUIRE(nc_def_var(v.group, "shaft_rate", NC_DOUBLE, 0, nullptr, &v.shaft_rate) == NC_NOERR);
+            REQUIRE(nc_def_var(v.group, "harmonic", NC_INT, 1, &tone_dim, &v.harmonic) == NC_NOERR);
+            REQUIRE(nc_def_var(v.group, "frequency", NC_DOUBLE, 1, &tone_dim, &v.frequency) == NC_NOERR);
+            const int dims[3] = {phi_dim, theta_dim, tone_dim};
+            REQUIRE(nc_def_var(v.group, "amplitude", NC_DOUBLE, 3, dims, &v.amplitude) == NC_NOERR);
+            REQUIRE(nc_def_var(v.group, "phase", NC_DOUBLE, 3, dims, &v.phase) == NC_NOERR);
+            if (f.azimuth)
+                REQUIRE(nc_def_var(v.group, "azimuth", NC_DOUBLE, 0, nullptr, &v.azimuth) == NC_NOERR);
+            if (f.incoherent && !(f.drop_incoherent_from_condition_1 && i == 1)
+                    && (f.incoherent_sources.empty()
+                            || std::find(f.incoherent_sources.begin(), f.incoherent_sources.end(), s)
+                                    != f.incoherent_sources.end()))
+                REQUIRE(nc_def_var(v.group, "incoherent_amplitude", NC_DOUBLE, 3, dims, &v.incoherent) == NC_NOERR);
+            if (!f.phase_reference.empty())
+                REQUIRE(nc_put_att_text(v.group, NC_GLOBAL, "phase_reference", f.phase_reference.size(),
+                                f.phase_reference.c_str())
+                        == NC_NOERR);
+            if (!f.sync_group.empty())
+                REQUIRE(nc_put_att_text(v.group, NC_GLOBAL, "sync_group", f.sync_group.size(), f.sync_group.c_str())
+                        == NC_NOERR);
+            vars.push_back(v);
+        }
+    }
+    REQUIRE(nc_enddef(ncid) == NC_NOERR);
+    int version_var = 0;
+    REQUIRE(nc_inq_varid(ncid, "database_version", &version_var) == NC_NOERR);
+    REQUIRE(nc_put_var_int(ncid, version_var, &f.version) == NC_NOERR);
+    for (const auto& v : vars)
+    {
+        const std::array<double, 3> hub = f.center ? f.center(v.s) : std::array<double, 3> {v.s == 0 ? 1.5 : -1.5, 0.0, 0.3};
+        const double center[3] = {hub[0], hub[1], hub[2]};
+        REQUIRE(nc_put_var_double(v.group, v.center, center) == NC_NOERR);
+        REQUIRE(nc_put_var_double(v.group, v.shaft_rate, &f.shaft_rates[v.s]) == NC_NOERR);
+        if (f.azimuth)
+        {
+            const double azimuth = f.azimuth(v.s, v.condition);
+            REQUIRE(nc_put_var_double(v.group, v.azimuth, &azimuth) == NC_NOERR);
+        }
+        REQUIRE(nc_put_var_int(v.group, v.harmonic, f.harmonics.data()) == NC_NOERR);
+        std::vector<double> frequency(n_tones);
+        for (std::size_t k = 0; k < n_tones; k++)
+            frequency[k] = f.frequency ? f.frequency(v.s, k)
+                                       : f.harmonics[k] * std::fabs(f.shaft_rates[v.s]) / (2.0 * pi);
+        REQUIRE(nc_put_var_double(v.group, v.frequency, frequency.data()) == NC_NOERR);
+        std::vector<double> amplitude, phase;
+        for (std::size_t row = 0; row < 4; row++)
+            for (std::size_t n = 0; n < 4; n++)
+                for (std::size_t k = 0; k < n_tones; k++)
+                {
+                    // The file's row `row` is sorted phi index m.
+                    const std::size_t m = f.reverse_phi_rows ? 3 - row : row;
+                    amplitude.push_back(f.amplitude ? f.amplitude(v.s, m, n, k)
+                                                    : 80.0 + 2.0 * static_cast<double>(m) - static_cast<double>(n)
+                                    - 3.0 * static_cast<double>(k));
+                    phase.push_back(f.phase(m, n, k));
+                }
+        REQUIRE(nc_put_var_double(v.group, v.amplitude, amplitude.data()) == NC_NOERR);
+        REQUIRE(nc_put_var_double(v.group, v.phase, phase.data()) == NC_NOERR);
+        if (v.incoherent >= 0)
+        {
+            std::vector<double> incoherent;
+            for (std::size_t row = 0; row < 4; row++)
+                for (std::size_t n = 0; n < 4; n++)
+                    for (std::size_t k = 0; k < n_tones; k++)
+                        incoherent.push_back(f.incoherent(v.s, f.reverse_phi_rows ? 3 - row : row, n, k));
+            REQUIRE(nc_put_var_double(v.group, v.incoherent, incoherent.data()) == NC_NOERR);
+        }
+    }
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+    return path;
+}
+
+} // namespace
+
+TEST_CASE("tones land in the direction their rows name, as the bands beside them do", "[sphere_database][format2]")
+{
+    // A file whose rows are not in sorted (phi, theta) order: the bands are put in
+    // their cells by the channels' own angles, and the tones beside them must be
+    // too, or each tone sits in another direction than its bands.
+    ToneFixture sorted;
+    ToneFixture reversed;
+    reversed.reverse_phi_rows = true;
+    DatabaseLoadOptions evaluated;
+    evaluated.tones_evaluated = true;
+    const auto a_path = write_tone_test_database("niceops_tones_sorted_rows.nod", sorted);
+    const auto b_path = write_tone_test_database("niceops_tones_reversed_rows.nod", reversed);
+    const Database a(a_path, evaluated), b(b_path, evaluated);
+    REQUIRE(a.tone_sources().size() == b.tone_sources().size());
+    for (std::size_t s = 0; s < a.tone_sources().size(); s++)
+    {
+        REQUIRE(a.tone_sources()[s].amplitudes.size() == b.tone_sources()[s].amplitudes.size());
+        REQUIRE(a.tone_sources()[s].amplitudes == b.tone_sources()[s].amplitudes);
+    }
+    std::filesystem::remove(a_path);
+    std::filesystem::remove(b_path);
+}
+
+TEST_CASE("the flight-path frame's nose is the velocity, and level flight is the level frame",
+        "[sphere_database][format2]")
+{
+    // Climbing at 10 degrees with a level tip-path plane: the level frame's nose is the
+    // velocity's horizontal part, the flight-path frame's the velocity itself, with its up
+    // tilted back by the same angle.
+    const double gamma = 10.0 * pi / 180.0;
+    const Vec3 climb(std::cos(gamma), 0.0, std::sin(gamma));
+    const Vec3 up(0.0, 0.0, 1.0);
+    const SphereFrame level = sphere_frame(climb * 40.0, up);
+    const SphereFrame path = flight_path_sphere_frame(climb * 40.0, up);
+    REQUIRE(lookup_angles(path, climb)[1] < 1e-6);
+    REQUIRE(std::fabs(lookup_angles(level, climb)[1] - 10.0) < 1e-9);
+    REQUIRE(std::fabs(path.normal.dot(Vec3(-std::sin(gamma), 0.0, std::cos(gamma))) - 1.0) < 1e-12);
+    REQUIRE(std::fabs(path.starboard.dot(level.starboard) - 1.0) < 1e-12);
+    // Level flight: the same frame, so the same angles everywhere.
+    const Vec3 cruise(30.0, 5.0, 0.0);
+    const SphereFrame a = sphere_frame(cruise, up);
+    const SphereFrame b = flight_path_sphere_frame(cruise, up);
+    for (double x = -1.0; x <= 1.0; x += 0.25)
+        for (double z = -1.0; z <= 0.5; z += 0.25)
+        {
+            const Vec3 d = Vec3(x, 0.3, z).normalized();
+            const auto la = lookup_angles(a, d), lb = lookup_angles(b, d);
+            REQUIRE(std::fabs(la[0] - lb[0]) < 1e-9);
+            REQUIRE(std::fabs(la[1] - lb[1]) < 1e-9);
+        }
+    // No velocity, or one along the TPP normal: the level frame's own fallback.
+    const SphereFrame still = flight_path_sphere_frame(Vec3(0.0, 0.0, 0.0), up);
+    const SphereFrame fallback = sphere_frame(Vec3(0.0, 0.0, 0.0), up);
+    REQUIRE(still.nose.dot(fallback.nose) == 1.0);
+    const SphereFrame vertical = flight_path_sphere_frame(Vec3(0.0, 0.0, 5.0), up);
+    REQUIRE(std::fabs(vertical.nose.norm() - 1.0) < 1e-12);
+    REQUIRE(std::fabs(vertical.normal.dot(vertical.nose)) < 1e-12);
+}
+
+TEST_CASE("a flight-path database in level flight reads as the same data labeled level",
+        "[sphere_database][format2]")
+{
+    // The degenerate case: with no climb the two frames coincide, so the levels must too.
+    const auto level_path = write_shared_grid_test_database("niceops_frame_level.nod",
+            fixed_load_factor_conditions, false, false, 30.48, directional_dba);
+    const auto path_path = write_shared_grid_test_database("niceops_frame_path.nod",
+            fixed_load_factor_conditions, false, false, 30.48, directional_dba);
+    set_root_text(path_path, "sphere_frame", "flight_path");
+    const Database level(level_path), path(path_path);
+    REQUIRE(path.sphere_frame_kind() == SphereFrameKind::flight_path);
+    const Vec3 source(0.0, 0.0, 150.0), normal(0.0, 0.0, 1.0);
+    const auto cruise_level = level.source_state(source, Vec3(40.0, 8.0, 0.0), normal, 0.4, 0.3, test_ct_reference);
+    const auto cruise_path = path.source_state(source, Vec3(40.0, 8.0, 0.0), normal, 0.4, 0.3, test_ct_reference);
+    double worst = 0.0;
+    for (double x = -400.0; x <= 400.0; x += 50.0)
+        for (double y = -400.0; y <= 400.0; y += 50.0)
+        {
+            const Vec3 observer(x, y, 0.0);
+            worst = std::max(worst, std::fabs(level.level_at_observer(observer, cruise_level)
+                                            - path.level_at_observer(observer, cruise_path)));
+        }
+    REQUIRE(worst < 1e-9);
+    // Climbing, they read the sphere differently.
+    const auto climb_level = level.source_state(source, Vec3(40.0, 0.0, 12.0), normal, 0.4, 0.3, test_ct_reference);
+    const auto climb_path = path.source_state(source, Vec3(40.0, 0.0, 12.0), normal, 0.4, 0.3, test_ct_reference);
+    double largest = 0.0;
+    for (double x = -400.0; x <= 400.0; x += 50.0)
+        largest = std::max(largest, std::fabs(level.level_at_observer(Vec3(x, 30.0, 0.0), climb_level)
+                                            - path.level_at_observer(Vec3(x, 30.0, 0.0), climb_path)));
+    REQUIRE(largest > 0.01);
+    std::filesystem::remove(level_path);
+    std::filesystem::remove(path_path);
+}
+
+TEST_CASE("lossless sphere levels absorb from the hub, others from the sphere", "[sphere_database][format2]")
+{
+    // EAA 5 dB/km everywhere, and two bands, on a 30.48 m sphere.
+    const double radius = 30.48;
+    const auto plain_path = write_shared_grid_test_database("niceops_lossy.nod", fixed_load_factor_conditions,
+            false, true, radius);
+    const auto lossless_path = write_shared_grid_test_database("niceops_lossless.nod",
+            fixed_load_factor_conditions, false, true, radius);
+    const auto zero_path = write_shared_grid_test_database("niceops_lossless_zero.nod",
+            fixed_load_factor_conditions, false, true, radius);
+    for (const auto& p : {plain_path, lossless_path, zero_path})
+        fill_group_variable(p, "EAA", 5.0);
+    set_root_int(lossless_path, "sphere_levels_lossless", 1);
+    set_root_int(zero_path, "sphere_levels_lossless", 0);
+    const Database plain(plain_path), lossless(lossless_path), zero(zero_path);
+    REQUIRE(!plain.sphere_levels_lossless());
+    REQUIRE(lossless.sphere_levels_lossless());
+    REQUIRE(!zero.sphere_levels_lossless());
+    const auto blend = plain.blend_at(0.3, 0.3, test_ct_reference);
+    const double absorption[2] = {0.002, 0.01};
+    for (const double range : {500.0, 1000.0, 3000.0})
+    {
+        const double a = plain.eval(range, 0.0, 90.0, blend);
+        // The broadband path's EAA runs over the radius too.
+        REQUIRE(std::fabs(a - lossless.eval(range, 0.0, 90.0, blend) - 5.0 * radius * 1e-3) < 1e-9);
+        // An explicit 0 is the default, to the bit.
+        REQUIRE(zero.eval(range, 0.0, 90.0, blend) == a);
+        double plain_levels[2], lossless_levels[2], zero_levels[2];
+        plain.eval_spectrum(range, 0.0, 90.0, blend, absorption, plain_levels);
+        lossless.eval_spectrum(range, 0.0, 90.0, blend, absorption, lossless_levels);
+        zero.eval_spectrum(range, 0.0, 90.0, blend, absorption, zero_levels);
+        for (std::size_t band = 0; band < 2; band++)
+        {
+            REQUIRE(std::fabs(plain_levels[band] - lossless_levels[band] - absorption[band] * radius) < 1e-9);
+            REQUIRE(zero_levels[band] == plain_levels[band]);
+        }
+    }
+    // Inside the sphere the level is the surface's, absorbed over the radius.
+    double inside[2], surface[2];
+    lossless.eval_spectrum(5.0, 0.0, 90.0, blend, absorption, inside);
+    lossless.eval_spectrum(radius, 0.0, 90.0, blend, absorption, surface);
+    REQUIRE(inside[0] == surface[0]);
+    REQUIRE(inside[1] == surface[1]);
+    // An export keeps the flag.
+    const auto exported = (std::filesystem::temp_directory_path() / "niceops_lossless_export.nod").string();
+    write_sphere(lossless.interpolate_sphere(0.3, 0.3, test_ct_reference), exported);
+    REQUIRE(Database(exported).sphere_levels_lossless());
+    set_root_int(zero_path, "sphere_levels_lossless", 2);
+    REQUIRE_THROWS_WITH(Database(zero_path), Catch::Matchers::ContainsSubstring("sphere_levels_lossless 2"));
+    for (const auto& p : {plain_path, lossless_path, zero_path, exported})
+        std::filesystem::remove(p);
+}
+
+TEST_CASE("--condition_density scales C_T by the density ratio, and 1 leaves it alone",
+        "[sphere_database][format2]")
+{
+    REQUIRE(parse_condition_density("vehicle") == ConditionDensity::vehicle);
+    REQUIRE(parse_condition_density("atmosphere") == ConditionDensity::atmosphere);
+    REQUIRE(!parse_condition_density("run").has_value());
+    REQUIRE(std::string(to_string(ConditionDensity::atmosphere)) == "atmosphere");
+    State state {};
+    state.mu = 0.2;
+    state.fpa = -3.0;
+    state.fpa_e = -3.0;
+    state.CT = 0.0071234567;
+    const Database& database = test::demo_database();
+    const auto as_built = state_condition(state, database, true, 2.0, {});
+    REQUIRE(as_built.thrust_coefficient == state.CT);
+    const auto same_air = state_condition(state, database, true, 2.0, {}, 1.0);
+    REQUIRE(same_air.thrust_coefficient == state.CT);
+    // A run's air 10 percent less dense than the vehicle file's raises C_T by 1/0.9.
+    const auto thin = state_condition(state, database, true, 2.0, {}, 1.0 / 0.9);
+    REQUIRE(std::fabs(thin.thrust_coefficient - state.CT / 0.9) < 1e-15);
+    // Dry air at 15 C and 101.325 kPa: 1.2250 kg/m^3.
+    Atmosphere air;
+    air.temperature = 288.15;
+    air.pressure = 101.325;
+    REQUIRE(std::fabs(air.density() - 1.2250) < 1e-4);
+}
+
+TEST_CASE("the root attributes of format 2 are read, and bad values refused", "[sphere_database][format2]")
+{
+    const auto path = write_shared_grid_test_database("niceops_format2_root.nod", fixed_load_factor_conditions,
+            false, true);
+    {
+        const Database database(path);
+        REQUIRE(database.thrust_coefficient_density() == ThrustCoefficientDensity::vehicle);
+        REQUIRE(database.band_content() == BandContent::total);
+        REQUIRE(!database.has_tones());
+    }
+    set_root_text(path, "thrust_coefficient_density", "run");
+    set_root_text(path, "band_content", "broadband");
+    set_root_text(path, "condition_axes", "helicopter");
+    {
+        const Database database(path);
+        REQUIRE(database.thrust_coefficient_density() == ThrustCoefficientDensity::run);
+        REQUIRE(database.band_content() == BandContent::broadband);
+        // An export says so in turn.
+        const auto exported = (std::filesystem::temp_directory_path() / "niceops_format2_root_export.nod").string();
+        write_sphere(database.interpolate_sphere(0.3, 0.3, test_ct_reference), exported);
+        REQUIRE(Database(exported).thrust_coefficient_density() == ThrustCoefficientDensity::run);
+        std::filesystem::remove(exported);
+    }
+    set_root_text(path, "thrust_coefficient_density", "standard");
+    REQUIRE_THROWS_WITH(Database(path), Catch::Matchers::ContainsSubstring("thrust_coefficient_density 'standard'"));
+    set_root_text(path, "thrust_coefficient_density", "vehicle");
+    set_root_text(path, "band_content", "tonal");
+    REQUIRE_THROWS_WITH(Database(path), Catch::Matchers::ContainsSubstring("band_content 'tonal'"));
+    set_root_text(path, "band_content", "total");
+    set_root_text(path, "condition_axes", "multirotor");
+    REQUIRE_THROWS_WITH(Database(path), Catch::Matchers::ContainsSubstring("multirotor axes"));
+    set_root_text(path, "condition_axes", "drone");
+    REQUIRE_THROWS_WITH(Database(path), Catch::Matchers::ContainsSubstring("condition_axes 'drone'"));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("a format 2 database's pure-tone sources load", "[sphere_database][format2]")
+{
+    const ToneFixture fixture;
+    const auto path = write_tone_test_database("niceops_tones.nod", fixture);
+    const Database database(path);
+    REQUIRE(database.database_version() == 2);
+    REQUIRE(database.has_tones());
+    const auto& sources = database.tone_sources();
+    REQUIRE(sources.size() == 2);
+    REQUIRE(sources[0].tag == "front");
+    REQUIRE(sources[1].tag == "rear");
+    REQUIRE(sources[0].phase_reference == PhaseReference::rotor_azimuth);
+    REQUIRE(sources[1].sync_group == "main");
+    REQUIRE(sources[0].harmonics == std::vector<int> {2, 4});
+    REQUIRE(sources[1].shaft_rates.size() == 3);
+    REQUIRE(sources[1].shaft_rates[2] == -40.0);
+    REQUIRE(sources[1].centers[0][0] == -1.5);
+    REQUIRE(std::fabs(sources[0].frequencies[1] - 4.0 * 40.0 / (2.0 * pi)) < 1e-12);
+    // Cell (m 2, n 1), tone 1 at condition 2: 80 + 4 - 1 - 3 dB, phase 20 + 5 + 30 deg.
+    const std::size_t cells = 16, tones = 2;
+    const auto value = sources[0].amplitudes[(2 * cells + 2 * 4 + 1) * tones + 1];
+    REQUIRE(std::fabs(std::abs(value) / std::pow(10.0, 80.0 / 20.0) - 1.0) < 1e-6);
+    REQUIRE(std::fabs(std::arg(value) - 55.0 * pi / 180.0) < 1e-6);
+    // A smooth phase is resolved.
+    REQUIRE(sources[0].energy_only == std::vector<char> {0, 0});
+    // The levels and bands are untouched by the sources.
+    REQUIRE(database.has_spectra());
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("a tone whose phase the grid does not resolve is marked energy-only", "[sphere_database][format2]")
+{
+    // Tone 1 turns 120 degrees from one phi row to the next; tone 0 only 10.
+    ToneFixture fixture;
+    fixture.phase = [](std::size_t m, std::size_t n, std::size_t k) {
+        return (k == 1 ? 120.0 : 10.0) * static_cast<double>(m) + 5.0 * static_cast<double>(n);
+    };
+    const auto path = write_tone_test_database("niceops_tones_unresolved.nod", fixture);
+    REQUIRE(Database(path).tone_sources()[0].energy_only == std::vector<char> {0, 1});
+    std::filesystem::remove(path);
+    // Without a phase at all, every tone is energy-only.
+    fixture.phase_reference = "none";
+    const auto none_path = write_tone_test_database("niceops_tones_none.nod", fixture);
+    REQUIRE(Database(none_path).tone_sources()[1].energy_only == std::vector<char> {1, 1});
+    std::filesystem::remove(none_path);
+}
+
+TEST_CASE("a format 2 database that cannot be read as written is refused, naming why",
+        "[sphere_database][format2]")
+{
+    const auto refused = [](const ToneFixture& fixture, const char* expected) {
+        const auto path = write_tone_test_database("niceops_tones_refused.nod", fixture);
+        REQUIRE_THROWS_WITH(Database(path), Catch::Matchers::ContainsSubstring(expected));
+        std::filesystem::remove(path);
+    };
+    ToneFixture unknown_version;
+    unknown_version.version = 3;
+    refused(unknown_version, "database_version 3");
+    ToneFixture off_order;
+    off_order.frequency = [](std::size_t s, std::size_t k) {
+        return k == 1 && s == 0 ? 26.0 : (k == 0 ? 2.0 : 4.0) * 40.0 / (2.0 * pi);
+    };
+    refused(off_order, "is not shaft order");
+    ToneFixture missing_rear;
+    missing_rear.drop_rear_from_condition_1 = true;
+    refused(missing_rear, "every condition must carry the same sources");
+    ToneFixture no_reference;
+    no_reference.phase_reference = "";
+    refused(no_reference, "has no phase_reference");
+    ToneFixture bad_reference;
+    bad_reference.phase_reference = "hub";
+    refused(bad_reference, "phase_reference 'hub'");
+    ToneFixture multirotor;
+    multirotor.condition_axes = "multirotor";
+    refused(multirotor, "multirotor axes");
+    ToneFixture silent_bands;
+    silent_bands.band_content = "";
+    refused(silent_bands, "no band_content");
+    // Bands that leave the tones out cannot run until tones are evaluated ...
+    ToneFixture broadband;
+    broadband.band_content = "broadband";
+    refused(broadband, "this caller does not evaluate pure tones");
+    // ... and load for a caller that evaluates them.
+    const auto path = write_tone_test_database("niceops_tones_broadband.nod", broadband);
+    DatabaseLoadOptions evaluated;
+    evaluated.tones_evaluated = true;
+    REQUIRE(Database(path, evaluated).band_content() == BandContent::broadband);
+    std::filesystem::remove(path);
+    // A format 1 file listing sources is not one this loader can trust.
+    ToneFixture version_one;
+    version_one.version = 1;
+    refused(version_one, "a database with sources is format 2");
+}
+
+// ---- Format 2 tones in a run (milestone 2): tones.hpp.
+
+namespace {
+
+// One omnidirectional tone per source (shaft order 4 at 250 Hz, 80 dB and zero
+// phase everywhere), over bands that hold it.
+ToneFixture omni_tones(std::vector<std::string> tags, const std::string& sync_group = "main")
+{
+    ToneFixture f;
+    f.tags = std::move(tags);
+    f.harmonics = {4};
+    const double rate = 2.0 * pi * 62.5;
+    f.shaft_rates.clear();
+    for (std::size_t s = 0; s < f.tags.size(); s++)
+        f.shaft_rates.push_back(s % 2 == 0 ? rate : -rate);
+    f.bands = {125.0, 250.0, 500.0, 1000.0, 2000.0};
+    f.band_content = "broadband";
+    f.sync_group = sync_group;
+    f.amplitude = [](std::size_t, std::size_t, std::size_t, std::size_t) { return 80.0; };
+    f.phase = [](std::size_t, std::size_t, std::size_t) { return 0.0; };
+    f.center = [](std::size_t s) { return std::array<double, 3> {s == 0 ? 1.5 : -1.5, 0.0, 0.0}; };
+    return f;
+}
+
+struct ToneRun
+{
+    std::string path;
+    Database database;
+    ToneEvaluator tones;
+    Database::SourceState state;
+
+    ToneRun(const std::string& name, const ToneFixture& f, const ToneRunOptions& options = {},
+            Vec3 position = Vec3(0.0, 0.0, 100.0))
+        : path(write_tone_test_database(name, f)), database(path, evaluated()),
+          tones(database, options, a_weighting_gains(database.band_centers(), BandLimits {}), 343.2),
+          state(database.source_state(position, Vec3(1.0, 0.0, 0.0), Vec3(0.0, 0.0, 1.0), 0.2, 0.2,
+                  test_ct_reference))
+    {
+    }
+    ~ToneRun()
+    {
+        std::filesystem::remove(path);
+    }
+    static DatabaseLoadOptions evaluated()
+    {
+        DatabaseLoadOptions o;
+        o.tones_evaluated = true;
+        return o;
+    }
+    // Total tone power at an observer (p_ref^2), and the per-band arrays.
+    double power(const Vec3& observer, const ToneEvaluator::Ground* ground = nullptr, double plane = 0.0,
+            std::vector<double>* bands = nullptr, std::vector<double>* weighted = nullptr,
+            Vec3 velocity = Vec3(0.0, 0.0, 0.0)) const
+    {
+        const std::size_t n = database.band_centers().size();
+        std::vector<double> absorption(n, 0.0), p(n, 0.0), w(n, 0.0);
+        const auto prepared = tones.prepare(state, velocity);
+        tones.evaluate(state, prepared, observer, absorption.data(), ground, plane, p.data(), w.data());
+        if (bands != nullptr)
+            *bands = p;
+        if (weighted != nullptr)
+            *weighted = w;
+        double total = 0.0;
+        for (const double x : p)
+            total += x;
+        return total;
+    }
+};
+
+} // namespace
+
+TEST_CASE("a tone's arrival: its emission time solves the moving hub's light cone, and its Doppler factor",
+        "[tones]")
+{
+    const double c = 343.2;
+    const Vec3 hub(0.0, 0.0, 0.0), velocity(50.0, 0.0, -5.0), point(1000.0, 200.0, -300.0);
+    const double lag = point.norm() / c;
+    const ToneArrival a = tone_arrival(hub, velocity, point, lag, c);
+    const Vec3 emitted = hub + velocity * a.delta;
+    REQUIRE(std::fabs((point - emitted).norm() - c * (lag - a.delta)) < 1e-9);
+    REQUIRE(std::fabs(a.length - (point - emitted).norm()) < 1e-9);
+    const Vec3 n = (point - emitted).normalized();
+    REQUIRE(std::fabs(a.doppler - (1.0 - velocity.dot(n) / c)) < 1e-15);
+    // Approaching, so emitted earlier than a still hub's sound and heard higher.
+    REQUIRE(a.delta < lag - point.norm() / c + 1e-12);
+    REQUIRE(a.doppler < 1.0);
+    // A still hub: the plain delay.
+    const ToneArrival still = tone_arrival(hub, Vec3(0.0, 0.0, 0.0), point, lag, c);
+    REQUIRE(std::fabs(still.delta) < 1e-12);
+    REQUIRE(still.doppler == 1.0);
+}
+
+TEST_CASE("two hubs' relative phase is WOPWOP's far-field e^(+i omega n.d / (c (1 - M.n)))", "[tones]")
+{
+    // The form WOPWOP's tandem test pins: a hub d from another, both moving at V,
+    // leads it by omega n.d / (c (1 - M.n)) at a far observer along n.
+    const double c = 343.2, omega = 2.0 * pi * 500.0;
+    const Vec3 velocity(60.0, 0.0, 0.0), d(1.2, -0.7, 0.4);
+    const Vec3 n = Vec3(0.3, 0.5, -0.8).normalized();
+    const Vec3 point = n * 20000.0;
+    const double lag = point.norm() / c;
+    const ToneArrival a1 = tone_arrival(Vec3(0.0, 0.0, 0.0), velocity, point, lag, c);
+    const ToneArrival a2 = tone_arrival(d, velocity, point, lag, c);
+    const Vec3 m = velocity / c;
+    const double expected = omega * n.dot(d) / (c * (1.0 - m.dot(a1.direction)));
+    REQUIRE(std::fabs(omega * (a2.delta - a1.delta) - expected) < 1e-3);
+}
+
+TEST_CASE("a tone over the ground is the exact two-ray sum with the model's Q at its frequency", "[tones]")
+{
+    auto fixture = omni_tones({"front"});
+    fixture.center = [](std::size_t) { return std::array<double, 3> {0.0, 0.0, 0.0}; };
+    const ToneRun run("niceops_tones_two_ray.nod", fixture, {}, Vec3(0.0, 0.0, 10.0));
+    GroundModel ground;
+    ground.receiver_height = 1.2;
+    const AdmittanceTable admittance(ground, 10.0, 20000.0, 343.2);
+    const ToneEvaluator::Ground g {&ground, &admittance};
+    const double f = 4.0 * 62.5, k = 2.0 * pi * f / 343.2, radius = run.database.sphere_radius();
+    for (const double x : {40.0, 80.0, 200.0, 600.0})
+    {
+        const Vec3 observer(x, 15.0, 1.2), image(x, 15.0, -1.2), hub(0.0, 0.0, 10.0);
+        const double ld = (observer - hub).norm(), lr = (image - hub).norm();
+        const auto q = spherical_reflection_coefficient((10.0 + 1.2) / lr, pi * f * lr / 343.2, admittance.at(f), true);
+        const std::complex<double> direct = std::polar(1e4 * radius / ld, -k * ld);
+        const std::complex<double> reflected
+                = std::complex<double>(q[0], -q[1]) * std::polar(1e4 * radius / lr, -k * lr);
+        const double exact = std::norm(direct + reflected);
+        REQUIRE(std::fabs(run.power(observer, &g) / exact - 1.0) < 1e-9);
+    }
+}
+
+TEST_CASE("inside the sphere a tone spreads down to --source_radius and holds below it", "[tones]")
+{
+    // The band path's inside-the-sphere rule (Database::eval_spectrum), for tones:
+    // by default held at the sphere's surface; with a source radius r0, 1/r down
+    // to r0 and held there.  No absorption here, so spreading alone.
+    auto fixture = omni_tones({"front"});
+    fixture.center = [](std::size_t) { return std::array<double, 3> {0.0, 0.0, 0.0}; };
+    ToneRun run("niceops_tones_source_radius.nod", fixture);
+    const double radius = run.database.sphere_radius();
+    REQUIRE(radius < 90.0);
+    const auto at = [&](double d) { return run.power(Vec3(0.0, 0.0, 100.0 - d)); };
+    const double surface = at(radius);
+    REQUIRE(surface > 0.0);
+    REQUIRE(std::fabs(at(0.5 * radius) / surface - 1.0) < 1e-12);
+    run.database.set_source_radius(0.25 * radius);
+    REQUIRE(std::fabs(at(radius) / surface - 1.0) < 1e-12);
+    REQUIRE(std::fabs(at(0.5 * radius) / surface - 4.0) < 1e-9);
+    REQUIRE(std::fabs(at(0.25 * radius) / surface - 16.0) < 1e-9);
+    REQUIRE(std::fabs(at(0.1 * radius) / surface - 16.0) < 1e-9);
+}
+
+TEST_CASE("a tone's ground is the band model's at any observer height", "[tones]")
+{
+    // The band model (excess_ground_attenuation on straight_ray) takes the plane
+    // z = 0, the source's height above it, its own receiver height and the
+    // horizontal separation, and puts the ratio on the direct level at the
+    // observer itself.  The tone path must describe the same two rays wherever the
+    // observer file puts the microphone: at one frequency, its ground is
+    // |1 + Q (R1/R2) e^{-ik(R2 - R1)}|^2 of that geometry times the free field at
+    // the observer.
+    auto fixture = omni_tones({"front"});
+    fixture.center = [](std::size_t) { return std::array<double, 3> {0.0, 0.0, 0.0}; };
+    const ToneRun run("niceops_tones_band_geometry.nod", fixture, {}, Vec3(0.0, 0.0, 10.0));
+    GroundModel ground;
+    ground.receiver_height = 1.2;
+    const AdmittanceTable admittance(ground, 10.0, 20000.0, 343.2);
+    const ToneEvaluator::Ground g {&ground, &admittance};
+    const double f = 4.0 * 62.5, k = 2.0 * pi * f / 343.2, radius = run.database.sphere_radius();
+    const double hs = 10.0, hr = 1.2;
+    for (const double z : {0.0, 1.2, 5.0})
+        for (const double x : {40.0, 80.0, 200.0, 600.0})
+        {
+            const Vec3 observer(x, 15.0, z), hub(0.0, 0.0, hs);
+            const double d = std::hypot(x, 15.0);
+            const double r1 = std::hypot(d, hs - hr), r2 = std::hypot(d, hs + hr);
+            const auto q = spherical_reflection_coefficient((hs + hr) / r2, pi * f * r2 / 343.2, admittance.at(f),
+                    true);
+            const std::complex<double> ratio
+                    = 1.0 + std::complex<double>(q[0], -q[1]) * (r1 / r2) * std::polar(1.0, -k * (r2 - r1));
+            const double free = std::pow(1e4 * radius / (observer - hub).norm(), 2.0);
+            const double exact = free * std::norm(ratio);
+            REQUIRE(std::fabs(run.power(observer, &g) / exact - 1.0) < 1e-9);
+        }
+}
+
+TEST_CASE("a caller's tone counts are the evaluator's own, handed over once", "[tones]")
+{
+    // The run keeps its counts per thread and adds them once (no shared
+    // counter per tone in the hot loop); the totals must be the same as the
+    // evaluator's own counting.
+    // A fixture whose levels and phases vary over the sphere, with the
+    // near-field term on, so there is something to count.
+    const auto path = write_tone_test_database("niceops_tones_counts.nod", ToneFixture {});
+    DatabaseLoadOptions load;
+    load.tones_evaluated = true;
+    load.tone_near_field = true;
+    const Database database(path, load);
+    ToneRunOptions options;
+    options.near_field = true;
+    const ToneEvaluator tones(database, options, a_weighting_gains(database.band_centers(), BandLimits {}), 343.2);
+    const auto state = database.source_state(Vec3(0.0, 0.0, 100.0), Vec3(1.0, 0.0, 0.0), Vec3(0.0, 0.0, 1.0), 0.2,
+            0.2, test_ct_reference);
+    struct
+    {
+        const Database& database;
+        const ToneEvaluator& tones;
+        const Database::SourceState& state;
+    } run {database, tones, state};
+    const std::size_t n = run.database.band_centers().size();
+    std::vector<double> absorption(n, 0.0), p(n, 0.0), w(n, 0.0), q(n, 0.0), v(n, 0.0);
+    const auto prepared = run.tones.prepare(run.state, Vec3(0.0, 0.0, 0.0));
+    const Vec3 observer(300.0, 50.0, 0.0);
+    run.tones.evaluate(run.state, prepared, observer, absorption.data(), nullptr, 0.0, p.data(), w.data());
+    const std::size_t own = run.tones.near_field_evaluations();
+    REQUIRE(own > 0);
+    ToneEvaluator::Counts kept;
+    run.tones.evaluate(run.state, prepared, observer, absorption.data(), nullptr, 0.0, q.data(), v.data(), &kept);
+    REQUIRE(run.tones.near_field_evaluations() == own);
+    REQUIRE(kept.near_field_evaluations == own);
+    run.tones.add_counts(kept);
+    REQUIRE(run.tones.near_field_evaluations() == 2 * own);
+    REQUIRE(p == q);
+    REQUIRE(w == v);
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("two rotors in one sync group: +6 dB in phase, a null in antiphase, +3 dB in energy", "[tones]")
+{
+    // On the plane between the two hubs, below the vehicle: the same path to both.
+    const Vec3 observer(0.0, 0.0, -9900.0);
+    const double one = ToneRun("niceops_tones_one.nod", omni_tones({"front"})).power(observer);
+    REQUIRE(one > 0.0);
+    const double together = ToneRun("niceops_tones_pair.nod", omni_tones({"front", "rear"})).power(observer);
+    REQUIRE(std::fabs(10.0 * std::log10(together / one) - 20.0 * std::log10(2.0)) < 1e-9);
+    // Shaft order 4: 45 degrees of azimuth is half a cycle.
+    ToneRunOptions antiphase;
+    antiphase.rotor_azimuth_deg["rear"] = 45.0;
+    const double null = ToneRun("niceops_tones_null.nod", omni_tones({"front", "rear"}), antiphase).power(observer);
+    REQUIRE(null < 1e-12 * one);
+    ToneRunOptions energy;
+    energy.coherence = ToneCoherence::energy;
+    const double summed = ToneRun("niceops_tones_energy.nod", omni_tones({"front", "rear"}), energy).power(observer);
+    REQUIRE(std::fabs(10.0 * std::log10(summed / one) - 10.0 * std::log10(2.0)) < 1e-9);
+    const double free_running = ToneRun("niceops_tones_free.nod", omni_tones({"front", "rear"}, "")).power(observer);
+    REQUIRE(std::fabs(10.0 * std::log10(free_running / one) - 10.0 * std::log10(2.0)) < 1e-9);
+    // A run-time group makes free-running rotors coherent again.
+    ToneRunOptions declared;
+    declared.sync_groups = {{"front", "rear"}};
+    const double grouped
+            = ToneRun("niceops_tones_declared.nod", omni_tones({"front", "rear"}, ""), declared).power(observer);
+    REQUIRE(std::fabs(10.0 * std::log10(grouped / one) - 20.0 * std::log10(2.0)) < 1e-9);
+}
+
+TEST_CASE("replayed rotors interfere at their logged azimuths, and sound at their logged rates", "[tones]")
+{
+    // Free-running sources (no database group) replayed from a log: together they are
+    // a coherent group at the logged azimuths, as a sync group at those azimuths is.
+    const Vec3 observer(0.0, 0.0, -9900.0);
+    const double one = ToneRun("niceops_tones_history_one.nod", omni_tones({"front"})).power(observer);
+    auto history = [](double offset_deg, double rate) {
+        RotorHistory h;
+        h.time = {-1.0, 1.0};
+        h.azimuth = {offset_deg * pi / 180.0 - rate, offset_deg * pi / 180.0 + rate};
+        h.rate = {rate, rate};
+        return h;
+    };
+    const double rate = 2.0 * pi * 62.5;
+    ToneRunOptions together;
+    together.rotor_history = {{"front", history(0.0, rate)}, {"rear", history(0.0, rate)}};
+    const double in_phase
+            = ToneRun("niceops_tones_history_pair.nod", omni_tones({"front", "rear"}, ""), together).power(observer);
+    REQUIRE(std::fabs(10.0 * std::log10(in_phase / one) - 20.0 * std::log10(2.0)) < 1e-9);
+    ToneRunOptions apart;
+    apart.rotor_history = {{"front", history(0.0, rate)}, {"rear", history(45.0, rate)}};
+    const double null
+            = ToneRun("niceops_tones_history_null.nod", omni_tones({"front", "rear"}, ""), apart).power(observer);
+    REQUIRE(null < 1e-12 * one);
+    // Rotors the database has at different rates (a measured multirotor's) replay together.
+    auto unequal = omni_tones({"front", "rear"}, "");
+    unequal.shaft_rates = {rate, -1.1 * rate};
+    ToneRunOptions replayed;
+    replayed.rotor_history = {{"front", history(0.0, rate)}, {"rear", history(0.0, rate)}};
+    const double unequal_pair = ToneRun("niceops_tones_history_unequal.nod", unequal, replayed).power(observer);
+    REQUIRE(std::fabs(10.0 * std::log10(unequal_pair / one) - 20.0 * std::log10(2.0)) < 1e-9);
+    // A rotor logged at another rate sounds at it: shaft order 4 of 2 pi 100 rad/s is 400 Hz.
+    ToneRunOptions faster;
+    faster.rotor_history = {{"front", history(0.0, 2.0 * pi * 100.0)}};
+    ToneRun run("niceops_tones_history_rate.nod", omni_tones({"front"}, ""), faster);
+    const auto prepared = run.tones.prepare(run.state, Vec3(0.0, 0.0, 0.0), Vec3(0.0, 0.0, 0.0), 0.5);
+    REQUIRE(std::fabs(prepared.frequencies[0] - 400.0) < 1e-9);
+    REQUIRE(std::fabs(prepared.azimuths[0] - 0.5 * 2.0 * pi * 100.0) < 1e-9);
+    // A replayed rotor cannot also be set or grouped.
+    ToneRunOptions both = faster;
+    both.rotor_azimuth_deg["front"] = 10.0;
+    REQUIRE_THROWS(ToneRun("niceops_tones_history_both.nod", omni_tones({"front"}, ""), both));
+}
+
+TEST_CASE("a tone's incoherent part adds in energy, each source alone, with its own arrivals' interference",
+        "[tones]")
+{
+    // An incoherent part at the tone's own level, over a directivity whose phase
+    // is uniform, doubles each source's power exactly, in free field and over the
+    // ground (its direct and reflected arrivals interfere as the tone's do).
+    const Vec3 observer(300.0, 40.0, 1.2);
+    auto plain = omni_tones({"front"});
+    plain.center = [](std::size_t) { return std::array<double, 3> {0.0, 0.0, 0.0}; };
+    auto doubled = plain;
+    doubled.incoherent = [](std::size_t, std::size_t, std::size_t, std::size_t) { return 80.0; };
+    ToneRunOptions energy;
+    energy.coherence = ToneCoherence::energy;
+    const ToneRun a("niceops_tones_incoherent_plain.nod", plain, energy, Vec3(0.0, 0.0, 10.0));
+    const ToneRun b("niceops_tones_incoherent_doubled.nod", doubled, energy, Vec3(0.0, 0.0, 10.0));
+    REQUIRE(std::fabs(b.power(observer) / a.power(observer) - 2.0) < 1e-9);
+    GroundModel ground;
+    ground.receiver_height = 1.2;
+    const AdmittanceTable admittance(ground, 10.0, 20000.0, 343.2);
+    const ToneEvaluator::Ground g {&ground, &admittance};
+    for (const double x : {40.0, 300.0, 900.0})
+    {
+        const Vec3 at(x, 15.0, 1.2);
+        REQUIRE(std::fabs(b.power(at, &g) / a.power(at, &g) - 2.0) < 1e-9);
+        // An observer off the model's receiver height takes the ratio there too.
+        const Vec3 off(x, 15.0, 4.0);
+        REQUIRE(std::fabs(b.power(off, &g) / a.power(off, &g) - 2.0) < 1e-9);
+    }
+
+    // Two rotors in one sync group: the tones add coherently, the incoherent parts
+    // in energy, each the source's own power (the energy run's).
+    auto pair = omni_tones({"front", "rear"});
+    pair.amplitude = [](std::size_t s, std::size_t m, std::size_t n, std::size_t) {
+        return 80.0 - 3.0 * static_cast<double>(s) + static_cast<double>(m) - 0.5 * static_cast<double>(n);
+    };
+    auto pair_incoherent = pair;
+    pair_incoherent.incoherent = [&pair](std::size_t s, std::size_t m, std::size_t n, std::size_t k) {
+        return pair.amplitude(s, m, n, k);
+    };
+    const ToneRun coherent("niceops_tones_incoherent_pair.nod", pair);
+    const ToneRun coherent_with("niceops_tones_incoherent_pair_with.nod", pair_incoherent);
+    const ToneRun separate("niceops_tones_incoherent_pair_energy.nod", pair, energy);
+    const Vec3 far(150.0, -60.0, 0.0);
+    const double expected = coherent.power(far) + separate.power(far);
+    // Float storage: the tone as a complex magnitude, its incoherent part in dB.
+    REQUIRE(std::fabs(coherent_with.power(far) - expected) < 1e-7 * expected);
+
+    // A source with the incoherent part at some conditions only is refused.
+    auto partial = doubled;
+    partial.drop_incoherent_from_condition_1 = true;
+    REQUIRE_THROWS(ToneRun("niceops_tones_incoherent_partial.nod", partial));
+    auto infinite = doubled;
+    infinite.incoherent = [](std::size_t, std::size_t, std::size_t, std::size_t) {
+        return std::numeric_limits<double>::infinity();
+    };
+    REQUIRE_THROWS(ToneRun("niceops_tones_incoherent_inf.nod", infinite));
+}
+
+TEST_CASE("a tone's pressure follows its rotor's speed where the database gives tone_speed_exponent", "[tones]")
+{
+    // RPM^6 in level is pressure as the rate cubed: a rotor replayed 10 % faster
+    // than the database's rate is 1.1^6 louder; without the exponent it is not.
+    const Vec3 observer(0.0, 0.0, -9900.0);
+    const double rate = 2.0 * pi * 62.5;
+    auto history = [](double w) {
+        RotorHistory h;
+        h.time = {-1.0, 1.0};
+        h.azimuth = {-w, w};
+        h.rate = {w, w};
+        return h;
+    };
+    auto scaled = omni_tones({"front"}, "");
+    scaled.tone_speed_exponent = 3.0;
+    // Its incoherent part scales with it.
+    scaled.incoherent = [](std::size_t, std::size_t, std::size_t, std::size_t) { return 86.0; };
+    ToneRunOptions at_rate, faster;
+    at_rate.rotor_history = {{"front", history(rate)}};
+    faster.rotor_history = {{"front", history(1.1 * rate)}};
+    const double base = ToneRun("niceops_tones_speed_base.nod", scaled, at_rate).power(observer);
+    const double fast = ToneRun("niceops_tones_speed_fast.nod", scaled, faster).power(observer);
+    REQUIRE(std::fabs(fast / base - std::pow(1.1, 6.0)) < 1e-9 * std::pow(1.1, 6.0));
+    auto unscaled = scaled;
+    unscaled.tone_speed_exponent = std::numeric_limits<double>::quiet_NaN();
+    const double plain = ToneRun("niceops_tones_speed_plain.nod", unscaled, faster).power(observer);
+    REQUIRE(std::fabs(plain / base - 1.0) < 1e-9);
+    // A sync group held at the members' mean rate scales each by (mean / own)^3.
+    auto unequal = omni_tones({"front", "rear"}, "");
+    unequal.shaft_rates = {rate, -1.2 * rate};
+    unequal.tone_speed_exponent = 3.0;
+    ToneRunOptions locked;
+    locked.sync_groups = {{"front", "rear"}};
+    ToneRun run("niceops_tones_speed_group.nod", unequal, locked);
+    const auto prepared = run.tones.prepare(run.state, Vec3(0.0, 0.0, 0.0));
+    REQUIRE(std::fabs(prepared.amplitude_scales[0] - std::pow(1.1, 3.0)) < 1e-12);
+    REQUIRE(std::fabs(prepared.amplitude_scales[1] - std::pow(1.1 / 1.2, 3.0)) < 1e-12);
+    // A negative or non-finite exponent is refused.
+    auto bad = omni_tones({"front"}, "");
+    bad.tone_speed_exponent = -1.0;
+    REQUIRE_THROWS(ToneRun("niceops_tones_speed_bad.nod", bad));
+}
+
+TEST_CASE("a rotor history file is unwrapped against its rate, and refused when it is not a history", "[tones]")
+{
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_rotor_history.csv").string();
+    auto write = [&](const std::string& text) {
+        std::ofstream(path) << text;
+    };
+    // 50 rad/s logged every 0.1 s: 5 rad (286 deg) a step, wrapped to [-180, 180).
+    std::ostringstream text;
+    text.precision(17);
+    text << "time,M1_azimuth,M1_rate,M2_azimuth,M2_rate\n";
+    for (int k = 0; k <= 10; k++)
+    {
+        const double a = 50.0 * 0.1 * k * 180.0 / pi;
+        text << 0.1 * k << "," << std::remainder(a, 360.0) << ",-50," << std::remainder(2.0 * a, 360.0) << ",100\n";
+    }
+    write(text.str());
+    const auto h = read_rotor_history(path);
+    REQUIRE(h.size() == 2);
+    REQUIRE(std::fabs(h.at("M1").azimuth.back() - h.at("M1").azimuth.front() - 50.0) < 1e-9);
+    REQUIRE(std::fabs(h.at("M2").azimuth.back() - h.at("M2").azimuth.front() - 100.0) < 1e-9);
+    REQUIRE(h.at("M1").rate.front() == 50.0);
+    REQUIRE(std::fabs(h.at("M1").azimuth_at(0.55) - h.at("M1").azimuth.front() - 27.5) < 1e-9);
+    write("time,M1_azimuth,M1_rate\n0,0,10\n0,1,10\n");
+    REQUIRE_THROWS(read_rotor_history(path));
+    write("time,M1_azimuth\n0,0\n1,1\n");
+    REQUIRE_THROWS(read_rotor_history(path));
+    write("time,M1_azimuth,M1_rate\n0,0,10\n1,1,10\nend\n");
+    REQUIRE_THROWS(read_rotor_history(path));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("a rotor's recorded azimuth is the default phasing, and --rotor_azimuth replaces it", "[tones]")
+{
+    // The phases are locked to azimuths 10 and 55 degrees: 45 degrees apart, half a
+    // cycle of shaft order 4, so the pair as predicted cancels below the vehicle.
+    const Vec3 observer(0.0, 0.0, -9900.0);
+    const double one = ToneRun("niceops_tones_az_one.nod", omni_tones({"front"})).power(observer);
+    auto recorded = omni_tones({"front", "rear"});
+    recorded.azimuth = [](std::size_t s, std::size_t) { return s == 0 ? 10.0 : 55.0; };
+    const double as_predicted = ToneRun("niceops_tones_az_rec.nod", recorded).power(observer);
+    REQUIRE(as_predicted < 1e-12 * one);
+    // Set absolutely: the rear at the front's azimuth, so in phase.
+    ToneRunOptions turned;
+    turned.rotor_azimuth_deg["rear"] = 10.0;
+    const double in_phase = ToneRun("niceops_tones_az_set.nod", recorded, turned).power(observer);
+    REQUIRE(std::fabs(10.0 * std::log10(in_phase / one) - 20.0 * std::log10(2.0)) < 1e-9);
+    // Without a recorded azimuth the stored phases stand as they are (in phase here).
+    const double unrecorded = ToneRun("niceops_tones_az_none.nod", omni_tones({"front", "rear"})).power(observer);
+    REQUIRE(std::fabs(10.0 * std::log10(unrecorded / one) - 20.0 * std::log10(2.0)) < 1e-9);
+}
+
+TEST_CASE("a tone in a uniform wind: still air in the frame moving with it", "[tones]")
+{
+    const double c = 343.2;
+    const Vec3 wind(10.0, 0.0, 0.0), still(0.0, 0.0, 0.0), hub(0.0, 0.0, 0.0);
+    // A still hub and microphone: no frequency shift, and sound reaches 1000 m
+    // downwind in 1000 / (c + W) and upwind in 1000 / (c - W).
+    const ToneArrival down = tone_arrival(hub, still, Vec3(1000.0, 0.0, 0.0), 1000.0 / (c + 10.0), c, wind);
+    REQUIRE(std::fabs(down.delta) < 1e-9);
+    REQUIRE(std::fabs(down.doppler - 1.0) < 1e-15);
+    const ToneArrival up = tone_arrival(hub, still, Vec3(-1000.0, 0.0, 0.0), 1000.0 / (c - 10.0), c, wind);
+    REQUIRE(std::fabs(up.delta) < 1e-9);
+    REQUIRE(std::fabs(up.doppler - 1.0) < 1e-15);
+    // Across the wind the wave normal leans upwind of the line of sight.
+    const ToneArrival across = tone_arrival(hub, still, Vec3(0.0, 1000.0, 0.0), 1000.0 / c, c, wind);
+    REQUIRE(across.direction.x < 0.0);
+    // A hub drifting with the wind is a still source in the air's frame, heard by a
+    // microphone moving at -W: the still-air solve at the moved point, and the
+    // observer's Doppler factor alone.
+    const Vec3 point(400.0, -300.0, -250.0);
+    const double lag = point.norm() / c;
+    const ToneArrival drifting = tone_arrival(hub, wind, point, lag, c, wind);
+    const ToneArrival moved = tone_arrival(hub, still, point - wind * lag, lag, c);
+    REQUIRE(std::fabs(drifting.delta - moved.delta) < 1e-12);
+    REQUIRE(std::fabs(drifting.length - moved.length) < 1e-9);
+    REQUIRE((drifting.direction - moved.direction).norm() < 1e-12);
+    REQUIRE(std::fabs(drifting.doppler - 1.0 / (1.0 + wind.dot(drifting.direction) / c)) < 1e-15);
+    // Calm air is the calm solve, to the bit.
+    const Vec3 velocity(50.0, 0.0, -5.0);
+    const ToneArrival calm = tone_arrival(hub, velocity, point, lag, c, still);
+    const ToneArrival plain = tone_arrival(hub, velocity, point, lag, c);
+    REQUIRE(calm.delta == plain.delta);
+    REQUIRE(calm.length == plain.length);
+    REQUIRE(calm.doppler == plain.doppler);
+    REQUIRE((calm.direction - plain.direction).norm() == 0.0);
+}
+
+TEST_CASE("one source sums the same coherently or in energy, to the bit", "[tones]")
+{
+    auto fixture = omni_tones({"front"});
+    fixture.harmonics = {2, 4, 6};
+    fixture.phase = [](std::size_t m, std::size_t n, std::size_t k) {
+        return 10.0 * static_cast<double>(m) + 7.0 * static_cast<double>(n) + 20.0 * static_cast<double>(k);
+    };
+    fixture.amplitude = [](std::size_t, std::size_t m, std::size_t n, std::size_t k) {
+        return 80.0 - static_cast<double>(m) + 0.5 * static_cast<double>(n) - 2.0 * static_cast<double>(k);
+    };
+    ToneRunOptions energy;
+    energy.coherence = ToneCoherence::energy;
+    const ToneRun coherent("niceops_tones_c.nod", fixture), summed("niceops_tones_e.nod", fixture, energy);
+    GroundModel ground;
+    ground.turbulence = 4e-4;
+    const AdmittanceTable admittance(ground, 10.0, 20000.0, 343.2);
+    const ToneEvaluator::Ground g {&ground, &admittance};
+    for (const Vec3 observer : {Vec3(120.0, -40.0, 1.2), Vec3(-300.0, 250.0, 1.2), Vec3(5.0, 5.0, 1.2)})
+    {
+        std::vector<double> a, b, wa, wb;
+        coherent.power(observer, &g, 0.0, &a, &wa, Vec3(30.0, 0.0, 0.0));
+        summed.power(observer, &g, 0.0, &b, &wb, Vec3(30.0, 0.0, 0.0));
+        REQUIRE(a == b);
+        REQUIRE(wa == wb);
+    }
+}
+
+TEST_CASE("a tone is filed into its band, A-weighted at its own frequency", "[tones]")
+{
+    const ToneRun run("niceops_tones_band.nod", omni_tones({"front"}));
+    std::vector<double> bands, weighted;
+    run.power(Vec3(300.0, 0.0, 1.2), nullptr, 0.0, &bands, &weighted);
+    for (std::size_t b = 0; b < bands.size(); b++)
+        REQUIRE((b == 1) == (bands[b] > 0.0));
+    const double f = 4.0 * 62.5;
+    REQUIRE(std::fabs(weighted[1] / (bands[1] * std::pow(10.0, 0.1 * a_weighting(f))) - 1.0) < 1e-12);
+    // Moving toward the observer, the tone is heard higher: f / (1 - M.n).
+    std::vector<double> moving;
+    run.power(Vec3(300.0, 0.0, 1.2), nullptr, 0.0, &moving, nullptr, Vec3(200.0, 0.0, 0.0));
+    REQUIRE(moving[2] > 0.0);
+    REQUIRE(run.tones.band_of(f / (1.0 - 200.0 / 343.2 * 0.95)) == 2);
+}
+
+TEST_CASE("the band fallback is the free-field tones times the band correction, to the bit", "[tones]")
+{
+    const ToneRun run("niceops_tones_fallback.nod", omni_tones({"front", "rear"}));
+    std::vector<double> power, weighted;
+    const Vec3 observer(400.0, 100.0, 1.2);
+    run.power(observer, nullptr, 0.0, &power, &weighted);
+    GroundModel ground;
+    const auto& centers = run.database.band_centers();
+    const auto impedance = ground_impedance(ground, centers);
+    std::vector<double> ratio(centers.size());
+    excess_ground_attenuation(ground, impedance, 100.0, observer.horizontal_norm(), 343.2, centers, ratio.data(), 0,
+            centers.size(), true);
+    std::vector<double> bands(centers.size(), 40.0), expected_bands = bands;
+    const double level = add_tone_power(55.0, power.data(), weighted.data(), ratio.data(), 0, centers.size(),
+            bands.data());
+    double total = std::pow(10.0, 0.1 * 55.0);
+    for (std::size_t b = 0; b < centers.size(); b++)
+    {
+        total += weighted[b] * ratio[b];
+        if (power[b] > 0.0)
+            expected_bands[b] = 10.0 * std::log10(std::pow(10.0, 0.1 * expected_bands[b]) + power[b] * ratio[b]);
+    }
+    REQUIRE(level == 10.0 * std::log10(total));
+    REQUIRE(bands == expected_bands);
+}
+
+TEST_CASE("tone groups refuse what cannot add coherently, naming why", "[tones]")
+{
+    auto unequal = omni_tones({"front", "rear"});
+    unequal.shaft_rates = {2.0 * pi * 62.5, -2.0 * pi * 60.0};
+    unequal.frequency = [&](std::size_t s, std::size_t) { return 4.0 * (s == 0 ? 62.5 : 60.0); };
+    REQUIRE_THROWS_WITH(ToneRun("niceops_tones_unequal.nod", unequal),
+            Catch::Matchers::ContainsSubstring("must share a shaft rate"));
+    // Declared at run time, the same pair is held at its mean rate.
+    ToneRunOptions declared;
+    declared.sync_groups = {{"front", "rear"}};
+    auto free_pair = unequal;
+    free_pair.sync_group = "";
+    const ToneRun held("niceops_tones_held.nod", free_pair, declared);
+    const auto prepared = held.tones.prepare(held.state, Vec3(0.0, 0.0, 0.0));
+    REQUIRE(std::fabs(prepared.group_rates[0] - 2.0 * pi * 61.25) < 1e-9);
+    REQUIRE(prepared.frequencies[0] == prepared.frequencies[1]);
+    REQUIRE(std::fabs(prepared.frequencies[0] - 4.0 * 61.25) < 1e-9);
+    ToneRunOptions unknown;
+    unknown.sync_groups = {{"front", "middle"}};
+    REQUIRE_THROWS_WITH(ToneRun("niceops_tones_unknown.nod", free_pair, unknown),
+            Catch::Matchers::ContainsSubstring("does not carry"));
+    ToneRunOptions azimuth;
+    azimuth.rotor_azimuth_deg["tail"] = 10.0;
+    REQUIRE_THROWS_WITH(ToneRun("niceops_tones_azimuth.nod", free_pair, azimuth),
+            Catch::Matchers::ContainsSubstring("--rotor_azimuth names source tail"));
+    auto relative = omni_tones({"front", "rear"}, "");
+    relative.phase_reference = "relative";
+    REQUIRE_THROWS_WITH(ToneRun("niceops_tones_relative.nod", relative, declared),
+            Catch::Matchers::ContainsSubstring("cannot add coherently with another rotor"));
+    std::map<std::string, double> parsed;
+    parse_rotor_azimuths("front=10, rear=-22.5", parsed);
+    REQUIRE(parsed.at("rear") == -22.5);
+    REQUIRE_THROWS_WITH(parse_rotor_azimuths("front", parsed), Catch::Matchers::ContainsSubstring("tag=degrees"));
+    REQUIRE(parse_sync_group("a, b ,c") == std::vector<std::string> {"a", "b", "c"});
+}
+
+// ---- Multirotor operating conditions (milestone 4): momentum similarity's axes
+// (x, z, M_h), per-condition speed ratios, and phase unwinding about the shaft.
+
+namespace {
+
+struct MultirotorFixture
+{
+    // Each condition's (x, z, M_h), in the fixture's condition order.
+    std::vector<std::array<double, 3>> conditions = {{0.0, 0.0, 0.25}, {1.0, 0.0, 0.25}, {0.0, 1.0, 0.25}};
+    // Source s's speed ratio at condition i.
+    std::function<double(std::size_t, std::size_t)> speed_ratio = [](std::size_t s, std::size_t i) {
+        return 1.0 + 0.1 * static_cast<double>(i) + 0.01 * static_cast<double>(s);
+    };
+    bool rotor_count = true, rotor_radius = true, hover_ct = true, speed_ratios = true;
+    // thrust_coefficient_density = run, which a multirotor database must record.
+    bool run_density = true;
+    bool keep_fixed_load_factor = false;
+};
+
+constexpr int test_rotors = 6;
+constexpr double test_rotor_radius = 0.3556;
+constexpr double test_hover_ct = 0.009;
+
+// A tone database (write_tone_test_database) restated in multirotor axes.
+std::string write_multirotor_test_database(const std::string& name, ToneFixture tones, const MultirotorFixture& m)
+{
+    tones.condition_axes = "multirotor";
+    const auto path = write_tone_test_database(name, tones);
+    int ncid = 0;
+    REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+    REQUIRE(nc_redef(ncid) == NC_NOERR);
+    if (m.rotor_count)
+        REQUIRE(nc_put_att_int(ncid, NC_GLOBAL, "rotor_count", NC_INT, 1, &test_rotors) == NC_NOERR);
+    if (m.rotor_radius)
+        REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, "rotor_radius_m", NC_DOUBLE, 1, &test_rotor_radius) == NC_NOERR);
+    if (m.hover_ct)
+        REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, "hover_thrust_coefficient", NC_DOUBLE, 1, &test_hover_ct)
+                == NC_NOERR);
+    if (m.run_density)
+        REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, "thrust_coefficient_density", 3, "run") == NC_NOERR);
+    int n = 0;
+    REQUIRE(nc_inq_grps(ncid, &n, nullptr) == NC_NOERR);
+    std::vector<int> groups(static_cast<std::size_t>(n));
+    REQUIRE(nc_inq_grps(ncid, &n, groups.data()) == NC_NOERR);
+    REQUIRE(groups.size() == m.conditions.size());
+    std::vector<std::array<int, 3>> axis_vars;
+    std::vector<std::vector<std::pair<int, int>>> ratio_vars(groups.size());
+    for (std::size_t i = 0; i < groups.size(); i++)
+    {
+        std::array<int, 3> v {};
+        REQUIRE(nc_def_var(groups[i], "inplane_speed_ratio", NC_DOUBLE, 0, nullptr, &v[0]) == NC_NOERR);
+        REQUIRE(nc_def_var(groups[i], "axial_speed_ratio", NC_DOUBLE, 0, nullptr, &v[1]) == NC_NOERR);
+        REQUIRE(nc_def_var(groups[i], "hover_tip_mach", NC_DOUBLE, 0, nullptr, &v[2]) == NC_NOERR);
+        axis_vars.push_back(v);
+        if (!m.speed_ratios)
+            continue;
+        for (std::size_t s = 0; s < tones.tags.size(); s++)
+        {
+            int sid = 0, var = 0;
+            REQUIRE(nc_inq_grp_ncid(groups[i], tones.tags[s].c_str(), &sid) == NC_NOERR);
+            REQUIRE(nc_def_var(sid, "speed_ratio", NC_DOUBLE, 0, nullptr, &var) == NC_NOERR);
+            ratio_vars[i].emplace_back(sid, var);
+        }
+    }
+    REQUIRE(nc_enddef(ncid) == NC_NOERR);
+    if (!m.keep_fixed_load_factor)
+    {
+        int fixed = 0;
+        REQUIRE(nc_inq_varid(ncid, "fixed_load_factor", &fixed) == NC_NOERR);
+        const short off = 0;
+        REQUIRE(nc_put_var_short(ncid, fixed, &off) == NC_NOERR);
+    }
+    for (std::size_t i = 0; i < groups.size(); i++)
+    {
+        for (std::size_t a = 0; a < 3; a++)
+            REQUIRE(nc_put_var_double(groups[i], axis_vars[i][a], &m.conditions[i][a]) == NC_NOERR);
+        for (std::size_t s = 0; s < ratio_vars[i].size(); s++)
+        {
+            const double ratio = m.speed_ratio(s, i);
+            REQUIRE(nc_put_var_double(ratio_vars[i][s].first, ratio_vars[i][s].second, &ratio) == NC_NOERR);
+        }
+    }
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+    return path;
+}
+
+State multirotor_state(Vec3 velocity, Vec3 thrust, double load_factor)
+{
+    State s {};
+    s.vx = velocity.x;
+    s.vy = velocity.y;
+    s.vz = velocity.z;
+    s.nx = thrust.x;
+    s.ny = thrust.y;
+    s.nz = thrust.z;
+    s.LF = load_factor;
+    return s;
+}
+
+} // namespace
+
+TEST_CASE("a multirotor state's x, z and M_h are momentum similarity's", "[multirotor]")
+{
+    const auto path = write_multirotor_test_database("niceops_multirotor_axes.nod", {}, {});
+    const Database database(path);
+    REQUIRE(database.multirotor());
+    REQUIRE(database.rotor_count() == test_rotors);
+    REQUIRE(database.multirotor_rotor_radius() == test_rotor_radius);
+    REQUIRE(database.hover_thrust_coefficient() == test_hover_ct);
+    const double W = 160.0, rho = 1.2, c = 340.0;
+    const double disk = pi * test_rotor_radius * test_rotor_radius;
+    const auto v_h = [&](double n) { return std::sqrt(n * W / (2.0 * rho * test_rotors * disk)); };
+    const auto tip = [&](double n) { return std::sqrt(n * W / (test_rotors * rho * disk * test_hover_ct)); };
+    const auto near = [](double a, double b) { return std::fabs(a - b) <= 1e-12 * std::max(1.0, std::fabs(b)); };
+    const Vec3 up(0.0, 0.0, 1.0);
+
+    // Hover: the origin, at the hover tip speed.
+    auto k = multirotor_condition(multirotor_state(Vec3(0.0, 0.0, 0.0), up, 1.0), database, W, rho, c);
+    REQUIRE(k.advance_ratio == 0.0);
+    REQUIRE(k.flight_path_angle == 0.0);
+    REQUIRE(near(k.thrust_coefficient, tip(1.0) / c));
+    REQUIRE(near(k.hover_rotor_speed, tip(1.0) / test_rotor_radius));
+    REQUIRE(!k.load_floored);
+    // Level flight at 8 m/s: in plane only.
+    k = multirotor_condition(multirotor_state(Vec3(8.0, 0.0, 0.0), up, 1.0), database, W, rho, c);
+    REQUIRE(near(k.advance_ratio, 8.0 / v_h(1.0)));
+    REQUIRE(k.flight_path_angle == 0.0);
+    // A vertical climb at 3 m/s and a descent at 2: axial only, signed.
+    k = multirotor_condition(multirotor_state(Vec3(0.0, 0.0, 3.0), up, 1.0), database, W, rho, c);
+    REQUIRE(k.advance_ratio == 0.0);
+    REQUIRE(near(k.flight_path_angle, 3.0 / v_h(1.0)));
+    k = multirotor_condition(multirotor_state(Vec3(0.0, 0.0, -2.0), up, 1.0), database, W, rho, c);
+    REQUIRE(near(k.flight_path_angle, -2.0 / v_h(1.0)));
+    // A banked turn at 1.5 g: the thrust tilted about the velocity, the weight
+    // times the load factor in v_h and Omega_h.
+    const double bank = std::acos(1.0 / 1.5);
+    k = multirotor_condition(multirotor_state(Vec3(10.0, 0.0, 0.0), Vec3(0.0, std::sin(bank), std::cos(bank)), 1.5),
+            database, W, rho, c);
+    REQUIRE(near(k.advance_ratio, 10.0 / v_h(1.5)));
+    REQUIRE(std::fabs(k.flight_path_angle) < 1e-12);
+    REQUIRE(near(k.thrust_coefficient, tip(1.5) / c));
+    // Forward climb with the disk tilted 10 degrees forward: u split along the thrust.
+    const double tilt = 10.0 * pi / 180.0;
+    const Vec3 n(std::sin(tilt), 0.0, std::cos(tilt)), u(10.0, 0.0, 2.0);
+    k = multirotor_condition(multirotor_state(u, n, 1.0), database, W, rho, c);
+    const double axial = u.dot(n);
+    REQUIRE(near(k.flight_path_angle, axial / v_h(1.0)));
+    REQUIRE(near(k.advance_ratio, (u - axial * n).norm() / v_h(1.0)));
+    // The wind is taken out: the air-relative velocity sets the axes.
+    auto windy = multirotor_state(Vec3(12.0, 0.0, 0.0), up, 1.0);
+    windy.wx = 4.0;
+    k = multirotor_condition(windy, database, W, rho, c);
+    REQUIRE(near(k.advance_ratio, 8.0 / v_h(1.0)));
+    // A load factor near zero is held at the floor, and says so.
+    k = multirotor_condition(multirotor_state(Vec3(5.0, 0.0, 0.0), up, 0.0), database, W, rho, c);
+    REQUIRE(k.load_floored);
+    REQUIRE(near(k.thrust_coefficient, tip(multirotor_minimum_load_factor) / c));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("a multirotor database blends over the axes it varies; a node is its condition", "[multirotor]")
+{
+    const ToneFixture tones;
+    const MultirotorFixture fixture;
+    const auto path = write_multirotor_test_database("niceops_multirotor_blend.nod", tones, fixture);
+    const Database database(path);
+    // One M_h across the database: the triangulation is over (x, z).
+    REQUIRE(database.active_condition_axes() == std::array<bool, 3> {true, true, false});
+    REQUIRE(database.condition(1) == std::array<double, 3> {1.0, 0.0, 0.25});
+    const double omega_h = 210.0;
+    const auto rate = [&](const Database::Blend& blend, std::size_t s) {
+        auto b = blend;
+        b.hover_rotor_speed = omega_h;
+        return database.tone_shaft_rate(s, b);
+    };
+    // At a node: that condition's speed ratio times the state's Omega_h, in the
+    // rotor's own sense; its tones the shaft orders of that.
+    auto blend = database.blend_at(1.0, 0.0, 0.25);
+    for (std::size_t s = 0; s < 2; s++)
+    {
+        const double expected = std::copysign(fixture.speed_ratio(s, 1) * omega_h, tones.shaft_rates[s]);
+        REQUIRE(std::fabs(rate(blend, s) - expected) < 1e-9);
+        auto b = blend;
+        b.hover_rotor_speed = omega_h;
+        double frequencies[2];
+        database.tone_frequencies(s, b, frequencies);
+        for (std::size_t t = 0; t < 2; t++)
+            REQUIRE(std::fabs(frequencies[t] - tones.harmonics[t] * std::fabs(expected) / (2.0 * pi)) < 1e-9);
+    }
+    REQUIRE(!blend.advance_ratio_clamped);
+    REQUIRE(!blend.thrust_coefficient_clamped);
+    // A node's tones are that condition's, at its grid nodes.
+    const Vec3 position(0.0, 0.0, 100.0), velocity(10.0, 0.0, 0.0), normal(0.0, 0.0, 1.0);
+    const auto state = database.source_state(position, velocity, normal, 1.0, 0.0, 0.25);
+    const auto& source = database.tone_sources()[0];
+    const std::size_t cells = 16, n_tones = 2;
+    const double phis[4] = {-90.0, -30.0, 30.0, 90.0}, thetas[4] = {0.0, 60.0, 120.0, 180.0};
+    for (std::size_t m = 1; m < 3; m++)
+        for (std::size_t n = 1; n < 3; n++)
+        {
+            const double p = phis[m] * pi / 180.0, t = thetas[n] * pi / 180.0;
+            const Vec3 d = state.frame.nose * std::cos(t) + state.frame.starboard * (std::sin(t) * std::sin(p))
+                    - state.frame.normal * (std::sin(t) * std::cos(p));
+            Database::ToneLookup out[2];
+            database.tone_directivity(0, state, d.normalized(), out);
+            for (std::size_t k = 0; k < n_tones; k++)
+            {
+                const auto a = source.amplitudes[(1 * cells + m * 4 + n) * n_tones + k];
+                REQUIRE(std::fabs(out[k].level_db - 20.0 * std::log10(std::abs(a))) < 1e-4);
+                REQUIRE(std::fabs(std::remainder(out[k].phase - std::arg(a), 2.0 * pi)) < 1e-5);
+            }
+        }
+    // Halfway between two conditions: their weights halve, and so the rate.
+    blend = database.blend_at(0.5, 0.0, 0.25);
+    const double half = 0.5 * (fixture.speed_ratio(0, 0) + fixture.speed_ratio(0, 1)) * omega_h;
+    REQUIRE(std::fabs(rate(blend, 0) - std::copysign(half, tones.shaft_rates[0])) < 1e-9);
+    // Off the database's one M_h: clamped there, and said to be.
+    blend = database.blend_at(0.5, 0.0, 0.3);
+    REQUIRE(blend.thrust_coefficient_clamped);
+    REQUIRE(std::fabs(rate(blend, 0) - std::copysign(half, tones.shaft_rates[0])) < 1e-9);
+    // --blend aam brackets in airspeed and flight path angle: refused.
+    BlendOptions aam;
+    aam.policy = BlendPolicy::aam;
+    REQUIRE_THROWS_WITH(database.blend_at(0.5, 0.0, 0.25, aam), Catch::Matchers::ContainsSubstring("multirotor axes"));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("a multirotor database refuses what it cannot place a state with", "[multirotor]")
+{
+    const ToneFixture tones;
+    const auto refused = [&](const char* name, MultirotorFixture m, const char* why) {
+        const auto path = write_multirotor_test_database(name, tones, m);
+        REQUIRE_THROWS_WITH(Database(path), Catch::Matchers::ContainsSubstring(why));
+        std::filesystem::remove(path);
+    };
+    MultirotorFixture m;
+    m.rotor_count = false;
+    refused("niceops_multirotor_no_count.nod", m, "lacks the root attribute rotor_count");
+    m = {};
+    m.hover_ct = false;
+    refused("niceops_multirotor_no_ct.nod", m, "hover_thrust_coefficient");
+    m = {};
+    m.keep_fixed_load_factor = true;
+    refused("niceops_multirotor_fixed.nod", m, "fixed_load_factor in multirotor axes");
+    m = {};
+    m.conditions = {{0.5, 0.2, 0.25}, {0.5, 0.2, 0.25}, {0.5, 0.2, 0.25}};
+    refused("niceops_multirotor_one_condition.nod", m, "are all at one multirotor condition");
+    m = {};
+    m.speed_ratios = false;
+    refused("niceops_multirotor_no_ratio.nod", m, "speed_ratio");
+    m = {};
+    m.conditions[1][0] = -0.5;
+    refused("niceops_multirotor_negative_x.nod", m, "expected x >= 0");
+    // Multirotor axes are formed with each condition's own air: a database that
+    // does not record thrust_coefficient_density = run is refused.
+    m = {};
+    m.run_density = false;
+    refused("niceops_multirotor_vehicle_density.nod", m, "thrust_coefficient_density is not 'run' (it has none)");
+}
+
+TEST_CASE("a shaft-order tone is interpolated with its phase unwound about the shaft", "[multirotor][tones]")
+{
+    // A tone whose phase winds exactly as a rotor's harmonic m does about the up
+    // axis, exp(+i sign(Omega) m alpha) (the convention WOPWOP's tandem pins:
+    // shaft_rate > 0 counterclockwise seen from above, alpha toward starboard):
+    // unwound, it is constant, so the lookup between nodes is exact; wound, the
+    // grid cannot resolve it.
+    ToneFixture fixture;
+    fixture.harmonics = {2, 4};
+    fixture.shaft_rates = {40.0, -40.0};
+    const double phis[4] = {-90.0, -30.0, 30.0, 90.0}, thetas[4] = {0.0, 60.0, 120.0, 180.0};
+    const auto alpha = [](double phi_deg, double theta_deg) {
+        const double p = phi_deg * pi / 180.0, t = theta_deg * pi / 180.0;
+        return std::atan2(std::sin(t) * std::sin(p), std::cos(t));
+    };
+    // Both sources wind in their own sense: +m alpha for the counterclockwise one,
+    // -m alpha for the clockwise; the fixture's phase function is shared, so the
+    // two are written as two databases.
+    for (const int sense : {1, -1})
+    {
+        fixture.phase = [&, sense](std::size_t m, std::size_t n, std::size_t k) {
+            return sense * fixture.harmonics[k] * alpha(phis[m], thetas[n]) * 180.0 / pi + 15.0;
+        };
+        fixture.amplitude = [](std::size_t, std::size_t, std::size_t, std::size_t) { return 80.0; };
+        fixture.shaft_rates = {sense * 40.0, sense * 40.0};
+        fixture.sync_group = "main";
+        const auto path = write_tone_test_database(sense > 0 ? "niceops_unwind_ccw.nod" : "niceops_unwind_cw.nod",
+                fixture);
+        const Database database(path);
+        const auto& source = database.tone_sources()[0];
+        REQUIRE(source.unwind_order == std::vector<int> {2 * sense, 4 * sense});
+        REQUIRE(source.energy_only == std::vector<char> {0, 0});
+        const Vec3 position(0.0, 0.0, 100.0), velocity(10.0, 0.0, 0.0), normal(0.0, 0.0, 1.0);
+        const auto state = database.source_state(position, velocity, normal, 0.2, 0.2, test_ct_reference);
+        for (double phi = -80.0; phi <= 80.0; phi += 17.0)
+            for (double theta = 10.0; theta <= 170.0; theta += 23.0)
+            {
+                const double p = phi * pi / 180.0, t = theta * pi / 180.0;
+                const Vec3 d = state.frame.nose * std::cos(t) + state.frame.starboard * (std::sin(t) * std::sin(p))
+                        - state.frame.normal * (std::sin(t) * std::cos(p));
+                Database::ToneLookup out[2];
+                database.tone_directivity(0, state, d.normalized(), out);
+                for (std::size_t k = 0; k < 2; k++)
+                {
+                    const double expected = sense * fixture.harmonics[k] * alpha(phi, theta) + 15.0 * pi / 180.0;
+                    REQUIRE(std::fabs(std::remainder(out[k].phase - expected, 2.0 * pi)) < 1e-5);
+                }
+            }
+        std::filesystem::remove(path);
+    }
+    // A phase that does not wind about the shaft is smoother as it is: left wound.
+    fixture.phase = [](std::size_t m, std::size_t n, std::size_t k) {
+        return 5.0 * static_cast<double>(m) + 3.0 * static_cast<double>(n) + 10.0 * static_cast<double>(k);
+    };
+    const auto path = write_tone_test_database("niceops_unwind_none.nod", fixture);
+    const Database database(path);
+    REQUIRE(database.tone_sources()[0].unwind_order == std::vector<int> {0, 0});
     std::filesystem::remove(path);
 }

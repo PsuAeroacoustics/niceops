@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <complex>
 #include <limits>
@@ -220,22 +221,7 @@ void excess_ground_attenuation(const GroundModel& ground,
     const double range_ratio = direct_range > 0.0 ? image_range / direct_range : 1.0;
 
     // Hoisted: the turbulence factor's only per-band term is the frequency.
-    // Chessell: exp(-(scale f)^2), scale = C/2 sqrt(R).  HARMONOISE:
-    // exp(-3/8 B k^2 gamma_p^(5/3) R gamma_T) = exp(-(scale f)^2) with
-    // scale^2 = 3/8 B (2 pi / c)^2 gamma_p^(5/3) R gamma_T.
-    double turbulence_scale = 0.0;
-    if (ground.turbulence_model == TurbulenceModel::chessell)
-    {
-        turbulence_scale
-                = ground.turbulence > 0.0 ? 0.5 * ground.turbulence * std::sqrt(direct_range) : 0.0;
-    }
-    else if (ground.gamma_t > 0.0 && hs + hr > 0.0)
-    {
-        const double gamma_p = hs * hr / (hs + hr);
-        const double k_per_hz = 2.0 * pi / sound_speed;
-        turbulence_scale = std::sqrt(0.375 * 0.364 * k_per_hz * k_per_hz
-                                     * std::pow(gamma_p, 5.0 / 3.0) * direct_range * ground.gamma_t);
-    }
+    const double turbulence_scale = niceops::turbulence_scale(ground, hs, direct_range, sound_speed);
     // Roughness: the coherent reflection's amplitude falls by
     // exp(-2 (k sigma cos theta)^2) = exp(-(roughness_scale f)^2).
     const double roughness_scale = ground.roughness > 0.0
@@ -322,6 +308,72 @@ std::array<double, 2> spherical_reflection_coefficient(double cos_grazing, doubl
 {
     return reflection_coefficient(cos_grazing, kappa, admittance.real(), admittance.imag(),
             boundary_loss);
+}
+
+double turbulence_scale(const GroundModel& ground, double source_height, double direct_range, double sound_speed)
+{
+    // Chessell: exp(-(scale f)^2), scale = C/2 sqrt(R).  HARMONOISE:
+    // exp(-3/8 B k^2 gamma_p^(5/3) R gamma_T) = exp(-(scale f)^2) with
+    // scale^2 = 3/8 B (2 pi / c)^2 gamma_p^(5/3) R gamma_T.
+    const double hs = source_height;
+    const double hr = ground.receiver_height;
+    if (ground.turbulence_model == TurbulenceModel::chessell)
+        return ground.turbulence > 0.0 ? 0.5 * ground.turbulence * std::sqrt(direct_range) : 0.0;
+    if (ground.gamma_t > 0.0 && hs + hr > 0.0)
+    {
+        const double gamma_p = hs * hr / (hs + hr);
+        const double k_per_hz = 2.0 * pi / sound_speed;
+        return std::sqrt(0.375 * 0.364 * k_per_hz * k_per_hz * std::pow(gamma_p, 5.0 / 3.0) * direct_range
+                * ground.gamma_t);
+    }
+    return 0.0;
+}
+
+double turbulence_coherence(double scale, double frequency)
+{
+    return scale > 0.0 ? std::exp(-(scale * frequency) * (scale * frequency)) : 1.0;
+}
+
+double turbulence_coherence(const GroundModel& ground, double source_height, double ground_distance,
+        double frequency, double sound_speed)
+{
+    const double direct_range = std::hypot(ground_distance, source_height - ground.receiver_height);
+    return turbulence_coherence(turbulence_scale(ground, source_height, direct_range, sound_speed), frequency);
+}
+
+double roughness_coherence(const GroundModel& ground, double cos_grazing, double frequency, double sound_speed)
+{
+    if (!(ground.roughness > 0.0))
+        return 1.0;
+    const double scale = std::sqrt(2.0) * (2.0 * pi / sound_speed) * ground.roughness * cos_grazing;
+    return std::exp(-(scale * frequency) * (scale * frequency));
+}
+
+AdmittanceTable::AdmittanceTable(const GroundModel& ground, double low, double high, double sound_speed,
+        int per_octave)
+{
+    if (!(low > 0.0) || !(high > low) || per_octave < 1)
+        input_error("AdmittanceTable: needs 0 < low < high and at least one point per octave.");
+    log2_low_ = std::log2(low);
+    step_ = 1.0 / per_octave;
+    const auto n = static_cast<std::size_t>(std::ceil((std::log2(high) - log2_low_) / step_)) + 1;
+    std::vector<double> frequencies(n);
+    for (std::size_t i = 0; i < n; i++)
+        frequencies[i] = std::exp2(log2_low_ + static_cast<double>(i) * step_);
+    values_ = ground_impedance(ground, frequencies, sound_speed);
+}
+
+std::complex<double> AdmittanceTable::at(double frequency) const
+{
+    assert(!values_.empty());
+    const double x = (std::log2(frequency) - log2_low_) / step_;
+    if (!(x > 0.0))
+        return values_.front();
+    const auto i = static_cast<std::size_t>(x);
+    if (i + 1 >= values_.size())
+        return values_.back();
+    const double f = x - static_cast<double>(i);
+    return (1.0 - f) * values_[i] + f * values_[i + 1];
 }
 
 double diffuse_reflection(std::complex<double> admittance)

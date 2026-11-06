@@ -84,6 +84,75 @@ inline constexpr std::size_t condition_origin_count = 3;
 std::optional<ConditionOrigin> parse_condition_origin(const std::string& name);
 const char* to_string(ConditionOrigin origin);
 
+// The frame a database's spheres are written in (root attribute sphere_frame;
+// absent means level).  Level is NICEOPS's, PANAM's and NORAH2's: theta from
+// the velocity projected into the tip-path plane, which is horizontal in steady
+// flight.  Flight path is AAM's and WOPWOP's: theta from the velocity itself,
+// with the sphere's up perpendicular to it in the plane of the velocity and the
+// tip-path plane normal, so a climbing sphere is pitched nose-up by its flight
+// path angle.  See flight_path_sphere_frame.
+enum class SphereFrameKind
+{
+    level,
+    flight_path,
+};
+
+// "level" or "flight_path"; nullopt for anything else.
+std::optional<SphereFrameKind> parse_sphere_frame(const std::string& name);
+const char* to_string(SphereFrameKind frame);
+
+// Whether a database's band spectrum (and dBA) already holds its pure tones
+// (root attribute band_content; absent means total, as every database before
+// format 2), or holds only the broadband the tones were separated from.
+enum class BandContent
+{
+    total,
+    broadband,
+};
+
+std::optional<BandContent> parse_band_content(const std::string& name);
+const char* to_string(BandContent content);
+
+// The axes a database's operating conditions are given in (root attribute
+// condition_axes; absent means helicopter).  A helicopter's are advance ratio,
+// flight path angle and thrust coefficient.  A multirotor's are momentum
+// similarity's (THEORY 2.1): the in-plane and axial air speed over the hover
+// induced velocity, x and z, and the hover tip Mach number M_h.  Database keeps
+// either in the same three slots: condition(i)[0..2] is (mu, gamma, C_T) or
+// (x, z, M_h).
+enum class ConditionAxes
+{
+    helicopter,
+    multirotor,
+};
+
+// Which density a database's thrust coefficient axis was formed with (root
+// attribute thrust_coefficient_density; absent means vehicle): the vehicle
+// file's, or each run's own air (--condition_density atmosphere).
+enum class ThrustCoefficientDensity
+{
+    vehicle,
+    run,
+};
+
+std::optional<ThrustCoefficientDensity> parse_thrust_coefficient_density(const std::string& name);
+const char* to_string(ThrustCoefficientDensity density);
+
+// How a pure-tone source's phase is referenced (each source subgroup's
+// attribute phase_reference, format 2): to its rotor's azimuth, the stored
+// value being A e^(-i m psi_ref), so sources on one shaft rate combine
+// coherently; between directions only, up to one constant per tone; or not at
+// all (amplitudes only).
+enum class PhaseReference
+{
+    rotor_azimuth,
+    relative,
+    none,
+};
+
+std::optional<PhaseReference> parse_phase_reference(const std::string& name);
+const char* to_string(PhaseReference reference);
+
 
 // Bilinear interpolation on the sphere grid.  A cell whose knots come in
 // decreasing order wraps the seam of a periodic axis: with `x_period` set, its
@@ -174,9 +243,11 @@ double clamp01(double x);
 double acosc(double x);
 
 // The sphere's orientation at one instant: the unit TPP normal, the "nose"
-// (velocity projected into the TPP) and starboard.  None of it depends on
-// where the observer is, so it is built once per trajectory state and reused
-// across the whole observer grid.
+// (velocity projected into the TPP) and starboard; in a flight-path frame
+// (flight_path_sphere_frame) the nose is the velocity itself and `normal` the
+// TPP normal's part perpendicular to it.  None of it depends on where the
+// observer is, so it is built once per trajectory state and reused across the
+// whole observer grid.
 struct SphereFrame
 {
     Vec3 normal;    // n, unit TPP normal
@@ -185,6 +256,14 @@ struct SphereFrame
 };
 
 SphereFrame sphere_frame(const Vec3& velocity, const Vec3& normal);
+
+// The frame of a flight-path sphere (SphereFrameKind::flight_path): the nose is
+// the velocity itself, climb included, and the sphere's up (`normal`) the TPP
+// normal's part perpendicular to it.  In level flight with a level TPP that is
+// sphere_frame's frame.  With no velocity, or one along the TPP normal (a
+// vertical climb), it is sphere_frame's, which falls back the same way; a run's
+// nose at hover is already the heading (nose_direction).
+SphereFrame flight_path_sphere_frame(const Vec3& velocity, const Vec3& normal);
 
 // Sphere angles (phi, theta in degrees) of an already-normalized propagation
 // direction.  phi runs over the whole circle: a direction above the tip-path
@@ -339,6 +418,81 @@ struct DatabaseLoadOptions
     // Drop the suspect entries, as gating drops a direction, instead of only
     // warning about them.
     bool mask_suspect_cells = false;
+    // Whether the caller evaluates a format 2 database's pure tones (niceops's
+    // run does, tones.hpp).  For one that does not, a database whose tones are not
+    // in its band spectrum (band_content broadband) is refused, and one whose are
+    // (total) warns that it runs on its bands alone.
+    bool tones_evaluated = false;
+    // Whether to precompute each tone's first-order near-field term, Lap[D A] on
+    // the grid (ToneSource::near_field; THEORY 4.4): --tone_near_field on.
+    bool tone_near_field = false;
+    // --source_radius, m: Database::source_radius (0: the sphere radius).
+    double source_radius = 0.0;
+};
+
+// One pure-tone source of a format 2 database (a rotor): a subgroup of every
+// condition group, named by its tag, holding its shaft-order tones over the
+// database's (phi, theta) grid.
+struct ToneSource
+{
+    std::string tag;
+    // Sources held at a fixed phase to each other share a group; empty is a
+    // free-running source, which adds in energy with every other.
+    std::string sync_group;
+    PhaseReference phase_reference = PhaseReference::none;
+    // Each tone's shaft order m, the same at every condition.
+    std::vector<int> harmonics;
+    // Per condition: the hub (m, in the sphere frame: forward, starboard, up)
+    // and the shaft rate (rad/s, signed by the sense of rotation).
+    std::vector<std::array<double, 3>> centers;
+    std::vector<double> shaft_rates;
+    // Per condition, the rotor azimuth (degrees, in its own sense of rotation)
+    // its phases were locked to (the source's optional azimuth), NaN where the
+    // file does not say: the default of --rotor_azimuth, so that a database
+    // evaluated as it stands keeps the phasing its rotors were predicted with.
+    std::vector<double> azimuths_deg;
+    // The tones' emission-frame frequencies, Hz: [condition * tones + tone].
+    std::vector<double> frequencies;
+    // The complex pressure amplitude of each tone in each grid cell, relative to
+    // the reference pressure at the sphere radius: 10^(dB/20) e^(i phase), zero
+    // where the file holds no level.  [(condition * cells + cell) * tones +
+    // tone], cell = i_phi * n_theta + i_theta over the database's sorted grid.
+    std::vector<std::complex<float>> amplitudes;
+    // Per tone, 1 where the grid does not resolve its phase (a step of more than
+    // 90 degrees between neighboring cells within 20 dB of its peak, at any
+    // condition): such a tone is to be summed in energy.
+    std::vector<char> energy_only;
+    // Per tone, the order n its phase is unwound by before it is interpolated:
+    // the stored amplitude times exp(-i n alpha), alpha the grid direction's
+    // azimuth about the sphere frame's up axis toward starboard, and the result
+    // times exp(+i n alpha) at the direction evaluated.  n = sign(shaft rate) m,
+    // a shaft-order tone's winding about its own shaft, or 0 where the wound
+    // phase is the smoother of the two on this grid (Database::load_tone_sources).
+    std::vector<int> unwind_order;
+    // Per condition, a multirotor database's |shaft rate| over the hover tip
+    // speed's shaft rate Omega_h at that condition (speed_ratio); empty for a
+    // helicopter database.
+    std::vector<double> speed_ratios;
+    // With DatabaseLoadOptions::tone_near_field, each tone's first-order
+    // near-field term Lap[D A] (THEORY 4.4), laid out as `amplitudes` and in its
+    // units, D = 1 - M.n for the condition's flight Mach number M: the field at
+    // range R is A + (i / (2 k R)) times it.  Empty otherwise, and zero for a
+    // tone without a phase (phase_reference none, or energy_only).
+    std::vector<std::complex<float>> near_field;
+    // Per condition and tone, [condition * tones + tone], its largest |A| over
+    // the grid: what the near-field term is capped at twice.
+    std::vector<float> peak_amplitude;
+    // Each tone's part without a stable phase (the file's optional
+    // incoherent_amplitude): its rms level at the sphere radius, dB re 20 uPa, laid
+    // out as `amplitudes`, -inf where it has none; added in energy, each source
+    // alone (THEORY 4.4).  Empty where the source carries none.
+    bool has_incoherent = false;
+    std::vector<float> incoherent_db;
+
+    std::size_t tone_count() const
+    {
+        return harmonics.size();
+    }
 };
 
 class Database
@@ -379,6 +533,12 @@ public:
         bool advance_ratio_clamped = false;
         bool flight_path_angle_clamped = false;
         bool thrust_coefficient_clamped = false;
+        // A multirotor database's hover shaft rate Omega_h at the state, rad/s,
+        // which turns the conditions' speed ratios into the state's rotor speeds
+        // (tone_shaft_rate); NaN for a helicopter database.  Set by the caller
+        // from the state's weight and air (multirotor_condition), since the
+        // blend itself sees only the normalized axes.
+        double hover_rotor_speed = std::numeric_limits<double>::quiet_NaN();
     };
 
     // Everything about one trajectory state that every observer shares: where
@@ -654,6 +814,14 @@ public:
         // database carries no spectra.
         std::vector<double> frequencies;
         std::vector<double> amplitudes;
+        // The frame the sphere is written in and whether its levels are the
+        // source's without absorption to the sphere (the database's root
+        // attributes sphere_frame and sphere_levels_lossless), carried so an
+        // export reloads as it was.
+        SphereFrameKind sphere_frame = SphereFrameKind::level;
+        bool levels_lossless = false;
+        // Which density the condition's C_T was formed with.
+        ThrustCoefficientDensity thrust_coefficient_density = ThrustCoefficientDensity::vehicle;
     };
 
     // Main rotor tip speed in m/s as recorded at the root of the database, or
@@ -738,6 +906,119 @@ public:
         return !frequencies_.empty();
     }
 
+    // The root database_version: 0 (absent) for files before the versioned
+    // builder, 1, or 2 (pure-tone sources beside the spheres).
+    int database_version() const
+    {
+        return database_version_;
+    }
+    // The frame the spheres are in (root attribute sphere_frame), which
+    // source_state builds each state's frame for.
+    SphereFrameKind sphere_frame_kind() const
+    {
+        return sphere_frame_kind_;
+    }
+    // Whether the spheres' levels are the source's with no absorption to the
+    // sphere radius (root attribute sphere_levels_lossless = 1, which predicted
+    // spheres carry): absorption then runs from the hub, over the whole range,
+    // rather than from the sphere's surface.
+    bool sphere_levels_lossless() const
+    {
+        return levels_lossless_;
+    }
+    BandContent band_content() const
+    {
+        return band_content_;
+    }
+    // The axes the conditions are given in, and a multirotor database's
+    // momentum constants: its rotor count N, rotor radius R (m) and hover
+    // thrust coefficient C_T,h (per rotor, T / (rho pi R^2 (Omega R)^2)).  NaN
+    // or 0 for a helicopter database.
+    ConditionAxes condition_axes() const
+    {
+        return condition_axes_;
+    }
+    bool multirotor() const
+    {
+        return condition_axes_ == ConditionAxes::multirotor;
+    }
+    int rotor_count() const
+    {
+        return rotor_count_;
+    }
+    double multirotor_rotor_radius() const
+    {
+        return multirotor_radius_;
+    }
+    double hover_thrust_coefficient() const
+    {
+        return hover_thrust_coefficient_;
+    }
+    // Which of the three condition slots vary across the database and so take
+    // part in the triangulation (a multirotor database drops a constant axis).
+    const std::array<bool, 3>& active_condition_axes() const
+    {
+        return active_axes_;
+    }
+    ThrustCoefficientDensity thrust_coefficient_density() const
+    {
+        return thrust_coefficient_density_;
+    }
+    // A format 2 database's pure-tone sources, in the order of the root
+    // attribute sources; empty otherwise.
+    const std::vector<ToneSource>& tone_sources() const
+    {
+        return tone_sources_;
+    }
+    bool has_tones() const
+    {
+        return !tone_sources_.empty();
+    }
+    // One tone of a source along a direction, as the run evaluates it: its level
+    // at the sphere radius, dB re 20 uPa, blended in dB over the grid cell and the
+    // conditions with the band spectrum's weights (empty entries dropped as
+    // there), the blend's load-factor correction included; and its phase, rad,
+    // the argument of the same weighted sum of the complex amplitudes (zero for a
+    // source without phase).  The level is no_energy_floor_db where every
+    // weighted entry is empty.
+    struct ToneLookup
+    {
+        double level_db;
+        double phase;
+        // The first-order near-field term Lap[D A] at the direction, interpolated
+        // as the amplitude is (its units, the load-factor correction included);
+        // zero where the database holds none.  And the tone's largest |A| over the
+        // grid, blended over the conditions.
+        std::complex<double> near_field {0.0, 0.0};
+        double peak_amplitude = 0.0;
+        // The tone's incoherent part (ToneSource::incoherent_db), blended as the
+        // level is; no_energy_floor_db where it has none.
+        double incoherent_db = no_energy_floor_db;
+    };
+    // Every tone of `source` along `direction` (the unit vector leaving its hub,
+    // in the run's frame), into `out` (tone_count() entries).  The cell and its
+    // weights are eval_spectrum()'s at the same angles.
+    void tone_directivity(std::size_t source, const SourceState& state, const Vec3& direction,
+            ToneLookup* out) const;
+    // A source's hub (m, sphere frame: forward, starboard, up), shaft rate (rad/s,
+    // signed) and emission-frame frequencies (Hz, into `frequencies`, one per tone)
+    // at a blend: each the blend-weighted mean of its conditions'.
+    std::array<double, 3> tone_center(std::size_t source, const Blend& blend) const;
+    double tone_shaft_rate(std::size_t source, const Blend& blend) const;
+    // The power of a rotor's rate its tones' pressure follows (the root's
+    // tone_speed_exponent; 0, no scaling, where the database gives none).
+    double tone_speed_exponent() const
+    {
+        return tone_speed_exponent_;
+    }
+    void tone_frequencies(std::size_t source, const Blend& blend, double* frequencies) const;
+    // Where absorption starts along a path, m: the sphere radius, or 0 for
+    // lossless spheres (sphere_levels_lossless).
+    double absorption_start() const
+    {
+        return absorption_start_;
+    }
+
     // Whether this is a fixed_load_factor build, and the thrust coefficient of
     // its reference condition (load factor 1).  Together they fix the analytic
     // load-factor law, 20 lg(C_T / C_T,ref).
@@ -808,6 +1089,17 @@ public:
         return sphere_radius_;
     }
 
+    // The range inside which a level is held (--source_radius): spreading and
+    // absorption are taken from the sphere's surface down to it, so inside the
+    // sphere radius they are a gain, and below it the level is its own.  By
+    // default the sphere radius: inside the sphere is the source's own volume.
+    double source_radius() const
+    {
+        return source_radius_ > 0.0 ? source_radius_ : sphere_radius_;
+    }
+    // Set it, 0 < radius <= the sphere radius (refused otherwise).
+    void set_source_radius(double radius);
+
     // dBA of -inf legitimately means "no energy in this direction" (ambient
     // gating emptied it), but a zero barycentric weight against -inf is a
     // NaN under IEEE 754 that poisons an entire blended sum regardless of
@@ -869,6 +1161,8 @@ private:
     double sphere_radius_ = 0.0;
     // 1 / sphere_radius_, so eval's spherical spreading term is a multiply.
     double inv_sphere_radius_ = 0.0;
+    // source_radius(), or 0 for the sphere radius (the default).
+    double source_radius_ = 0.0;
 
     // Whether dropping the excess attenuation term bounds a level from above.
     // A level is sphere_level - 20*log10(r/r0) - EAA*(r - r0)/1000, so dropping
@@ -956,6 +1250,37 @@ private:
     // the sphere, so it is one value per sphere rather than per channel.
     std::vector<double> shaft_power_;
     double min_excess_factor_ = 0.0;
+
+    int database_version_ = 0;
+    SphereFrameKind sphere_frame_kind_ = SphereFrameKind::level;
+    bool levels_lossless_ = false;
+    // Where absorption starts along a path, m: the sphere radius, or 0 for
+    // lossless spheres, whose levels carry no absorption to the radius.
+    double absorption_start_ = 0.0;
+    BandContent band_content_ = BandContent::total;
+    ThrustCoefficientDensity thrust_coefficient_density_ = ThrustCoefficientDensity::vehicle;
+    ConditionAxes condition_axes_ = ConditionAxes::helicopter;
+    double tone_speed_exponent_ = 0.0;
+    int rotor_count_ = 0;
+    double multirotor_radius_ = std::numeric_limits<double>::quiet_NaN();
+    double hover_thrust_coefficient_ = std::numeric_limits<double>::quiet_NaN();
+    std::array<bool, 3> active_axes_ {true, true, true};
+    // Per grid cell, its azimuth about the sphere frame's up axis toward
+    // starboard (rad): what a tone's phase is unwound by (ToneSource::unwind_order).
+    std::vector<double> cell_shaft_azimuth_;
+    std::vector<ToneSource> tone_sources_;
+    // Per condition group of a format 2 file: the sorted cell of each of its
+    // channel rows (the remap the band amplitude takes), which its tones take too.
+    std::vector<std::vector<std::size_t>> tone_cell_of_;
+    bool tone_near_field_ = false;
+    // Per condition, the flight speed (m/s) and climb angle (rad) a multirotor
+    // condition group records (airspeed, climb_rate), NaN where it does not: the
+    // near-field term's flight Mach number.
+    std::vector<double> condition_airspeed_, condition_climb_;
+    // Each tone's near-field term over the grid (ToneSource::near_field).
+    void compute_tone_near_fields(const std::string& datafile_path);
+    // The constructor's reading of a format 2 database's source subgroups.
+    void load_tone_sources(int file_ncid, const std::vector<int>& group_ids, const std::string& datafile_path);
 };
 
 // Write a single interpolated sphere as a one-group .nod database, the same
@@ -969,12 +1294,23 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path);
 // The sphere type is BB where aam_third_octave_bands, else NB.
 // AMPLITUDE is in AAM's frame, pitched nose-up by the flight path angle from
 // NICEOPS's level one (root attribute sphere_frame = "flight_path"), so a deck
-// flown with AOA 0 orients it as NICEOPS does.
-void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, double tip_speed);
+// flown with AOA 0 orients it as NICEOPS does.  A sphere from a flight-path
+// database is in that frame already and is written as it is.
+// `absorption` (dB/m per band): the air's, which a lossless sphere's levels
+// (Sphere::levels_lossless) take out to the sphere radius, as AAM's carry it;
+// required for one, unused otherwise.
+void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, double tip_speed,
+        const std::vector<double>* absorption = nullptr);
+
+// The one-third octave band number n (center 10^(n/10) Hz) of each band center, in
+// order, where every center is a distinct band (nominal, base-10 or base-2 centers);
+// empty otherwise.
+std::vector<long> third_octave_band_numbers(const std::vector<double>& frequencies);
 
 // Whether every band center is a distinct one-third octave band of AAM's, numbers
-// 10 to 40 (10 Hz to 10 kHz): nominal, base-10 or base-2 centers.  AAM's BB sphere
-// type is these bands (TR Table 4-37); any other band set is NB.
+// 10 to 40 (10 Hz to 10 kHz).  AAM's BB sphere type is these bands (TR Table 4-37).
+// write_aam_sphere exports a third-octave set that reaches past them as BB with the
+// bands outside left out (and says so); any other band set is NB.
 bool aam_third_octave_bands(const std::vector<double>& frequencies);
 
 } // namespace niceops

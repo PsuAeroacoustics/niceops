@@ -4,6 +4,17 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## AAM export: every third-octave set is BB (November 2026)
+
+`--export_aam` wrote two kinds of third-octave database as AAM's narrowband type (`NB` 1), so
+AAM read their band levels as tones. A database on exact base-2 centers below 40 Hz had them
+fall outside a 0.05 tolerance in 10 lg f (9.84 Hz is 0.069 from band 10); the tolerance is now
+0.1, still well clear of a 1/12-octave set's 0.25. A database with bands above 10 kHz was `NB`
+with no message; it is now `BB` with the bands outside AAM's 10 Hz to 10 kHz left out, and a
+warning names them. A level that is not finite (NaN, ±inf) was written as it was; it is now
+-999, AAM's missing level, as panam's writer has it. The shipped databases' exports are
+unchanged: their centers are nominal and stop at 10 kHz.
+
 ## The S-76D rebuilt from the 2019 flight test (October 2026)
 
 The S-76D databases were replaced by panam builds from the 2019 Noise Abatement test at Coyle
