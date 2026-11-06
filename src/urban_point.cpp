@@ -1196,6 +1196,11 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         parts[b] = sub_bands(bands[b], sound_speed);
     std::vector<std::unique_ptr<PathEnd>> microphone_ends(nm);
     std::vector<std::size_t> held_microphones, group_microphones, missing_microphones;
+    // The GPU's buffers, kept from one group's stream to the next.
+    std::unique_ptr<gpu::BandStream::Energies> stream_energies;
+    if (device != nullptr)
+        stream_energies = std::make_unique<gpu::BandStream::Energies>(
+                gpu::BandStream::Energies {gpu::BandEnergies(*device), gpu::BandEnergies(*device)});
     auto evaluate_pairs = [&](const std::vector<std::pair<std::size_t, std::size_t>>& todo, std::vector<Pair>& out) {
         out.assign(todo.size(), Pair {});
         for (Pair& p : out)
@@ -1213,7 +1218,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
                 add_scattered(p.scattered, p.bands);
                 std::copy(p.bands.begin(), p.bands.end(), stream_full.begin() + static_cast<std::ptrdiff_t>(first_band));
                 p.level = weighted_level(stream_full.data(), gains);
-            });
+            }, stream_energies.get());
         std::vector<std::unique_ptr<PathEnd>> source_ends;
         std::vector<std::size_t> block_states, slot(ns, 0), work;
         for (std::size_t first = 0; first < todo.size();)

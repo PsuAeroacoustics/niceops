@@ -7,9 +7,14 @@
 
 namespace niceops::gpu {
 
-BandStream::BandStream(Device& device, std::size_t batch, Done done)
-    : batch_(std::max<std::size_t>(batch, 1)), done_(std::move(done)), energies_ {BandEnergies(device), BandEnergies(device)}
+BandStream::BandStream(Device& device, std::size_t batch, Done done, Energies* energies)
+    : batch_(std::max<std::size_t>(batch, 1)), done_(std::move(done)), energies_(energies)
 {
+    if (!energies_)
+        energies_ = &own_.emplace(Energies {BandEnergies(device), BandEnergies(device)});
+    // A stream before this one that failed may have left a batch submitted.
+    for (BandEnergies& e : *energies_)
+        e.clear();
     thread_ = std::thread([this] { run(); });
 }
 
@@ -81,15 +86,15 @@ void BandStream::run()
         while (take(held[current]))
         {
             for (const auto& packed : held[current])
-                energies_[current].add(packed->set);
-            energies_[current].submit();
+                (*energies_)[current].add(packed->set);
+            (*energies_)[current].submit();
             if (in_flight)
-                finish(held[1 - current], energies_[1 - current]);
+                finish(held[1 - current], (*energies_)[1 - current]);
             in_flight = true;
             current = 1 - current;
         }
         if (in_flight)
-            finish(held[1 - current], energies_[1 - current]);
+            finish(held[1 - current], (*energies_)[1 - current]);
     }
     catch (...)
     {

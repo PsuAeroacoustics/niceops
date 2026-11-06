@@ -93,8 +93,9 @@ its dependencies point one direction.
 ## GPU backend
 
 `NICEOPS_GPU` picks the backend of `src/gpu`: `AUTO` (the default) is Metal on macOS when the
-compiler is Clang, CUDA on any other system where `find_package(CUDAToolkit)` finds `nvrtc.h`, and
-none otherwise, since GCC cannot build the Objective-C++ that drives Metal; `METAL`, `CUDA` and
+compiler is Clang; on any other system CUDA where `find_package(CUDAToolkit)` finds `nvrtc.h`,
+else HIP where ROCm's `hip/hiprtc.h` is found (under `ROCM_PATH` or `/opt/rocm`); and none
+otherwise, since GCC cannot build the Objective-C++ that drives Metal. `METAL`, `CUDA`, `HIP` and
 `OFF` force it. The Metal backend enables CMake's `OBJCXX` language for `gpu_metal.mm` alone (with
 ARC) and links the Metal and Foundation frameworks. The CUDA backend (`gpu_cuda.cpp`, Linux only)
 takes the toolkit's include directory for that one file and links only `${CMAKE_DL_LIBS}`: it opens
@@ -102,7 +103,12 @@ takes the toolkit's include directory for that one file and links only `${CMAKE_
 and runs on the CPU there. Point CMake at a toolkit with `-DCUDAToolkit_ROOT=...`; any CUDA 12
 toolkit's headers serve. At configure, a CUDA build runs `cmake/probe_cuda_device.cpp`: where no
 device answers it says why, and the tests that pass `--gpu` are registered as refusals instead
-(`NICEOPS_GPU_DEVICE`, [gpu.md](gpu.md#the-cuda-backend)). Reconfigure after installing or starting a driver. No shader toolchain
+(`NICEOPS_GPU_DEVICE`, [gpu.md](gpu.md#the-cuda-backend)). Reconfigure after installing or starting a driver. The HIP
+backend (`gpu_hip.cpp`, Linux only) is built the same way, by the host compiler with
+`__HIP_PLATFORM_AMD__` and ROCm's include directory for that one file: it opens `libamdhip64.so`
+and `libhiprtc.so` at run time, trying ROCm's `lib` after the loader's path, so ROCm's own clang
+(which may not find a libstdc++) is never used. Its probe is `cmake/probe_hip_device.cpp`
+([gpu.md](gpu.md#the-hip-backend)). No shader toolchain
 is involved: the kernels are compiled at run time from source that `cmake/embed_kernels.cmake`
 embeds as strings, rewriting the generated file only when a kernel changes. A new kernel source
 goes in `NICEOPS_KERNEL_SOURCES`. Without a backend, `gpu_disabled.cpp` stands in, and a run that

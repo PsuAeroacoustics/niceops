@@ -1,7 +1,7 @@
-// The kernel dialect on CUDA (and HIP, whose run-time compiler takes the same
-// source), compiled by NVRTC.  See prelude_metal.h for what the dialect
+// The kernel dialect on CUDA and HIP, compiled by NVRTC or hiprtc, each of
+// which takes this same source (gpu_cuda.cpp, gpu_hip.cpp).  See prelude_metal.h for what the dialect
 // allows; this maps the same names.  There is no standard library here: NVRTC
-// supplies the float overloads of sqrt, exp, log, cos, atan2, fma, rint,
+// and hiprtc supply the float overloads of sqrt, exp, log, cos, atan2, fma, rint,
 // floor, fabs, fmax, isfinite and the integer min and max as built-ins.
 
 #define NK_DIALECT 1

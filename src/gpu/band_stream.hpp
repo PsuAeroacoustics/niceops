@@ -7,6 +7,7 @@
 // holds the workers back rather than the memory growing; a GPU failure wakes
 // them, and push() throws.
 
+#include <array>
 #include <condition_variable>
 #include <cstddef>
 #include <deque>
@@ -14,6 +15,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 #include "gpu/band_energy.hpp"
@@ -27,7 +29,13 @@ public:
     // `done(tag, energy)` is called on the stream's thread for each set, its
     // energies by problem in the set's order; `batch` sets per batch.
     using Done = std::function<void(std::size_t tag, const double* energy)>;
-    BandStream(Device& device, std::size_t batch, Done done);
+    // `energies`, where given, are the two batches' buffers, kept by the
+    // caller from one stream to the next, and must outlive the stream: a
+    // stream made for each group of pairs (UrbanDistrict::levels) otherwise
+    // grows them from nothing every time, which allocating on HIP made the
+    // slowest part of a run (docs/internals/gpu.md).
+    using Energies = std::array<BandEnergies, 2>;
+    BandStream(Device& device, std::size_t batch, Done done, Energies* energies = nullptr);
     ~BandStream();
     BandStream(const BandStream&) = delete;
     BandStream& operator=(const BandStream&) = delete;
@@ -49,7 +57,8 @@ private:
 
     std::size_t batch_;
     Done done_;
-    BandEnergies energies_[2];
+    std::optional<Energies> own_;
+    Energies* energies_;
     std::mutex lock_;
     std::condition_variable ready_, space_;
     std::deque<std::unique_ptr<Packed>> queue_;

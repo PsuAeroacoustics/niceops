@@ -206,7 +206,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--no_profile_pe` | With `--buildings`: over a row of flat-roofed blocks with a street (or a roof lower than both its neighbors), crossed near grazing, the cascades' rays rather than the row's profile marched by a parabolic equation, for comparison, or as a fast mode ([Speed and fast modes](#speed-and-fast-modes)). |
 | `--tilted_step_split` | With `--buildings`: across the line through a ridge or roof edge and the edge of the lower roof it steps down to, split the field's jump either side rather than take it as the rays leave it, which steps where the microphone crosses the line. It removes that seam from maps behind a step, and about doubles those microphones' cost. Not taken under `--ray_coherence energy`, which has no jump to split. Off by default: fitted on one step, and on another worse above the line ([FIDELITY](FIDELITY.md#a-point-source-among-buildings), "Across a step"). |
 | `--path_radius` | With `--buildings`: the horizontal distance from a source or microphone within which buildings' edges and walls enter its rays. Default 150 m (492.13 ft); less is a fast mode, at a cost in dB that depends on the layout ([Speed and fast modes](#speed-and-fast-modes)). |
-| `--gpu`, `--no-gpu` | With `--buildings`: form and sum each state's rays on the GPU (Metal on a Mac, CUDA on an NVIDIA GPU under Linux), the default wherever there is one and the rays add `cone`, `coherent` or `energy` without `--phase_interval`; `measured`, the interval and `--edge_source` are the CPU's. `--gpu` asks for it and is refused where it cannot run; `--no-gpu` keeps the CPU ([On the GPU](#on-the-gpu)). |
+| `--gpu`, `--no-gpu` | With `--buildings`: form and sum each state's rays on the GPU (Metal on a Mac; CUDA on an NVIDIA GPU, or HIP on an AMD one, under Linux), the default wherever there is one and the rays add `cone`, `coherent` or `energy` without `--phase_interval`; `measured`, the interval and `--edge_source` are the CPU's. `--gpu` asks for it and is refused where it cannot run; `--no-gpu` keeps the CPU ([On the GPU](#on-the-gpu)). |
 | `--terrain` | A bare-earth elevation grid (netCDF, for example USGS 3DEP) ([Terrain](#terrain)). Needs the run's frame: `--origin` (with `--frame_bearing` for rotated axes; the AC tracks use 210), or a geodetic track. Not with `--refraction`. The three rows below are refused without it. |
 | `--terrain_offset` | Added to every terrain height to put the grid on the trajectory's vertical datum. Default 0. |
 | `--terrain_step` | Spacing of the terrain samples each path's mean ground plane is fitted to. Default the grid's own spacing, at least 5 m. |
@@ -1499,6 +1499,11 @@ the measured coherence, `--phase_interval` and `--edge_source` always do: `--gpu
 `--ray_coherence measured`, `--phase_interval` or `--edge_source` is refused, and with a database
 whose recorded coherence selects the measured model the run stops at that track.
 
+On an AMD GPU (HIP) the kernels are compiled on first use, about a second, and kept in
+`$XDG_CACHE_HOME/niceops/kernels` (or `~/.cache/niceops/kernels`) for the runs after it; the
+environment variable `NICEOPS_KERNEL_CACHE` names another directory, or `off` for none. This
+holds for every tool's GPU path.
+
 #### Speed and fast modes
 
 Two options trade dB for time, and neither is the default. `--path_radius` below its 150 m leaves
@@ -2121,7 +2126,7 @@ niceops_urban_table --canyons streets.csv --database databases/B407_fixed_load_f
 | `--wave_below` | Solve each canyon with walls of equal height by the wave equation and use its table for the bands centered at or below this frequency, Hz. Default 0, none. |
 | `--wave_blend` | Bands above `--wave_below` over which the wave table fades into the geometric one. Default 2. |
 | `--wave_ppw` | The wave solver's grid points per wavelength. Default 15. |
-| `--gpu`, `--no-gpu` | March the wave equation on the GPU (Metal on a Mac, CUDA on an NVIDIA GPU under Linux), as below: the default wherever there is one and `--wave_below` is given. `--gpu` asks for it and is refused without one, or without `--wave_below`; `--no-gpu` keeps the CPU. |
+| `--gpu`, `--no-gpu` | March the wave equation on the GPU (Metal on a Mac; CUDA on an NVIDIA GPU, or HIP on an AMD one, under Linux), as below: the default wherever there is one and `--wave_below` is given. `--gpu` asks for it and is refused without one, or without `--wave_below`; `--no-gpu` keeps the CPU. |
 | `-j`, `--threads` | Canyons solved at once, or a receiver's directions shared out. Default the environment's `NICEOPS_THREADS`, else one per hardware thread. |
 | `--units`, `-o` | `ft` (default) or `m`; the table to write (SI). |
 
@@ -2262,7 +2267,7 @@ source, to the bit, and the run is quicker than those runs. The output is writte
 a block of sources at a time, so a run that fails partway exits with an error and leaves the blocks
 it finished.
 
-On a machine with a GPU (Metal on a Mac, CUDA on an NVIDIA GPU under Linux) each ray's amplitude at every band is formed and the bands
+On a machine with a GPU (Metal on a Mac; CUDA on an NVIDIA GPU, or HIP on an AMD one, under Linux) each ray's amplitude at every band is formed and the bands
 summed there, while the CPU traces the next pairs' rays; `--no-gpu` keeps the CPU, and
 `--edge_source` and `--fade` always do. The rays are the same, and the levels agree closely with
 the CPU's ([FIDELITY](FIDELITY.md#a-point-source-among-buildings) has the comparison): in the low
@@ -2404,7 +2409,7 @@ The run lasts `--duration` (default twice the time sound takes across the domain
 whole space's under `--mirror`), and
 a microphone whose bands still move by more than 0.02 dB over the run's last tenth is named on the
 standard error: lengthen the run. Between parallel rigid walls the reflections die away slowly;
-give such walls their absorption. On a machine with a GPU (Metal on a Mac, CUDA on an NVIDIA GPU under Linux) the march is the
+give such walls their absorption. On a machine with a GPU (Metal on a Mac; CUDA on an NVIDIA GPU, or HIP on an AMD one, under Linux) the march is the
 GPU's, in single precision as the CPU's march, wherever the GPU can hold the grid; a grid too large
 for it marches on the CPU, and the line on the standard error says so. `--gpu` asks for the GPU and
 is refused where there is none or it cannot hold the grid; `--no-gpu` keeps the CPU, which is for

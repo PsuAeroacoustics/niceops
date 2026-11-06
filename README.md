@@ -39,7 +39,7 @@ cmake --build build -j8
 | `-DNICEOPS_BUNDLE_PYTHON=OFF` | Keep plotting, but use the system interpreter's packages instead of the build's own environment. |
 | `-DNICEOPS_ASSERTS=ON` | Keep `assert()` live in an optimized build. The default Release build compiles the asserts out. |
 | `-DNICEOPS_LTO=OFF` | Turn off link-time optimization, which is otherwise on wherever the toolchain supports it. |
-| `-DNICEOPS_GPU=OFF` | Build without a GPU backend. The default takes Metal on macOS with Clang, and CUDA on Linux wherever the CUDA toolkit is found (`CUDA` forces it); a run then uses the GPU wherever it applies, unless `--no-gpu`. A CUDA build needs only the toolkit's headers to build, and runs on the CPU where there is no driver. |
+| `-DNICEOPS_GPU=OFF` | Build without a GPU backend. The default takes Metal on macOS with Clang, and on Linux CUDA wherever the CUDA toolkit is found, else HIP (AMD) wherever ROCm is (`CUDA` and `HIP` force them); a run then uses the GPU wherever it applies, unless `--no-gpu`. A CUDA or HIP build needs only the headers to build, and runs on the CPU where there is no driver. |
 
 On macOS with Command Line Tools but no full Xcode, add
 `-DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path)`. Run the

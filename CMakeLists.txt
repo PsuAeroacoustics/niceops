@@ -176,16 +176,21 @@ else()
   set(NICEOPS_PLOTTING_SOURCE src/plotting_disabled.cpp)
 endif()
 
-# GPU backend (src/gpu).  AUTO takes Metal on macOS with Clang, CUDA elsewhere
-# where the CUDA toolkit's headers are found, and none otherwise (GCC cannot
-# build the Objective-C++ that drives Metal).  The kernels are compiled at run
-# time from source embedded in the binary, so no shader toolchain is needed;
-# the CUDA backend opens the driver and NVRTC at run time, so it needs the
-# toolkit's headers to build and nothing of CUDA to run (without a driver the
-# GPU paths fall back to the CPU).  Where there is a device the tools that have
-# a GPU path take it by default; --no-gpu keeps the CPU (docs/internals/gpu.md).
-set(NICEOPS_GPU "AUTO" CACHE STRING "GPU backend: AUTO (Metal on macOS with Clang, CUDA where its toolkit is found, else none), METAL, CUDA or OFF")
-set_property(CACHE NICEOPS_GPU PROPERTY STRINGS AUTO METAL CUDA OFF)
+# GPU backend (src/gpu).  AUTO takes Metal on macOS with Clang; elsewhere CUDA
+# where the CUDA toolkit's headers are found, else HIP (AMD) where ROCm's are;
+# and none otherwise (GCC cannot build the Objective-C++ that drives Metal).
+# The kernels are compiled at run time from source embedded in the binary, so
+# no shader toolchain is needed; the CUDA and HIP backends open their runtime
+# and run-time compiler with dlopen, so they need the headers to build and
+# nothing of CUDA or ROCm to run (without a driver the GPU paths fall back to
+# the CPU).  Where there is a device the tools that have a GPU path take it by
+# default; --no-gpu keeps the CPU (docs/internals/gpu.md).
+set(NICEOPS_GPU "AUTO" CACHE STRING "GPU backend: AUTO (Metal on macOS with Clang, CUDA where its toolkit is found, else HIP where ROCm is, else none), METAL, CUDA, HIP or OFF")
+set_property(CACHE NICEOPS_GPU PROPERTY STRINGS AUTO METAL CUDA HIP OFF)
+# ROCm's headers (hip/hip_runtime_api.h, hip/hiprtc.h) and its library
+# directory, which the HIP backend tries after the loader's path.
+set(NICEOPS_ROCM_HINTS ${ROCM_PATH} $ENV{ROCM_PATH} /opt/rocm)
+find_path(NICEOPS_HIP_INCLUDE_DIR hip/hiprtc.h HINTS ${NICEOPS_ROCM_HINTS} PATH_SUFFIXES include)
 if(NICEOPS_GPU STREQUAL "AUTO")
   if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(NICEOPS_GPU_BACKEND METAL)
@@ -193,6 +198,8 @@ if(NICEOPS_GPU STREQUAL "AUTO")
     find_package(CUDAToolkit QUIET)
     if(CUDAToolkit_FOUND AND EXISTS "${CUDAToolkit_INCLUDE_DIRS}/nvrtc.h")
       set(NICEOPS_GPU_BACKEND CUDA)
+    elseif(NICEOPS_HIP_INCLUDE_DIR AND NOT WIN32)
+      set(NICEOPS_GPU_BACKEND HIP)
     else()
       set(NICEOPS_GPU_BACKEND OFF)
     endif()
@@ -244,10 +251,47 @@ elseif(NICEOPS_GPU_BACKEND STREQUAL "CUDA")
     message(STATUS "No CUDA device here (${NICEOPS_CUDA_PROBE_OUTPUT}): the GPU runs fall back to the CPU, "
                    "and the tests that need a device are left out")
   endif()
+elseif(NICEOPS_GPU_BACKEND STREQUAL "HIP")
+  if(NOT NICEOPS_HIP_INCLUDE_DIR)
+    message(FATAL_ERROR "NICEOPS_GPU=HIP needs ROCm's headers (hip/hip_runtime_api.h, hip/hiprtc.h); "
+                        "set ROCM_PATH, or configure with -DNICEOPS_GPU=OFF")
+  endif()
+  if(APPLE OR WIN32)
+    message(FATAL_ERROR "NICEOPS_GPU=HIP is built for Linux only (it opens libamdhip64.so with dlopen)")
+  endif()
+  get_filename_component(NICEOPS_ROCM_LIB_DIR "${NICEOPS_HIP_INCLUDE_DIR}/../lib" REALPATH)
+  set(NICEOPS_GPU_SOURCE src/gpu/gpu_hip.cpp)
+  # The headers only: the backend links no ROCm library.  The host compiler
+  # reads HIP's headers as the AMD platform's.
+  set(NICEOPS_HIP_DEFINITIONS __HIP_PLATFORM_AMD__ "NICEOPS_ROCM_LIB_DIR=\"${NICEOPS_ROCM_LIB_DIR}\"")
+  set_source_files_properties(src/gpu/gpu_hip.cpp PROPERTIES
+    INCLUDE_DIRECTORIES "${NICEOPS_HIP_INCLUDE_DIR}"
+    COMPILE_DEFINITIONS "${NICEOPS_HIP_DEFINITIONS}")
+  message(STATUS "HIP headers: ${NICEOPS_HIP_INCLUDE_DIR} (libraries tried in ${NICEOPS_ROCM_LIB_DIR} after the loader's path)")
+  # As for CUDA: whether a device answers here, which
+  # decides whether the tests that pass --gpu are registered.
+  try_run(NICEOPS_HIP_PROBE_RUN NICEOPS_HIP_PROBE_COMPILED
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/cmake/probe_hip_device.cpp
+    CMAKE_FLAGS "-DINCLUDE_DIRECTORIES=${NICEOPS_HIP_INCLUDE_DIR}"
+    COMPILE_DEFINITIONS -D__HIP_PLATFORM_AMD__ "-DNICEOPS_ROCM_LIB_DIR=\"${NICEOPS_ROCM_LIB_DIR}\""
+    LINK_LIBRARIES ${CMAKE_DL_LIBS}
+    COMPILE_OUTPUT_VARIABLE NICEOPS_HIP_PROBE_COMPILE_OUTPUT
+    RUN_OUTPUT_VARIABLE NICEOPS_HIP_PROBE_OUTPUT)
+  if(NICEOPS_HIP_PROBE_COMPILED AND NICEOPS_HIP_PROBE_RUN EQUAL 0)
+    set(NICEOPS_GPU_DEVICE ON)
+    message(STATUS "HIP device: ${NICEOPS_HIP_PROBE_OUTPUT}")
+  else()
+    set(NICEOPS_GPU_DEVICE OFF)
+    if(NOT NICEOPS_HIP_PROBE_COMPILED)
+      set(NICEOPS_HIP_PROBE_OUTPUT "the probe did not compile: ${NICEOPS_HIP_PROBE_COMPILE_OUTPUT}")
+    endif()
+    message(STATUS "No HIP device here (${NICEOPS_HIP_PROBE_OUTPUT}): the GPU runs fall back to the CPU, "
+                   "and the tests that need a device are left out")
+  endif()
 elseif(NICEOPS_GPU_BACKEND STREQUAL "OFF")
   set(NICEOPS_GPU_SOURCE src/gpu/gpu_disabled.cpp)
 else()
-  message(FATAL_ERROR "NICEOPS_GPU must be AUTO, METAL, CUDA or OFF, not ${NICEOPS_GPU}")
+  message(FATAL_ERROR "NICEOPS_GPU must be AUTO, METAL, CUDA, HIP or OFF, not ${NICEOPS_GPU}")
 endif()
 message(STATUS "GPU backend: ${NICEOPS_GPU_BACKEND}")
 # The tests that pass --gpu run the GPU where this machine has a device, and
@@ -393,7 +437,7 @@ target_link_libraries(niceops_core PUBLIC
 )
 if(NICEOPS_GPU_BACKEND STREQUAL "METAL")
   target_link_libraries(niceops_core PUBLIC "-framework Metal" "-framework Foundation")
-elseif(NICEOPS_GPU_BACKEND STREQUAL "CUDA")
+elseif(NICEOPS_GPU_BACKEND STREQUAL "CUDA" OR NICEOPS_GPU_BACKEND STREQUAL "HIP")
   target_link_libraries(niceops_core PUBLIC ${CMAKE_DL_LIBS})
 endif()
 if(NICEOPS_PLOTTING)

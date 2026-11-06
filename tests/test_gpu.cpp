@@ -69,7 +69,7 @@ TEST_CASE("the GPU's kernel sources are embedded and compile", "[gpu]")
 }
 
 // Every program the code builds, compiled without a device where the backend
-// can (CUDA's NVRTC): on a machine with the toolkit and no working GPU this is
+// can (CUDA's NVRTC, HIP's hiprtc): on a machine with the toolkit and no working GPU this is
 // what holds the kernels to the backend's dialect.  The lists are those of
 // band_energy.cpp, canyon_wave.cpp, fdtd.cpp and the wedge checks below.
 TEST_CASE("every kernel program compiles for the backend", "[gpu]")
@@ -186,7 +186,11 @@ double relative(std::complex<double> a, std::complex<double> b)
 // The kernels' UTD transition function and wedge coefficient in float
 // against the host's in double, from x = 1e-8 to 1e4, and over wedges of
 // n = 1 to 2 at random angles and at angles within a hair of a shadow or
-// reflection boundary, where a cotangent meets its pole.
+// reflection boundary, where a cotangent meets its pole.  D's error is taken
+// relative to the terms it sums, sum |cot F|: near n = 1 they cancel in pairs,
+// by up to 2000 times here, and no float evaluation holds D itself to better
+// than that times its terms' rounding (the MI210 was 1.4e-4 relative to D at
+// n = 1.0002, 7e-8 relative to its terms).
 TEST_CASE("the GPU's wedge coefficients are the CPU's", "[gpu]")
 {
     gpu::Device& device = device_or_skip();
@@ -204,6 +208,7 @@ TEST_CASE("the GPU's wedge coefficients are the CPU's", "[gpu]")
     std::uniform_real_distribution<double> unit(0.0, 1.0);
     std::vector<float> args;
     std::vector<std::complex<double>> expected;
+    std::vector<double> cancellation;
     for (int i = 0; i < 4000; i++)
     {
         const double n = 1.0 + unit(random);
@@ -221,14 +226,28 @@ TEST_CASE("the GPU's wedge coefficients are the CPU's", "[gpu]")
         for (double v : {n, k, r})
             args.push_back(static_cast<float>(v));
         expected.push_back(hard_wedge_coefficient(a, k, r));
+        // D over its terms' sum of magnitudes: hard_wedge_coefficient is
+        // scale e^(i pi/4) sum cot F(2 k r c^2).
+        std::complex<double> sum = 0.0;
+        double magnitude = 0.0;
+        for (int t = 0; t < 4; t++)
+        {
+            const std::complex<double> term = a.cot[t] * utd_transition(2.0 * k * r * a.c[t] * a.c[t]);
+            sum += term;
+            magnitude += std::abs(term);
+        }
+        cancellation.push_back(magnitude / std::max(std::abs(sum), 1e-300));
     }
     const std::vector<std::complex<double>> d = run_check(device, "check_wedge_coefficient", args, 11);
-    double worst_d = 0.0;
+    double worst_d = 0.0, worst_terms = 0.0;
     for (std::size_t i = 0; i < expected.size(); i++)
+    {
         worst_d = std::max(worst_d, relative(d[i], expected[i]));
-    INFO("F " << worst_f << ", D " << worst_d << " relative");
+        worst_terms = std::max(worst_terms, relative(d[i], expected[i]) / cancellation[i]);
+    }
+    INFO("F " << worst_f << " relative; D " << worst_d << " relative, " << worst_terms << " relative to its terms");
     REQUIRE(worst_f < 2e-6);
-    REQUIRE(worst_d < 1e-4);
+    REQUIRE(worst_terms < 1e-5);
 }
 
 // Filon's panel in float against the same integral in double, by its exact
@@ -241,6 +260,7 @@ TEST_CASE("the GPU's Filon panel is the exact integral", "[gpu]")
     std::uniform_real_distribution<double> unit(0.0, 1.0);
     std::vector<float> args;
     std::vector<std::complex<double>> expected;
+    std::vector<double> cancellation;
     for (int i = 0; i < 4000; i++)
     {
         const double k = 0.5 * std::pow(400.0, unit(random));
