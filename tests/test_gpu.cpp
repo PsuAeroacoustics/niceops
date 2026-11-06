@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -65,6 +66,34 @@ TEST_CASE("the GPU's kernel sources are embedded and compile", "[gpu]")
     for (const char* entry : {"band_pair_sum", "band_quadrature"})
         REQUIRE(device.kernel({"band_energy_types.h", "band_energy.kern"}, entry).max_threads_per_group() >= 256);
     REQUIRE_THROWS(device.kernel({"band_energy.kern"}, "band_pair_sum")); // its types are missing
+}
+
+// Every program the code builds, compiled without a device where the backend
+// can (CUDA's NVRTC): on a machine with the toolkit and no working GPU this is
+// what holds the kernels to the backend's dialect.  The lists are those of
+// band_energy.cpp, canyon_wave.cpp, fdtd.cpp and the wedge checks below.
+TEST_CASE("every kernel program compiles for the backend", "[gpu]")
+{
+    for (const char* name : {"prelude_metal.h", "prelude_cuda.h"})
+        REQUIRE(gpu::kernel_source(name) != nullptr);
+    const std::vector<std::vector<std::string>> programs {
+            {"band_energy_types.h", "point_rays_types.h", "wedge.h", "band_energy.kern", "point_rays.kern"},
+            {"canyon_wave_types.h", "canyon_wave.kern"},
+            {"fdtd_types.h", "fdtd.kern"},
+            {"wedge.h", "wedge_check.kern"},
+    };
+    bool compiled = false;
+    for (const auto& program : programs)
+    {
+        INFO(program.back());
+        compiled = gpu::compile_only(program);
+        if (!compiled)
+            break;
+    }
+    if (!compiled)
+        SKIP("the " << gpu::Device::backend() << " backend compiles only on a device");
+    REQUIRE_THROWS_WITH(gpu::compile_only({"band_energy.kern"}),
+            Catch::Matchers::ContainsSubstring("do not compile")); // its types are missing
 }
 
 // Ray sets like a street microphone's (hundreds of rays over a few hundred

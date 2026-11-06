@@ -1,7 +1,7 @@
 #pragma once
 
-// A GPU, through whichever backend this build has (NICEOPS_GPU; Metal on
-// macOS today).  The kernels are written once, in the dialect of
+// A GPU, through whichever backend this build has (NICEOPS_GPU: Metal on
+// macOS, CUDA on NVIDIA GPUs).  The kernels are written once, in the dialect of
 // src/gpu/kernels -- each backend's prelude maps it onto that backend's
 // language -- and compiled at run time from source embedded in the binary, so
 // a build needs no shader toolchain.  Buffers are shared with the CPU.
@@ -108,16 +108,21 @@ public:
     // The default device, or null where this build has no GPU backend or the
     // machine no device.  Created on first use and kept for the process.
     static Device* get();
-    // The backend's name ("metal") or "none".
+    // The backend's name ("metal", "cuda") or "none".
     static const char* backend();
+    // Where get() is null in a build with a backend, why ("the CUDA driver
+    // did not start (...)"); "" where it is not, or the backend cannot say.
+    static std::string why_none();
     // get()'s device, or a std::runtime_error saying why there is none, for
     // the option that asked for it ("--gpu").
     static Device& require(const std::string& option)
     {
         if (Device* device = get())
             return *device;
-        throw std::runtime_error(option + ": "
-                + (std::string(backend()) == "none" ? "this build has no GPU backend (NICEOPS_GPU)" : "no GPU device"));
+        if (std::string(backend()) == "none")
+            throw std::runtime_error(option + ": this build has no GPU backend (NICEOPS_GPU)");
+        const std::string why = why_none();
+        throw std::runtime_error(option + ": no GPU device" + (why.empty() ? "" : ": " + why));
     }
 
     std::string name() const;
@@ -139,6 +144,13 @@ public:
 private:
     std::shared_ptr<Impl> impl_;
 };
+
+// Compiles the program Device::kernel would make of `sources`, without a
+// device, where the backend can (CUDA's NVRTC): true where it did, false where
+// the backend cannot compile without one.  Throws std::runtime_error with the
+// compiler's message if the program does not compile.  For the tests: it lets
+// a machine with the toolkit and no working GPU still check every kernel.
+bool compile_only(const std::vector<std::string>& sources);
 
 // The kernel sources embedded at build time (cmake/embed_kernels.cmake), by
 // file name; null for a name not embedded.

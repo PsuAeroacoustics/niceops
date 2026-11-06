@@ -176,16 +176,26 @@ else()
   set(NICEOPS_PLOTTING_SOURCE src/plotting_disabled.cpp)
 endif()
 
-# GPU backend (src/gpu).  AUTO takes Metal on macOS with Clang and none
-# elsewhere (GCC cannot build the Objective-C++ that drives Metal).  The
-# kernels are compiled at run time from source embedded in the binary, so no
-# shader toolchain is needed.  Where there is a device the tools that have a
-# GPU path take it by default; --no-gpu keeps the CPU (docs/internals/gpu.md).
-set(NICEOPS_GPU "AUTO" CACHE STRING "GPU backend: AUTO (Metal on macOS with Clang, else none), METAL or OFF")
-set_property(CACHE NICEOPS_GPU PROPERTY STRINGS AUTO METAL OFF)
+# GPU backend (src/gpu).  AUTO takes Metal on macOS with Clang, CUDA elsewhere
+# where the CUDA toolkit's headers are found, and none otherwise (GCC cannot
+# build the Objective-C++ that drives Metal).  The kernels are compiled at run
+# time from source embedded in the binary, so no shader toolchain is needed;
+# the CUDA backend opens the driver and NVRTC at run time, so it needs the
+# toolkit's headers to build and nothing of CUDA to run (without a driver the
+# GPU paths fall back to the CPU).  Where there is a device the tools that have
+# a GPU path take it by default; --no-gpu keeps the CPU (docs/internals/gpu.md).
+set(NICEOPS_GPU "AUTO" CACHE STRING "GPU backend: AUTO (Metal on macOS with Clang, CUDA where its toolkit is found, else none), METAL, CUDA or OFF")
+set_property(CACHE NICEOPS_GPU PROPERTY STRINGS AUTO METAL CUDA OFF)
 if(NICEOPS_GPU STREQUAL "AUTO")
   if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(NICEOPS_GPU_BACKEND METAL)
+  elseif(NOT APPLE)
+    find_package(CUDAToolkit QUIET)
+    if(CUDAToolkit_FOUND AND EXISTS "${CUDAToolkit_INCLUDE_DIRS}/nvrtc.h")
+      set(NICEOPS_GPU_BACKEND CUDA)
+    else()
+      set(NICEOPS_GPU_BACKEND OFF)
+    endif()
   else()
     set(NICEOPS_GPU_BACKEND OFF)
   endif()
@@ -206,16 +216,56 @@ if(NICEOPS_GPU_BACKEND STREQUAL "METAL")
   enable_language(OBJCXX)
   set(NICEOPS_GPU_SOURCE src/gpu/gpu_metal.mm)
   set_source_files_properties(src/gpu/gpu_metal.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+elseif(NICEOPS_GPU_BACKEND STREQUAL "CUDA")
+  find_package(CUDAToolkit QUIET)
+  if(NOT CUDAToolkit_FOUND OR NOT EXISTS "${CUDAToolkit_INCLUDE_DIRS}/nvrtc.h")
+    message(FATAL_ERROR "NICEOPS_GPU=CUDA needs the CUDA toolkit's headers (cuda.h, nvrtc.h); "
+                        "set CUDAToolkit_ROOT, or configure with -DNICEOPS_GPU=OFF")
+  endif()
+  if(APPLE OR WIN32)
+    message(FATAL_ERROR "NICEOPS_GPU=CUDA is built for Linux only (it opens libcuda.so with dlopen)")
+  endif()
+  set(NICEOPS_GPU_SOURCE src/gpu/gpu_cuda.cpp)
+  # The headers only: the backend links no CUDA library.
+  set_source_files_properties(src/gpu/gpu_cuda.cpp PROPERTIES INCLUDE_DIRECTORIES "${CUDAToolkit_INCLUDE_DIRS}")
+  message(STATUS "CUDA headers: ${CUDAToolkit_INCLUDE_DIRS} (CUDA ${CUDAToolkit_VERSION})")
+  # Whether this machine has a device the backend takes, which decides whether
+  # the tests that pass --gpu are registered (below; a test cannot skip a fixture
+  # its comparisons need).  Reconfigure once a driver is installed or started.
+  try_run(NICEOPS_CUDA_PROBE_RUN NICEOPS_CUDA_PROBE_COMPILED
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/cmake/probe_cuda_device.cpp
+    CMAKE_FLAGS "-DINCLUDE_DIRECTORIES=${CUDAToolkit_INCLUDE_DIRS}"
+    LINK_LIBRARIES ${CMAKE_DL_LIBS}
+    RUN_OUTPUT_VARIABLE NICEOPS_CUDA_PROBE_OUTPUT)
+  if(NICEOPS_CUDA_PROBE_COMPILED AND NICEOPS_CUDA_PROBE_RUN EQUAL 0)
+    set(NICEOPS_GPU_DEVICE ON)
+  else()
+    set(NICEOPS_GPU_DEVICE OFF)
+    message(STATUS "No CUDA device here (${NICEOPS_CUDA_PROBE_OUTPUT}): the GPU runs fall back to the CPU, "
+                   "and the tests that need a device are left out")
+  endif()
 elseif(NICEOPS_GPU_BACKEND STREQUAL "OFF")
   set(NICEOPS_GPU_SOURCE src/gpu/gpu_disabled.cpp)
 else()
-  message(FATAL_ERROR "NICEOPS_GPU must be AUTO, METAL or OFF, not ${NICEOPS_GPU}")
+  message(FATAL_ERROR "NICEOPS_GPU must be AUTO, METAL, CUDA or OFF, not ${NICEOPS_GPU}")
 endif()
 message(STATUS "GPU backend: ${NICEOPS_GPU_BACKEND}")
+# The tests that pass --gpu run the GPU where this machine has a device, and
+# otherwise check that --gpu is refused, with the refusal's text.  Metal is
+# taken to have one: every Mac it builds on does.
+if(NICEOPS_GPU_BACKEND STREQUAL "OFF")
+  set(NICEOPS_GPU_DEVICE OFF)
+  set(NICEOPS_GPU_REFUSAL "this build has no GPU backend")
+elseif(NICEOPS_GPU_BACKEND STREQUAL "METAL")
+  set(NICEOPS_GPU_DEVICE ON)
+else()
+  set(NICEOPS_GPU_REFUSAL "no GPU device")
+endif()
 # The kernel sources, embedded as strings (cmake/embed_kernels.cmake).  A new
 # kernel file goes in this list.
 set(NICEOPS_KERNEL_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/kernels/prelude_metal.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/kernels/prelude_cuda.h
   ${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/kernels/common.h
   ${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/kernels/band_energy_types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/kernels/band_energy.kern
@@ -343,6 +393,8 @@ target_link_libraries(niceops_core PUBLIC
 )
 if(NICEOPS_GPU_BACKEND STREQUAL "METAL")
   target_link_libraries(niceops_core PUBLIC "-framework Metal" "-framework Foundation")
+elseif(NICEOPS_GPU_BACKEND STREQUAL "CUDA")
+  target_link_libraries(niceops_core PUBLIC ${CMAKE_DL_LIBS})
 endif()
 if(NICEOPS_PLOTTING)
   target_link_libraries(niceops_core PUBLIC pybind11::embed)
@@ -1315,9 +1367,9 @@ add_test(NAME urban_table_gpu_without_wave_refused COMMAND niceops_urban_table -
 set_tests_properties(urban_table_gpu_without_wave_refused PROPERTIES PASS_REGULAR_EXPRESSION "there is none to march")
 # The wave band marched on the GPU (--gpu, in float): the same SEL as the CPU's
 # table within 0.001 dB.  A build without a GPU backend refuses the flag.
-if(NICEOPS_GPU_BACKEND STREQUAL "OFF")
+if(NOT NICEOPS_GPU_DEVICE)
   add_test(NAME urban_table_wave_gpu_refused COMMAND niceops_urban_table --canyons tests/data/urban_canyons.csv --bands 50 63 80 --frame_bearing 210 --wave_below 63 --wave_ppw 8 --gpu -o integrated/never.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-  set_tests_properties(urban_table_wave_gpu_refused PROPERTIES PASS_REGULAR_EXPRESSION "this build has no GPU backend")
+  set_tests_properties(urban_table_wave_gpu_refused PROPERTIES PASS_REGULAR_EXPRESSION "${NICEOPS_GPU_REFUSAL}")
 else()
   add_test(NAME urban_table_wave_gpu_build COMMAND niceops_urban_table --canyons tests/data/urban_canyons.csv --database databases/B407_fixed_load_factor.nod --frame_bearing 210 --wave_below 80 --wave_ppw 10 -j 2 --gpu -o tables/urban_wave_gpu_test.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
   set_tests_properties(urban_table_wave_gpu_build PROPERTIES FIXTURES_SETUP urban_table_wave_gpu_file)
@@ -1678,11 +1730,11 @@ set_tests_properties(point_field_refuses_nonfinite PROPERTIES PASS_REGULAR_EXPRE
 # (the GPU integrates the low bands over every pair,
 # where the CPU's pair sum drops the pairs its sinc damps below 1/30; FIDELITY
 # has the difference).  A build without a GPU backend refuses the flag.
-if(NICEOPS_GPU_BACKEND STREQUAL "OFF")
+if(NOT NICEOPS_GPU_DEVICE)
   add_test(NAME point_field_gpu_refused COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --sources tests/data/point_sources.csv --microphones tests/data/urban_observers.csv --bands 125 --gpu --no_air_absorption -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-  set_tests_properties(point_field_gpu_refused PROPERTIES PASS_REGULAR_EXPRESSION "this build has no GPU backend")
+  set_tests_properties(point_field_gpu_refused PROPERTIES PASS_REGULAR_EXPRESSION "${NICEOPS_GPU_REFUSAL}")
   add_test(NAME buildings_gpu_refused COMMAND ${URBAN_DISTRICT} --buildings tests/data/urban_buildings.csv --gpu -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-  set_tests_properties(buildings_gpu_refused PROPERTIES PASS_REGULAR_EXPRESSION "this build has no GPU backend")
+  set_tests_properties(buildings_gpu_refused PROPERTIES PASS_REGULAR_EXPRESSION "${NICEOPS_GPU_REFUSAL}")
 else()
   add_test(NAME point_field_gpu_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --sources tests/data/point_sources.csv --microphones tests/data/urban_observers.csv --bands 125 250 500 1000 --rays integrated/point_field_sources_gpu_rays.csv -j 2 --gpu --humidity 70 -o integrated/point_field_sources_gpu.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
   set_tests_properties(point_field_gpu_runs PROPERTIES FIXTURES_SETUP point_field_gpu)

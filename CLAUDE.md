@@ -47,8 +47,11 @@ Commands and options are in `README.md`; rationale is in
   error far from its cause.
 - Plotting needs `python3-venv`. Without it the build's environment step only warns and falls
   back to the system interpreter's packages, so CI checks the environment explicitly.
-- **CI never builds the Metal backend** (it runs on Linux, where `NICEOPS_GPU=AUTO` is `OFF`).
-  Build and test a GPU change on a Mac; the GCC check above covers the disabled backend.
+- **CI never builds a GPU backend** (its Linux runner has no CUDA toolkit, so `NICEOPS_GPU=AUTO`
+  is `OFF`). Build and test a GPU change on a Mac and on a Linux machine with an NVIDIA GPU; the GCC
+  check above covers the disabled backend. A CUDA build on a machine whose driver does not answer
+  still compiles every kernel with NVRTC (`every kernel program compiles for the backend`), but
+  registers the `--gpu` tests as refusals: that is not a test of the GPU.
 - **Keep the C++ sources in one static library.** A separate target that calls back into
   `niceops_core` makes a cycle, which breaks Linux only. `-DNICEOPS_PLOTTING=OFF` is the only
   build that links `src/plotting_disabled.cpp`; CI builds with plotting only, and compiles the stub

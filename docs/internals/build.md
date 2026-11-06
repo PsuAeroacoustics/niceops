@@ -93,9 +93,16 @@ its dependencies point one direction.
 ## GPU backend
 
 `NICEOPS_GPU` picks the backend of `src/gpu`: `AUTO` (the default) is Metal on macOS when the
-compiler is Clang and none elsewhere, since GCC cannot build the Objective-C++ that drives Metal;
-`METAL` and `OFF` force it. The Metal backend enables CMake's `OBJCXX` language for
-`gpu_metal.mm` alone (with ARC) and links the Metal and Foundation frameworks. No shader toolchain
+compiler is Clang, CUDA on any other system where `find_package(CUDAToolkit)` finds `nvrtc.h`, and
+none otherwise, since GCC cannot build the Objective-C++ that drives Metal; `METAL`, `CUDA` and
+`OFF` force it. The Metal backend enables CMake's `OBJCXX` language for `gpu_metal.mm` alone (with
+ARC) and links the Metal and Foundation frameworks. The CUDA backend (`gpu_cuda.cpp`, Linux only)
+takes the toolkit's include directory for that one file and links only `${CMAKE_DL_LIBS}`: it opens
+`libcuda.so.1` and `libnvrtc.so` at run time, so the binary starts on a machine without a driver
+and runs on the CPU there. Point CMake at a toolkit with `-DCUDAToolkit_ROOT=...`; any CUDA 12
+toolkit's headers serve. At configure, a CUDA build runs `cmake/probe_cuda_device.cpp`: where no
+device answers it says why, and the tests that pass `--gpu` are registered as refusals instead
+(`NICEOPS_GPU_DEVICE`, [gpu.md](gpu.md#the-cuda-backend)). Reconfigure after installing or starting a driver. No shader toolchain
 is involved: the kernels are compiled at run time from source that `cmake/embed_kernels.cmake`
 embeds as strings, rewriting the generated file only when a kernel changes. A new kernel source
 goes in `NICEOPS_KERNEL_SOURCES`. Without a backend, `gpu_disabled.cpp` stands in, and a run that
