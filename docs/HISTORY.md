@@ -4,6 +4,17 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## The flyover's near-field comparison in matched frames (November 2026)
+
+FIDELITY's near-field table for the PSU-WOPWOP flyover was made with one untapered FFT of each
+2 s window of PSU-WOPWOP's pressure. Near overhead such a window crosses the rotor's axial null,
+and the truncated tones leaked across every band 40-55 dB above the tones themselves. That read as
+NICEOPS's null being 35-40 dB too deep below 150 m (−29.7 / −27.7 dB) and −3.6 / −3.2 dB at
+150-250 m.
+
+Taken in NICEOPS's own 0.5 s Hann frames, the same runs give −3.4 / −2.4 dB and +0.00 / +0.33 dB.
+No code changed.
+
 ## AAM export: every third-octave set is BB (November 2026)
 
 `--export_aam` wrote two kinds of third-octave database as AAM's narrowband type (`NB` 1), so

@@ -2356,27 +2356,33 @@ PT build. Harness `tones/`: `wopwop_tandem.py` and `wopwop_flyover.py`.
   hemispheres: relative error 0.009-0.27, 0.0036-0.034 and 0.0009-0.0085 for degrees 1-8, second
   order in the step.
 - **The near field in the flyover** (2 s windows, bands to 100 Hz within 20 dB of the window's
-  loudest band at that microphone; front rotor alone, without the near-field term / with it):
+  loudest band at that microphone; front rotor alone, without the near-field term / with it).
+  PSU-WOPWOP's pressure is cut into the same 0.5 s Hann-windowed frames as NICEOPS's
+  `--band_frames`, energy-summed over the window:
 
   | Range at emission | Mean (dB) | rms (dB) |
   | --- | --- | --- |
-  | below 150 m (mostly overhead) | −29.7 / −27.7 | 39.2 / 37.2 |
-  | 150-250 m | −3.6 / −3.2 | 10.5 / 9.9 |
-  | 250-400 m | −0.54 / −0.37 | 1.77 / 1.66 |
-  | 400-600 m | −0.34 / −0.26 | 0.69 / 0.63 |
-  | beyond 600 m | −0.67 / −0.64 | 1.13 / 1.10 |
+  | below 150 m (17 bands, 7 overhead) | −3.4 / −2.4 | 10.7 / 9.7 |
+  | 150-250 m | +0.00 / +0.33 | 3.20 / 3.10 |
+  | 250-400 m | −0.10 / +0.06 | 1.48 / 1.43 |
+  | 400-600 m | −0.11 / −0.03 | 0.19 / 0.12 |
+  | beyond 600 m | −0.56 / −0.52 | 0.99 / 0.96 |
 
-  The tandem: 150-250 m −3.7 / −3.3 dB (rms 9.4 / 9.1), 250-400 m −1.8 / −1.6 (5.4 / 5.2). Over the
-  whole pass the front rotor's mean moves from −0.58 to −0.41 dB (rms 1.11 to 0.99), the tandem's
-  from −0.63 to −0.44 (1.33 to 1.24); the phasing's effect is unchanged (50 Hz +4.82 dB with the
-  term, +4.86 without, against PSU-WOPWOP's +4.59). The term helps in every range and band, but it
-  is a small part of the short-range difference: this rotor (6.6 m, 30 rad/s) is 17 c/Ω out at
-  200 m, where its first-order phase error is 6.5° at blade passage. What remains close in is the
-  overhead axial null, which NICEOPS keeps 35-40 dB deeper than PSU-WOPWOP's direct prediction
-  below 150 m (the first-order term fills it by 2 dB), and windows near the null on their way in.
-  Counting every band within 20 dB of its own peak over the pass takes in the receding pass's weak
-  bands at 79-100 Hz (25-30 dB, near the 2 s FFT's leakage from the loud tones), where NICEOPS
-  reads 15-27 dB lower (6 dB at 150-250 m).
+  - **The tandem:** 150-250 m −0.43 / −0.10 dB (rms 4.17 / 4.04), and 250-400 m −0.31 / −0.13 (2.61 / 2.56).
+  - **The whole pass:** the front rotor's mean moves from −0.58 to −0.41 dB (rms 1.11 to 0.99), and the
+    tandem's from −0.63 to −0.44 (1.33 to 1.24).
+  - **The phasing's effect** is unchanged: at 50 Hz, +4.82 dB with the term and +4.86 without, against
+    PSU-WOPWOP's +4.59.
+  - **The term lowers the rms in every range.** This rotor (6.6 m, 30 rad/s) is 17 c/Ω out at 200 m,
+    where its first-order phase error is 6.5° at blade passage.
+  - **The selection hardly matters.** Counting every band within 20 dB of its own peak over the pass,
+    instead of the window's loudest, moves each range's mean by at most 0.25 dB from 150 m out.
+  - **Overhead within 150 m the windows cross the rotor's axial null**, where the tones are far louder
+    at a window's ends than in its middle. The 7 overhead bands there read −7.0 / −5.4 dB (rms 15.8 /
+    14.1) in frames, and +7.8 dB with one 2 s Hann window, so they depend on the time weighting.
+  - **The null itself is the far-field sphere's.** PSU-WOPWOP's full-kernel spheres predicted at 50 and
+    100 m hold the far-field sphere's energy within 20° of the axis to 0.6 dB (blade passage; 0.5 dB
+    at its harmonics).
 
 ### `--db_cutoff` and SEL
 

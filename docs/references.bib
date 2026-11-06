@@ -1,0 +1,1126 @@
+% references.bib -- every reference in the NICEOPS and PANAM theory manuals
+%
+%   NICEOPS: docs/THEORY.md, "References" (58 entries)
+%   PANAM:    panam/docs/THEORY.md, "References" (54 entries)
+%
+% 86 unique works; 26 are cited by both manuals. The comment above each entry gives
+% its number in each manual as [N n] (NICEOPS) and [P n] (PANAM).
+%
+% Verified 2026-10-12. Every DOI was resolved through Crossref and its authors, title,
+% journal, volume, issue, pages and year compared with the manuals. Works without a DOI
+% were checked against the issuing body or a primary copy (NTRS, ROSA P, EASA, ECAC,
+% eCFR, DLMF, FAA, SAE, the DEGA proceedings, VSB-TUO). Where a check fell short of the
+% document itself, the entry's comment says so.
+%
+% Page locators the manuals give inside the citation (e.g. [12, Table 2-7],
+% [17, A36.4.5], Morse and Ingard's Chap. 8) belong in \cite[...]{} and are not stored here.
+
+% ---------------------------------------------------------------------------
+% Rotorcraft noise modelling and flight test
+% ---------------------------------------------------------------------------
+
+% [N 1] [P 1]  handle resolves to DRUM; title, author and year match its record.
+@phdthesis{greenwood2011frame,
+  author  = {Greenwood, E.},
+  title   = {Fundamental Rotorcraft Acoustic Modeling from Experiments ({FRAME})},
+  school  = {Department of Aerospace Engineering, University of Maryland},
+  address = {College Park, MD},
+  year    = {2011},
+  url     = {http://hdl.handle.net/1903/11518}
+}
+
+% [N 2]
+@article{greenwood2020maneuvering,
+  author  = {Greenwood, E. and Rau, R.},
+  title   = {A Maneuvering Flight Noise Model for Helicopter Mission Planning},
+  journal = {Journal of the American Helicopter Society},
+  volume  = {65},
+  number  = {2},
+  pages   = {022007},
+  year    = {2020},
+  doi     = {10.4050/JAHS.65.022007}
+}
+
+% [N 3] [P 2]  Crossref holds the authors out of order; the order below is the paper's.
+@inproceedings{schmitz2007measurement,
+  author    = {Schmitz, F. H. and Greenwood, E. and Sickenberger, R. D. and Gopalan, G.
+               and Sim, B. W.-C. and Conner, D. and Moralez, III, E. and Decker, W. A.},
+  title     = {Measurement and Characterization of Helicopter Noise in Steady-State and
+               Maneuvering Flight},
+  booktitle = {Proceedings of the American Helicopter Society 63rd Annual Forum},
+  address   = {Virginia Beach, VA},
+  month     = may,
+  year      = {2007},
+  doi       = {10.4050/VFS-F63-000258}
+}
+
+% [N 4] [P 3]
+@article{greenwood2015semiempirical,
+  author  = {Greenwood, E. and Schmitz, F. H. and Sickenberger, R. D.},
+  title   = {A Semiempirical Noise Modeling Method for Helicopter Maneuvering Flight
+             Operations},
+  journal = {Journal of the American Helicopter Society},
+  volume  = {60},
+  number  = {2},
+  pages   = {022007},
+  year    = {2015},
+  doi     = {10.4050/JAHS.60.022007}
+}
+
+% [N 5] [P 4]  NTRS 20240013572.
+@techreport{watts2019noise,
+  author      = {Watts, M. E. and Greenwood, E. and Smith, C. D. and Stephenson, J. H.},
+  title       = {Noise Abatement Flight Test Data Report},
+  institution = {NASA Langley Research Center},
+  address     = {Hampton, VA},
+  type        = {Technical Memorandum},
+  number      = {NASA/TM-2019-220264},
+  month       = mar,
+  year        = {2019},
+  url         = {https://ntrs.nasa.gov/citations/20240013572}
+}
+
+% [N 6] [P 5]  Author order confirmed on NTRS 20205003711 (Crossref's is scrambled).
+@inproceedings{pascioni2020medium,
+  author    = {Pascioni, K. A. and Greenwood, E. and Watts, M. E. and Smith, C. D.
+               and Stephenson, J. H.},
+  title     = {Medium-Sized Helicopter Noise Abatement Flight Test},
+  booktitle = {Proceedings of the Vertical Flight Society 76th Annual Forum},
+  address   = {Virtual},
+  month     = oct,
+  year      = {2020},
+  doi       = {10.4050/F-0076-2020-16497}
+}
+
+% [N 12] [P 11]  Checked against the distributed PDF (report documentation page dated
+% 25 May 2021). NICEOPS's locators -- Sec. 2.5.1.1 on pp. 31-34, Tables 2-7 and 2-8,
+% Fig. 2-20 -- all land on the printed pages cited. Not published online.
+@manual{page2021aam,
+  author       = {Page, J. A. and Rapoza, A. and Oberg, A. and Hastings, A. and Baker, G.
+                  and Shumway, M.},
+  title        = {Advanced Acoustic Model ({AAM}) Technical Reference and User's Guide},
+  organization = {U.S. Department of Transportation, Volpe National Transportation
+                  Systems Center},
+  address      = {Cambridge, MA},
+  note         = {Version 3.1, software manual},
+  month        = may,
+  year         = {2021}
+}
+
+% [N 11] [P 39]  1st edition, endorsed by DGCA/166 on 19 May 2026.
+@techreport{ecac2026doc32,
+  key         = {ECAC Doc 32},
+  title       = {Report on Standard Method of Computing Rotorcraft Noise Contours},
+  institution = {European Civil Aviation Conference},
+  address     = {Neuilly-sur-Seine, France},
+  type        = {ECAC.CEAC Doc},
+  number      = {32},
+  note        = {1st ed.},
+  month       = may,
+  year        = {2026},
+  url         = {https://www.ecac-ceac.org/images/documents/ECAC-CEAC-DOC_32-REPORT_ON_STANDARD_METHOD_OF_COMPUTING_ROTORCRAFT_NOISE_CONTOURS.pdf}
+}
+
+% [N 34] [P 37]  EASA NOISE Specific Contract 01; cover dated 31 January 2024.
+@techreport{olsen2024rotorcraft,
+  author      = {Olsen, H. and Tuinstra, M. and van Oosten, N.},
+  title       = {{D1.5d} Rotorcraft Noise Modelling Guidance},
+  institution = {Royal Netherlands Aerospace Centre (NLR), for the European Union
+                 Aviation Safety Agency},
+  address     = {Cologne},
+  type        = {Research Project NOISE, EASA.2020.FC.06, Deliverable},
+  number      = {D1.5d},
+  month       = jan,
+  year        = {2024},
+  url         = {https://www.easa.europa.eu/en/downloads/132005/en}
+}
+
+% [P 38]  EASA NOISE Specific Contract 03; dated 7 December 2023 (issue 3). The
+% NOISE final report lists it as 2024, but the deliverable itself is dated 2023.
+@techreport{vanoosten2023norah,
+  author      = {van Oosten, N. and Ionescu, S. E. and Meliveo, L. and Konovalova, O.
+                 and van der Meulen, J. M. and Tuinstra, M.},
+  title       = {{D2.3} {NORAH} Hemisphere Database Extension},
+  institution = {European Union Aviation Safety Agency},
+  address     = {Cologne},
+  type        = {Research Project NOISE, EASA.2020.FC.06, Deliverable},
+  number      = {D2.3},
+  month       = dec,
+  year        = {2023},
+  url         = {https://www.easa.europa.eu/en/downloads/139663/en}
+}
+
+% ---------------------------------------------------------------------------
+% Geometry, interpolation and numerics
+% ---------------------------------------------------------------------------
+
+% [N 7]
+@article{bowyer1981computing,
+  author  = {Bowyer, A.},
+  title   = {Computing {Dirichlet} Tessellations},
+  journal = {The Computer Journal},
+  volume  = {24},
+  number  = {2},
+  pages   = {162--166},
+  year    = {1981},
+  doi     = {10.1093/comjnl/24.2.162}
+}
+
+% [N 8]
+@article{watson1981computing,
+  author  = {Watson, D. F.},
+  title   = {Computing the $n$-Dimensional {Delaunay} Tessellation with Application to
+             {Voronoi} Polytopes},
+  journal = {The Computer Journal},
+  volume  = {24},
+  number  = {2},
+  pages   = {167--172},
+  year    = {1981},
+  doi     = {10.1093/comjnl/24.2.167}
+}
+
+% [N 9]
+@article{shewchuk1997adaptive,
+  author  = {Shewchuk, J. R.},
+  title   = {Adaptive Precision Floating-Point Arithmetic and Fast Robust Geometric
+             Predicates},
+  journal = {Discrete \& Computational Geometry},
+  volume  = {18},
+  number  = {3},
+  pages   = {305--363},
+  year    = {1997},
+  doi     = {10.1007/PL00009321}
+}
+
+% [N 10]
+@book{knuth1997seminumerical,
+  author    = {Knuth, D. E.},
+  title     = {Seminumerical Algorithms},
+  series    = {The Art of Computer Programming},
+  volume    = {2},
+  edition   = {3rd},
+  publisher = {Addison-Wesley},
+  address   = {Reading, MA},
+  year      = {1997}
+}
+
+% [N 13]
+@article{reinsch1967smoothing,
+  author  = {Reinsch, C. H.},
+  title   = {Smoothing by Spline Functions},
+  journal = {Numerische Mathematik},
+  volume  = {10},
+  number  = {3},
+  pages   = {177--183},
+  year    = {1967},
+  doi     = {10.1007/BF02162161}
+}
+
+% [N 25]
+@article{weideman1994computation,
+  author  = {Weideman, J. A. C.},
+  title   = {Computation of the Complex Error Function},
+  journal = {SIAM Journal on Numerical Analysis},
+  volume  = {31},
+  number  = {5},
+  pages   = {1497--1518},
+  year    = {1994},
+  doi     = {10.1137/0731077}
+}
+
+% [P 34]
+@inproceedings{shepard1968two,
+  author    = {Shepard, D.},
+  title     = {A Two-Dimensional Interpolation Function for Irregularly-Spaced Data},
+  booktitle = {Proceedings of the 1968 23rd {ACM} National Conference},
+  publisher = {ACM},
+  address   = {New York},
+  pages     = {517--524},
+  year      = {1968},
+  doi       = {10.1145/800186.810616}
+}
+
+% [P 35]
+@article{franke1980smooth,
+  author  = {Franke, R. and Nielson, G.},
+  title   = {Smooth Interpolation of Large Sets of Scattered Data},
+  journal = {International Journal for Numerical Methods in Engineering},
+  volume  = {15},
+  number  = {11},
+  pages   = {1691--1704},
+  year    = {1980},
+  doi     = {10.1002/nme.1620151110}
+}
+
+% [N 50]  Release 1.2.8 is dated 2026-09-15. Editors as DLMF's "How to cite" lists them.
+@misc{dlmf,
+  key          = {DLMF},
+  title        = {{NIST Digital Library of Mathematical Functions}},
+  howpublished = {\url{https://dlmf.nist.gov/}, Release 1.2.8 of 2026-09-15},
+  note         = {F.~W.~J. Olver, A.~B. Olde~Daalhuis, D.~W. Lozier, B.~I. Schneider,
+                  R.~F. Boisvert, C.~W. Clark, B.~R. Miller, B.~V. Saunders, H.~S. Cohl,
+                  and M.~A. McClain, eds. Retrieved 8 October 2026},
+  year         = {2026},
+  url          = {https://dlmf.nist.gov/}
+}
+
+% ---------------------------------------------------------------------------
+% Signal processing and metrics
+% ---------------------------------------------------------------------------
+
+% [P 6]
+@article{harris1978use,
+  author  = {Harris, F. J.},
+  title   = {On the Use of Windows for Harmonic Analysis with the Discrete {Fourier}
+             Transform},
+  journal = {Proceedings of the IEEE},
+  volume  = {66},
+  number  = {1},
+  pages   = {51--83},
+  year    = {1978},
+  doi     = {10.1109/PROC.1978.10837}
+}
+
+% [P 7]
+@article{welch1967use,
+  author  = {Welch, P. D.},
+  title   = {The Use of Fast {Fourier} Transform for the Estimation of Power Spectra: A
+             Method Based on Time Averaging over Short, Modified Periodograms},
+  journal = {IEEE Transactions on Audio and Electroacoustics},
+  volume  = {AU-15},
+  number  = {2},
+  pages   = {70--73},
+  year    = {1967},
+  doi     = {10.1109/TAU.1967.1161901}
+}
+
+% [P 9]
+@article{grandke1983interpolation,
+  author  = {Grandke, T.},
+  title   = {Interpolation Algorithms for Discrete {Fourier} Transforms of Weighted
+             Signals},
+  journal = {IEEE Transactions on Instrumentation and Measurement},
+  volume  = {IM-32},
+  number  = {2},
+  pages   = {350--355},
+  year    = {1983},
+  doi     = {10.1109/TIM.1983.4315077}
+}
+
+% [P 44]
+@techreport{vold1993high,
+  author      = {Vold, H. and Leuridan, J.},
+  title       = {High Resolution Order Tracking at Extreme Slew Rates, Using {Kalman}
+                 Tracking Filters},
+  institution = {SAE International},
+  address     = {Warrendale, PA},
+  type        = {SAE Technical Paper},
+  number      = {931288},
+  month       = may,
+  year        = {1993},
+  doi         = {10.4271/931288}
+}
+
+% [P 45]  Checked against the paper's own PDF: Sbornik vedeckych praci VSB-TUO, rada
+% strojni, rocnik LI, cislo 2, 2005, pp. 149-154.
+@article{tuma2005passband,
+  author  = {T{\r{u}}ma, J.},
+  title   = {The Passband Width of the {Vold-Kalman} Order Tracking Filter},
+  journal = {Transactions of the V{\v{S}}B -- Technical University of Ostrava,
+             Mechanical Series},
+  volume  = {51},
+  number  = {2},
+  pages   = {149--154},
+  year    = {2005},
+  url     = {http://transactions.fs.vsb.cz/2005-2/149.pdf}
+}
+
+% [N 51] [P 10]
+@techreport{iec61672_1,
+  key         = {IEC 61672-1},
+  title       = {Electroacoustics---Sound Level Meters---Part 1: Specifications},
+  institution = {International Electrotechnical Commission},
+  address     = {Geneva},
+  type        = {Standard},
+  number      = {IEC 61672-1:2013, Ed.~2.0},
+  year        = {2013}
+}
+
+% [P 51]  Withdrawn; replaced by IEC 61672-1.
+@techreport{iec60651,
+  key         = {IEC 60651},
+  title       = {Sound Level Meters},
+  institution = {International Electrotechnical Commission},
+  address     = {Geneva},
+  type        = {Standard},
+  number      = {IEC 60651:1979},
+  note        = {Withdrawn; replaced by IEC 61672-1},
+  year        = {1979}
+}
+
+% [P 8]
+@techreport{iec61260_1,
+  key         = {IEC 61260-1},
+  title       = {Electroacoustics---Octave-Band and Fractional-Octave-Band
+                 Filters---Part 1: Specifications},
+  institution = {International Electrotechnical Commission},
+  address     = {Geneva},
+  type        = {Standard},
+  number      = {IEC 61260-1:2014},
+  year        = {2014}
+}
+
+% [P 53]
+@techreport{iso532_1,
+  key         = {ISO 532-1},
+  title       = {Acoustics---Methods for Calculating Loudness---Part 1: {Zwicker} Method},
+  institution = {International Organization for Standardization},
+  address     = {Geneva},
+  type        = {Standard},
+  number      = {ISO 532-1:2017},
+  year        = {2017}
+}
+
+% [P 54]  German title: Messtechnische Simulation der Hoerempfindung Schaerfe.
+@techreport{din45692,
+  key         = {DIN 45692},
+  title       = {Measurement Technique for the Simulation of the Auditory Sensation of
+                 Sharpness},
+  institution = {Deutsches Institut f{\"u}r Normung},
+  address     = {Berlin},
+  type        = {Standard},
+  number      = {DIN 45692:2009-08},
+  year        = {2009}
+}
+
+% [P 43]
+@techreport{milstd1474e,
+  key         = {MIL-STD-1474E},
+  title       = {Design Criteria Standard: Noise Limits},
+  institution = {U.S. Department of Defense},
+  address     = {Washington, DC},
+  type        = {Military Standard},
+  number      = {MIL-STD-1474E},
+  month       = apr,
+  year        = {2015}
+}
+
+% ---------------------------------------------------------------------------
+% Microphones and ground-plane measurement
+% ---------------------------------------------------------------------------
+
+% [N 31] [P 25]  Rev. A is dated December 2020 (ARP4055 issued 1988).
+@techreport{sae_arp4055a,
+  key         = {SAE ARP4055A},
+  title       = {Ground-Plane Microphone Configuration for Propeller-Driven Light-Aircraft
+                 Noise Measurement},
+  institution = {SAE International},
+  address     = {Warrendale, PA},
+  type        = {Aerospace Recommended Practice},
+  number      = {ARP4055A},
+  month       = dec,
+  year        = {2020},
+  doi         = {10.4271/ARP4055A}
+}
+
+% [P 26]
+@article{shivashankara1987ground,
+  author  = {Shivashankara, B. N. and Stubbs, G. W.},
+  title   = {Ground Plane Microphone for Measurement of Aircraft Flyover Noise},
+  journal = {Journal of Aircraft},
+  volume  = {24},
+  number  = {11},
+  pages   = {751--758},
+  year    = {1987},
+  doi     = {10.2514/3.45517}
+}
+
+% [P 27]
+@article{kingan2023modelling,
+  author  = {Kingan, M. J. and Go, S. T. and Piscoya, R. and Ochmann, M.},
+  title   = {On the Modelling of Ground-Board Mounted Microphones for Outdoor Noise
+             Measurements},
+  journal = {Journal of Sound and Vibration},
+  volume  = {565},
+  pages   = {117894},
+  year    = {2023},
+  doi     = {10.1016/j.jsv.2023.117894}
+}
+
+% [P 28]
+@article{go2024use,
+  author  = {Go, S. T. and Kingan, M. J. and Schmid, G. and Hall, A.},
+  title   = {On the Use of Ground-Board Mounted Microphones for Outdoor Noise
+             Measurements},
+  journal = {Journal of Sound and Vibration},
+  volume  = {584},
+  pages   = {118432},
+  year    = {2024},
+  doi     = {10.1016/j.jsv.2024.118432}
+}
+
+% [P 29]  DOI was missing from the manual; added from Crossref.
+@article{seybert1986special,
+  author  = {Seybert, A. F. and Soenarko, B. and Rizzo, F. J. and Shippy, D. J.},
+  title   = {A Special Integral Equation Formulation for Acoustic Radiation and
+             Scattering for Axisymmetric Bodies and Boundary Conditions},
+  journal = {Journal of the Acoustical Society of America},
+  volume  = {80},
+  number  = {4},
+  pages   = {1241--1247},
+  year    = {1986},
+  doi     = {10.1121/1.393817}
+}
+
+% [P 21]  Vendor workbook; undated and not independently checkable beyond the
+% filename and sheet, which match panam's ground_plane.py.
+@misc{gras_corrections,
+  key          = {GRAS},
+  author       = {{GRAS Sound \& Vibration}},
+  title        = {Free-Field and Random Incidence Corrections},
+  howpublished = {Microsoft Excel workbook
+                  GRAS\_Free-field\_and\_Random\_Incidence\_Corrections.xlsx, sheet
+                  ``Half-inch (Opt1)'', GRAS Sound \& Vibration, Holte, Denmark},
+  url          = {https://www.grasacoustics.com}
+}
+
+% ---------------------------------------------------------------------------
+% Ground impedance and ground effect
+% ---------------------------------------------------------------------------
+
+% [N 20] [P 13]
+@article{delany1970acoustical,
+  author  = {Delany, M. E. and Bazley, E. N.},
+  title   = {Acoustical Properties of Fibrous Absorbent Materials},
+  journal = {Applied Acoustics},
+  volume  = {3},
+  number  = {2},
+  pages   = {105--116},
+  year    = {1970},
+  doi     = {10.1016/0003-682X(70)90031-9}
+}
+
+% [N 21] [P 14]
+@article{miki1990acoustical,
+  author  = {Miki, Y.},
+  title   = {Acoustical Properties of Porous Materials---Modifications of
+             {Delany-Bazley} Models},
+  journal = {Journal of the Acoustical Society of Japan (E)},
+  volume  = {11},
+  number  = {1},
+  pages   = {19--24},
+  year    = {1990},
+  doi     = {10.1250/ast.11.19}
+}
+
+% [N 22] [P 15]
+@article{attenborough2026prediction,
+  author  = {Attenborough, K. and Taherzadeh, S.},
+  title   = {Prediction of Outdoor Ground Effect},
+  journal = {Applied Acoustics},
+  volume  = {242},
+  pages   = {111067},
+  year    = {2026},
+  doi     = {10.1016/j.apacoust.2025.111067}
+}
+
+% [N 23] [P 16]
+@article{chien1975sound,
+  author  = {Chien, C. F. and Soroka, W. W.},
+  title   = {Sound Propagation Along an Impedance Plane},
+  journal = {Journal of Sound and Vibration},
+  volume  = {43},
+  number  = {1},
+  pages   = {9--20},
+  year    = {1975},
+  doi     = {10.1016/0022-460X(75)90200-X}
+}
+
+% [N 24] [P 17]
+@article{chien1980note,
+  author  = {Chien, C. F. and Soroka, W. W.},
+  title   = {A Note on the Calculation of Sound Propagation Along an Impedance Surface},
+  journal = {Journal of Sound and Vibration},
+  volume  = {69},
+  number  = {2},
+  pages   = {340--343},
+  year    = {1980},
+  doi     = {10.1016/0022-460X(80)90618-5}
+}
+
+% [N 19] [P 18]  The report is not online. Confirmed through the bibliography of the AAM
+% v3.1 manual (page2021aam), which gives this exact title, number, place and month.
+@techreport{stusnick1985short,
+  author      = {Stusnick, E. and Plotkin, K. J. and Sutherland, L. C.},
+  title       = {Short-Range Acoustic Propagation Model},
+  institution = {Wyle Laboratories},
+  address     = {Arlington, VA},
+  type        = {Wyle Research Report},
+  number      = {WR 85-19},
+  month       = jul,
+  year        = {1985}
+}
+
+% [N 27] [P 19]
+@article{chessell1977propagation,
+  author  = {Chessell, C. I.},
+  title   = {Propagation of Noise Along a Finite Impedance Boundary},
+  journal = {Journal of the Acoustical Society of America},
+  volume  = {62},
+  number  = {4},
+  pages   = {825--834},
+  year    = {1977},
+  doi     = {10.1121/1.381603}
+}
+
+% [N 28] [P 20]
+@article{daigle1979comments,
+  author  = {Daigle, G. A. and Embleton, T. F. W. and Piercy, J. E.},
+  title   = {Some Comments on the Literature of Propagation near Boundaries of Finite
+             Acoustical Impedance},
+  journal = {Journal of the Acoustical Society of America},
+  volume  = {66},
+  number  = {3},
+  pages   = {918--919},
+  year    = {1979},
+  doi     = {10.1121/1.383207}
+}
+
+% [N 26] [P 24]
+@article{ament1953toward,
+  author  = {Ament, W. S.},
+  title   = {Toward a Theory of Reflection by a Rough Surface},
+  journal = {Proceedings of the IRE},
+  volume  = {41},
+  number  = {1},
+  pages   = {142--146},
+  year    = {1953},
+  doi     = {10.1109/JRPROC.1953.274171}
+}
+
+% [P 30]
+@article{ochmann2004complex,
+  author  = {Ochmann, M.},
+  title   = {The Complex Equivalent Source Method for Sound Propagation over an
+             Impedance Plane},
+  journal = {Journal of the Acoustical Society of America},
+  volume  = {116},
+  number  = {6},
+  pages   = {3304--3311},
+  year    = {2004},
+  doi     = {10.1121/1.1819504}
+}
+
+% [P 31]
+@article{taraldsen2005complex,
+  author  = {Taraldsen, G.},
+  title   = {The Complex Image Method},
+  journal = {Wave Motion},
+  volume  = {43},
+  number  = {1},
+  pages   = {91--97},
+  year    = {2005},
+  doi     = {10.1016/j.wavemoti.2005.07.001}
+}
+
+% [P 32]  The manual cites Chap. 8: \cite[Chap.~8]{morse1968theoretical}.
+@book{morse1968theoretical,
+  author    = {Morse, P. M. and Ingard, K. U.},
+  title     = {Theoretical Acoustics},
+  publisher = {McGraw-Hill},
+  address   = {New York},
+  year      = {1968}
+}
+
+% [P 46]
+@article{hothersall1995approximate,
+  author  = {Hothersall, D. C. and Harriott, J. N. B.},
+  title   = {Approximate Models for Sound Propagation Above Multi-Impedance Plane
+             Boundaries},
+  journal = {Journal of the Acoustical Society of America},
+  volume  = {97},
+  number  = {2},
+  pages   = {918--926},
+  year    = {1995},
+  doi     = {10.1121/1.412136}
+}
+
+% [P 48]
+@article{boulanger1997models,
+  author  = {Boulanger, P. and Waters-Fuller, T. and Attenborough, K. and Li, K. M.},
+  title   = {Models and Measurements of Sound Propagation from a Point Source over Mixed
+             Impedance Ground},
+  journal = {Journal of the Acoustical Society of America},
+  volume  = {102},
+  number  = {3},
+  pages   = {1432--1442},
+  year    = {1997},
+  doi     = {10.1121/1.420101}
+}
+
+% [P 49]
+@article{dejong1983propagation,
+  author  = {de Jong, B. A. and Moerkerken, A. and van der Toorn, J. D.},
+  title   = {Propagation of Sound over Grassland and over an Earth Barrier},
+  journal = {Journal of Sound and Vibration},
+  volume  = {86},
+  number  = {1},
+  pages   = {23--46},
+  year    = {1983},
+  doi     = {10.1016/0022-460X(83)90941-0}
+}
+
+% [P 50]
+@article{lam2006modeling,
+  author  = {Lam, Y. W. and Monazzam, M. R.},
+  title   = {On the Modeling of Sound Propagation over Multi-Impedance Discontinuities
+             Using a Semiempirical Diffraction Formulation},
+  journal = {Journal of the Acoustical Society of America},
+  volume  = {120},
+  number  = {2},
+  pages   = {686--698},
+  year    = {2006},
+  doi     = {10.1121/1.2216905}
+}
+
+% ---------------------------------------------------------------------------
+% Engineering propagation models (Harmonoise, Nord2000, CNOSSOS)
+% ---------------------------------------------------------------------------
+
+% [N 29] [P 22]  No DOI. Volume, issue and pages confirmed by salomons2011harmonoise,
+% which cites it, and by its companion paper (Defrance et al.) at 93(2), 213-227.
+@article{vanmaercke2007development,
+  author  = {van Maercke, D. and Defrance, J.},
+  title   = {Development of an Analytical Model for Outdoor Sound Propagation Within
+             the {Harmonoise} Project},
+  journal = {Acta Acustica united with Acustica},
+  volume  = {93},
+  number  = {2},
+  pages   = {201--212},
+  year    = {2007}
+}
+
+% [N 41]
+@article{salomons2011harmonoise,
+  author  = {Salomons, E. and van Maercke, D. and Defrance, J. and de Roo, F.},
+  title   = {The {Harmonoise} Sound Propagation Model},
+  journal = {Acta Acustica united with Acustica},
+  volume  = {97},
+  number  = {1},
+  pages   = {62--74},
+  year    = {2011},
+  doi     = {10.3813/AAA.918387}
+}
+
+% [N 45]  Pages read from the paper's own PDF in the DEGA proceedings archive. The
+% conference was held in Rotterdam; DEGA (Berlin) published the proceedings.
+@inproceedings{vanmaercke2009harmonoise,
+  author    = {van Maercke, D. and Salomons, E.},
+  title     = {The {Harmonoise} Sound Propagation Model: Further Developments and
+               Comparison with Other Models},
+  booktitle = {Proceedings of {NAG/DAGA} 2009 International Conference on Acoustics},
+  publisher = {Deutsche Gesellschaft f{\"u}r Akustik},
+  address   = {Rotterdam, The Netherlands},
+  pages     = {1622--1625},
+  month     = mar,
+  year      = {2009},
+  url       = {https://pub.dega-akustik.de/NAG_DAGA_2009/data/articles/000250.pdf}
+}
+
+% [P 47]  Revised 31 March 2006 (originally 31 December 2000, revised 31 December 2001).
+@techreport{plovsing2006nord2000part1,
+  author      = {Plovsing, B.},
+  title       = {{Nord2000}. Comprehensive Outdoor Sound Propagation Model. Part 1:
+                 Propagation in an Atmosphere without Significant Refraction},
+  institution = {DELTA Acoustics \& Vibration},
+  address     = {H{\o}rsholm, Denmark},
+  type        = {Report},
+  number      = {AV 1849/00 (revised)},
+  month       = mar,
+  year        = {2006}
+}
+
+% [N 42]  Revised 31 March 2006, as Part 1.
+@techreport{plovsing2006nord2000part2,
+  author      = {Plovsing, B.},
+  title       = {{Nord2000}. Comprehensive Outdoor Sound Propagation Model. Part 2:
+                 Propagation in an Atmosphere with Refraction},
+  institution = {DELTA Acoustics \& Vibration},
+  address     = {H{\o}rsholm, Denmark},
+  type        = {Report},
+  number      = {AV 1851/00 (revised)},
+  month       = mar,
+  year        = {2006}
+}
+
+% [N 33]  DOI resolves to the EU Publications Office (not registered with Crossref).
+@techreport{kephalopoulos2012cnossos,
+  author      = {Kephalopoulos, S. and Paviotti, M. and Anfosso-L{\'e}d{\'e}e, F.},
+  title       = {Common Noise Assessment Methods in {Europe} ({CNOSSOS-EU})},
+  institution = {Publications Office of the European Union},
+  address     = {Luxembourg},
+  type        = {JRC Reference Report},
+  number      = {EUR 25379 EN},
+  year        = {2012},
+  doi         = {10.2788/31776}
+}
+
+% [N 32]  OJ reference not re-fetched (EUR-Lex refuses automated access); issue and
+% date confirmed from secondary listings.
+@misc{eu2015directive996,
+  key          = {Directive (EU) 2015/996},
+  title        = {Commission {Directive} ({EU}) 2015/996 of 19 {May} 2015 Establishing
+                  Common Noise Assessment Methods According to {Directive} 2002/49/{EC}
+                  of the {European} {Parliament} and of the {Council}},
+  howpublished = {Official Journal of the European Union, L 168, 1 July 2015,
+                  pp.~1--823},
+  year         = {2015},
+  url          = {http://data.europa.eu/eli/dir/2015/996/oj}
+}
+
+% ---------------------------------------------------------------------------
+% Atmosphere, absorption, refraction and boundary-layer meteorology
+% ---------------------------------------------------------------------------
+
+% [N 16] [P 33]
+@techreport{iso9613_1,
+  key         = {ISO 9613-1},
+  title       = {Acoustics---Attenuation of Sound during Propagation Outdoors---Part 1:
+                 Calculation of the Absorption of Sound by the Atmosphere},
+  institution = {International Organization for Standardization},
+  address     = {Geneva},
+  type        = {Standard},
+  number      = {ISO 9613-1:1993},
+  year        = {1993}
+}
+
+% [P 40]  Issued August 2013; reaffirmed January 2021.
+@techreport{sae_arp5534,
+  key         = {SAE ARP5534},
+  title       = {Application of Pure-Tone Atmospheric Absorption Losses to One-Third
+                 Octave-Band Data},
+  institution = {SAE International},
+  address     = {Warrendale, PA},
+  type        = {Aerospace Recommended Practice},
+  number      = {ARP5534},
+  month       = aug,
+  year        = {2013},
+  doi         = {10.4271/ARP5534}
+}
+
+% [P 52]  ROSA P record: published 2012-11-30.
+@techreport{rickley2012development,
+  author      = {Rickley, E. J. and Rosenbaum, J. E. and Fleming, G. G. and Roof, C. J.
+                 and Boeker, E. R.},
+  title       = {Development of Simplified Procedure for Computing the Absorption of Sound
+                 by the Atmosphere and Applicability to Aircraft Noise Certification:
+                 Proposed {SAE} Method},
+  institution = {U.S. Department of Transportation, Volpe National Transportation
+                 Systems Center},
+  address     = {Cambridge, MA},
+  type        = {Report},
+  number      = {DOT-VNTSC-FAA-12-14},
+  month       = nov,
+  year        = {2012},
+  url         = {https://rosap.ntl.bts.gov/view/dot/9696}
+}
+
+% [N 18]  Ingenta record: INTER-NOISE and NOISE-CON Congress and Conference
+% Proceedings 249(4), 3770-3779.
+@inproceedings{zellmann2014influence,
+  author    = {Zellmann, C. and Wunderli, J. M.},
+  title     = {Influence of the Atmospheric Stratification on the Sound Propagation of
+               Single Flights},
+  booktitle = {Proceedings of {INTER-NOISE} 2014},
+  note      = {INTER-NOISE and NOISE-CON Congress and Conference Proceedings,
+               Vol.~249, No.~4},
+  pages     = {3770--3779},
+  publisher = {Institute of Noise Control Engineering},
+  address   = {Melbourne, Australia},
+  year      = {2014},
+  url       = {https://ince.publisher.ingentaconnect.com/content/ince/incecp/2014/00000249/00000004/art00081}
+}
+
+% [N 30] [P 23]  Crossref gives 18 September 2015 for publication; the book carries a
+% 2016 copyright, so both years appear in the literature.
+@book{ostashev2015acoustics,
+  author    = {Ostashev, V. E. and Wilson, D. K.},
+  title     = {Acoustics in Moving Inhomogeneous Media},
+  edition   = {2nd},
+  publisher = {CRC Press},
+  address   = {Boca Raton, FL},
+  year      = {2015},
+  doi       = {10.1201/b18922}
+}
+
+% [N 35]
+@book{salomons2001computational,
+  author    = {Salomons, E. M.},
+  title     = {Computational Atmospheric Acoustics},
+  publisher = {Kluwer Academic Publishers},
+  address   = {Dordrecht},
+  year      = {2001},
+  doi       = {10.1007/978-94-010-0660-6}
+}
+
+% [N 36]  Crossref lists Stull as editor, a metadata error at Springer; he is the author.
+@book{stull1988introduction,
+  author    = {Stull, R. B.},
+  title     = {An Introduction to Boundary Layer Meteorology},
+  publisher = {Kluwer Academic Publishers},
+  address   = {Dordrecht},
+  year      = {1988},
+  doi       = {10.1007/978-94-009-3027-8}
+}
+
+% [N 37]
+@article{wieringa1992updating,
+  author  = {Wieringa, J.},
+  title   = {Updating the {Davenport} Roughness Classification},
+  journal = {Journal of Wind Engineering and Industrial Aerodynamics},
+  volume  = {41},
+  number  = {1--3},
+  pages   = {357--368},
+  year    = {1992},
+  doi     = {10.1016/0167-6105(92)90434-C}
+}
+
+% [N 38]
+@book{wmo2024guide,
+  key       = {WMO-No. 8},
+  title     = {Guide to Instruments and Methods of Observation},
+  series    = {WMO-No.~8},
+  edition   = {2024},
+  publisher = {World Meteorological Organization},
+  address   = {Geneva},
+  year      = {2024}
+}
+
+% [N 39]  GMBl. 1986 No. 7 of 28 February 1986, p. 95, corrected p. 202. Repealed;
+% superseded by TA Luft 2002 and then 2021.
+@misc{taluft1986,
+  key          = {TA Luft},
+  title        = {{Erste Allgemeine Verwaltungsvorschrift zum
+                  Bundes-Immissionsschutzgesetz (Technische Anleitung zur
+                  Reinhaltung der Luft---TA Luft) vom 27. Februar 1986}},
+  howpublished = {Gemeinsames Ministerialblatt, No.~7, 28 February 1986, p.~95},
+  language     = {german},
+  year         = {1986}
+}
+
+% [N 40]
+@techreport{nrc2007rg123,
+  key         = {NRC RG 1.23},
+  title       = {Meteorological Monitoring Programs for Nuclear Power Plants},
+  institution = {U.S. Nuclear Regulatory Commission, Office of Nuclear Regulatory
+                 Research},
+  address     = {Washington, DC},
+  type        = {Regulatory Guide},
+  number      = {1.23, Rev.~1},
+  month       = mar,
+  year        = {2007}
+}
+
+% [N 43]
+@book{pierce2019acoustics,
+  author    = {Pierce, A. D.},
+  title     = {Acoustics: An Introduction to Its Physical Principles and Applications},
+  edition   = {3rd},
+  publisher = {ASA Press/Springer},
+  address   = {Cham, Switzerland},
+  year      = {2019},
+  doi       = {10.1007/978-3-030-11214-1}
+}
+
+% [N 44]
+@book{fock1965electromagnetic,
+  author    = {Fock, V. A.},
+  title     = {Electromagnetic Diffraction and Propagation Problems},
+  series    = {International Series of Monographs on Electromagnetic Waves},
+  volume    = {1},
+  publisher = {Pergamon Press},
+  address   = {Oxford},
+  year      = {1965}
+}
+
+% ---------------------------------------------------------------------------
+% Parabolic equation and benchmark solutions
+% ---------------------------------------------------------------------------
+
+% [N 46]
+@article{collins1993split,
+  author  = {Collins, M. D.},
+  title   = {A Split-Step {Pad\'e} Solution for the Parabolic Equation Method},
+  journal = {Journal of the Acoustical Society of America},
+  volume  = {93},
+  number  = {4},
+  pages   = {1736--1742},
+  year    = {1993},
+  doi     = {10.1121/1.406739}
+}
+
+% [N 47]
+@article{collins1992self,
+  author  = {Collins, M. D.},
+  title   = {A Self-Starter for the Parabolic Equation Method},
+  journal = {Journal of the Acoustical Society of America},
+  volume  = {92},
+  number  = {4},
+  pages   = {2069--2074},
+  year    = {1992},
+  doi     = {10.1121/1.405258}
+}
+
+% [N 48]
+@article{gilbert1990calculation,
+  author  = {Gilbert, K. E. and Raspet, R. and Di, X.},
+  title   = {Calculation of Turbulence Effects in an Upward-Refracting Atmosphere},
+  journal = {Journal of the Acoustical Society of America},
+  volume  = {87},
+  number  = {6},
+  pages   = {2428--2437},
+  year    = {1990},
+  doi     = {10.1121/1.399088}
+}
+
+% [N 49]
+@article{attenborough1995benchmark,
+  author  = {Attenborough, K. and Taherzadeh, S. and Bass, H. E. and Di, X. and
+             Raspet, R. and Becker, G. R. and G{\"u}desen, A. and Chrestman, A. and
+             Daigle, G. A. and L'Esp{\'e}rance, A. and Gabillet, Y. and Gilbert, K. E.
+             and Li, Y. L. and White, M. J. and Naz, P. and Noble, J. M. and
+             van Hoof, H. A. J. M.},
+  title   = {Benchmark Cases for Outdoor Sound Propagation Models},
+  journal = {Journal of the Acoustical Society of America},
+  volume  = {97},
+  number  = {1},
+  pages   = {173--191},
+  year    = {1995},
+  doi     = {10.1121/1.412302}
+}
+
+% ---------------------------------------------------------------------------
+% Geodesy
+% ---------------------------------------------------------------------------
+
+% [N 14] [P 36]
+@book{snyder1987map,
+  author    = {Snyder, J. P.},
+  title     = {Map Projections---A Working Manual},
+  series    = {U.S. Geological Survey Professional Paper},
+  number    = {1395},
+  publisher = {U.S. Government Printing Office},
+  address   = {Washington, DC},
+  year      = {1987},
+  doi       = {10.3133/pp1395}
+}
+
+% [N 15] [P 12]  3rd ed. of 4 July 1997, Amendment 1 of 3 January 2000.
+@techreport{nima2000wgs84,
+  key         = {NIMA TR8350.2},
+  title       = {Department of Defense World Geodetic System 1984: Its Definition and
+                 Relationships with Local Geodetic Systems},
+  institution = {National Imagery and Mapping Agency},
+  type        = {Technical Report},
+  number      = {NIMA TR8350.2, 3rd ed., Amendment~1},
+  month       = jan,
+  year        = {2000}
+}
+
+% ---------------------------------------------------------------------------
+% Regulation, certification and noise-exposure policy
+% ---------------------------------------------------------------------------
+
+% [N 17] [P 41]  Appendix title checked against eCFR. NICEOPS cites [17, A36.4.5],
+% which is the duration correction ("Duration correction", the 10 dB-down window).
+@misc{cfr14part36,
+  key          = {14 CFR 36},
+  title        = {Noise Standards: Aircraft Type and Airworthiness Certification},
+  howpublished = {Title 14, Code of Federal Regulations, Part 36, Appendix A, ``Aircraft
+                  Noise Measurement and Evaluation Under \S~36.101''},
+  note         = {Retrieved 8 October 2026},
+  url          = {https://www.ecfr.gov/current/title-14/part-36}
+}
+
+% [N 52]  Appendix title checked against eCFR.
+@misc{cfr14part150,
+  key          = {14 CFR 150},
+  title        = {Airport Noise Compatibility Planning},
+  howpublished = {Title 14, Code of Federal Regulations, Part 150, Appendix A, ``Noise
+                  Exposure Maps''},
+  note         = {Retrieved 8 October 2026},
+  url          = {https://www.ecfr.gov/current/title-14/part-150}
+}
+
+% [N 56]  Issued 12 October 2017.
+@techreport{faa2017ac36_4d,
+  key         = {FAA AC 36-4D},
+  title       = {Noise Standards: Aircraft Type and Airworthiness Certification},
+  institution = {Federal Aviation Administration},
+  address     = {Washington, DC},
+  type        = {Advisory Circular},
+  number      = {AC 36-4D},
+  month       = oct,
+  year        = {2017},
+  url         = {https://www.faa.gov/documentLibrary/media/Advisory_Circular/AC_36-4D.pdf}
+}
+
+% [N 55] [P 42]
+@book{icao2017annex16,
+  key       = {ICAO Annex 16},
+  title     = {Annex 16 to the Convention on International Civil Aviation: Environmental
+               Protection, Volume {I}---Aircraft Noise},
+  edition   = {8th},
+  publisher = {International Civil Aviation Organization},
+  address   = {Montr{\'e}al},
+  month     = jul,
+  year      = {2017}
+}
+
+% [N 57]  4th edition. ECAC has since endorsed a 5th edition (19 May 2026); this entry
+% is the edition the manual cites.
+@techreport{ecac2016doc29,
+  key         = {ECAC Doc 29},
+  title       = {Report on Standard Method of Computing Noise Contours around Civil
+                 Airports, Volume 2: Technical Guide},
+  institution = {European Civil Aviation Conference},
+  address     = {Neuilly-sur-Seine, France},
+  type        = {ECAC.CEAC Doc},
+  number      = {29, 4th ed.},
+  month       = dec,
+  year        = {2016}
+}
+
+% [N 58]  SAE lists AIR1845A as "Revised September 1995, Stabilized August 2012";
+% 2012 is the date of the current (stabilized) document.
+@techreport{sae_air1845a,
+  key         = {SAE AIR1845A},
+  title       = {Procedure for the Calculation of Airplane Noise in the Vicinity of
+                 Airports},
+  institution = {SAE International},
+  address     = {Warrendale, PA},
+  type        = {Aerospace Information Report},
+  number      = {AIR1845A},
+  year        = {2012},
+  doi         = {10.4271/AIR1845A}
+}
+
+% [N 53]  OJ reference not re-fetched (EUR-Lex refuses automated access).
+@misc{eu2002directive49,
+  key          = {Directive 2002/49/EC},
+  title        = {Directive 2002/49/{EC} of the {European} {Parliament} and of the
+                  {Council} of 25 {June} 2002 Relating to the Assessment and Management
+                  of Environmental Noise},
+  howpublished = {Official Journal of the European Communities, L 189, 18 July 2002,
+                  pp.~12--25},
+  year         = {2002},
+  url          = {http://data.europa.eu/eli/dir/2002/49/oj}
+}
+
+% [N 54]  Section heading "Definitions" checked on Cornell LII.
+@misc{ccr21_5001,
+  key          = {CCR Title 21},
+  title        = {Noise Standards: Definitions},
+  howpublished = {California Code of Regulations, Title 21, Sec.~5001},
+  url          = {https://www.law.cornell.edu/regulations/california/21-CCR-5001}
+}
