@@ -707,7 +707,13 @@ void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTone
                 std::complex<double> pd = phasor(direct[t], d_arrival, fe, psi, fd);
                 std::complex<double> pr(0.0, 0.0);
                 if (with_ground)
-                    pr = reflect(phasor(reflected[t], r_arrival, fe, psi, fr), r_arrival, hub, fr);
+                {
+                    // phasor() sets fr, which reflect() takes: two statements, since the
+                    // order a call evaluates its arguments in is unspecified (x86-64 GCC
+                    // read fr before phasor() set it, and Q at 0 Hz is NaN).
+                    const std::complex<double> image = phasor(reflected[t], r_arrival, fe, psi, fr);
+                    pr = reflect(image, r_arrival, hub, fr);
+                }
                 if (off_receiver)
                 {
                     // The reflection relative to the direct field at the model's
@@ -739,7 +745,10 @@ void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTone
                     std::complex<double> qd = phasor(part(direct[t]), d_arrival, fe, 0.0, gd);
                     std::complex<double> qr(0.0, 0.0);
                     if (with_ground)
-                        qr = reflect(phasor(part(reflected[t]), r_arrival, fe, 0.0, gr), r_arrival, hub, gr);
+                    {
+                        const std::complex<double> image = phasor(part(reflected[t]), r_arrival, fe, 0.0, gr);
+                        qr = reflect(image, r_arrival, hub, gr);
+                    }
                     if (off_receiver)
                     {
                         double gv = 0.0;
