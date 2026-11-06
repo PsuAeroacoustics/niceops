@@ -606,8 +606,15 @@ their amplitude and phase over the sphere grid.
   of every rotor at each observer, with its phase, Doppler shift and the ground at its own
   frequency, and adds it to the bands. Rotors in one sync group (the database's `sync_group`, for
   rotors whose phases are tied to their azimuth) add coherently; every other rotor adds in energy.
+  A rotor whose `phase_reference` is `relative` adds alone but keeps the interference of its own
+  direct and reflected arrivals; one with `none` adds wholly in energy. A database sync group that
+  names either only warns, and that rotor adds alone.
 - **`band_content = total`**: the band spectrum and dBA already hold the tones; the run uses them,
   as for any other database, and warns that the tones are not added again.
+
+How close the tones come to PSU-WOPWOP's own prediction and to a measured hexacopter is in
+FIDELITY: [Pure tones against PSU-WOPWOP](FIDELITY.md#pure-tones-against-psu-wopwop) and [Rotor
+tones of a hovering hexacopter](FIDELITY.md#rotor-tones-of-a-hovering-hexacopter-mid-state-2023).
 
 A root attribute `tone_speed_exponent` (default 0) scales each tone's pressure as its rotor's
 shaft rate in the run over the database's, raised to that power: 3 gives the level as rpm to the
@@ -681,6 +688,8 @@ the state's own hover rotor speed, as the share of it the database records.
 
 - **The vehicle file needs a weight.** Its rotor radius is checked against the database's; its
   tip speed and weight are not compared, since these axes are scaled by them.
+- **A state below 0.1 g** (in free fall, say) has no hover to scale by: its axes are formed at
+  0.1 g, and a warning counts such states.
 - **No law in the hover tip Mach number:** a state off the database's range takes the nearest
   spheres as they are, with the clamped states counted in a warning.
 - **Refused, naming why:** `--blend aam`, whose search is in airspeed and path angle;

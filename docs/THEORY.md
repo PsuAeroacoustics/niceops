@@ -597,7 +597,7 @@ is the still-air solve above, to the bit.
 Between two hubs a distance $\mathbf{d}$ apart the emission times differ, in the far field, by
 $\hat{\mathbf{k}}\cdot\mathbf{d}/(c(1 - \mathbf{M}\cdot\hat{\mathbf{k}}))$, so their phasors by
 $e^{+i\omega\,\hat{\mathbf{k}}\cdot\mathbf{d}/(c(1-\mathbf{M}\cdot\hat{\mathbf{k}}))}$: the
-whole-vehicle form PSU-WOPWOP's per-rotor spheres sum to.
+whole-vehicle form PSU-WOPWOP's [82] per-rotor spheres sum to.
 
 **Over the ground** (`--tone_ground frequency`, the default), the image arrival also carries the
 reflection coefficient of §5.2 at its own frequency and grazing angle,
@@ -636,7 +636,7 @@ free-field level. `--tone_ground band` takes the fallback everywhere.
 **The near field** (`--tone_near_field on`, the default). The spheres hold the far-field
 directivity $A(\mathbf{n})$, $R e^{ikR}p$ as $R \to \infty$ about the hub. At a finite range the
 field of any time-periodic source in uniform flight is, to first order (the Atkinson-Wilcox
-expansion of the field outside the source, in the frame moving with it),
+expansion of the field outside the source [80, 81], in the frame moving with it),
 
 $$
 R\,e^{ikR}\,p_R(\mathbf{n}) = A(\mathbf{n}) + \frac{i}{2kR}\,\Delta_{\mathbf{n}}\big[D(\mathbf{n})\,A(\mathbf{n})\big]
@@ -3279,3 +3279,6 @@ than for SEL.
 77. "Environmental Protection, Volume I — Aircraft Noise," Annex 16 to the Convention on International Civil Aviation, 8th ed., International Civil Aviation Organization, Montréal, July 2017.
 78. "Noise Standards: Aircraft Type and Airworthiness Certification," Advisory Circular AC 36-4D, Federal Aviation Administration, Washington, DC, 12 October 2017.
 79. Valente, V. T., "Multiple Rotor Acoustic Control," Ph.D. Dissertation, Department of Aerospace Engineering, The Pennsylvania State University, University Park, PA, 2024.
+80. Atkinson, F. V., "On Sommerfeld's Radiation Condition," *Philosophical Magazine*, Series 7, Vol. 40, No. 305, 1949, pp. 645–651.
+81. Wilcox, C. H., "A Generalization of Theorems of Rellich and Atkinson," *Proceedings of the American Mathematical Society*, Vol. 7, No. 2, 1956, pp. 271–276.
+82. Shirey, J. S., Brentner, K. S., and Chen, H.-N., "A Validation Study of the PSU-WOPWOP Rotor Noise Prediction System," AIAA Paper 2007-1240, 45th AIAA Aerospace Sciences Meeting, Reno, NV, January 2007.
