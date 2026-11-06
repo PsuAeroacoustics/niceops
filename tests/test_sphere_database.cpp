@@ -4072,3 +4072,36 @@ TEST_CASE("a shaft-order tone is interpolated with its phase unwound about the s
     REQUIRE(database.tone_sources()[0].unwind_order == std::vector<int> {0, 0});
     std::filesystem::remove(path);
 }
+
+TEST_CASE("band_type pure_tone passes only a format 2 database that lists tone sources", "[sphere_database][format2]")
+{
+    // A format 2 database carries its tones beside its band spheres, so its
+    // band_type may say pure_tone; a file of tone spheres alone, read as bands,
+    // would be weighted and absorbed as one-third octaves, so it is refused.
+    auto set_pure_tone = [](const std::string& path) {
+        int ncid = 0;
+        REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+        REQUIRE(nc_redef(ncid) == NC_NOERR);
+        const std::string value = "pure_tone";
+        REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, "band_type", value.size(), value.c_str()) == NC_NOERR);
+        REQUIRE(nc_close(ncid) == NC_NOERR);
+    };
+    const auto tones = write_tone_test_database("niceops_band_type_tones.nod", ToneFixture {});
+    set_pure_tone(tones);
+    REQUIRE(Database(tones).database_version() == 2);
+
+    const auto sphere = test::demo_database().interpolate_sphere(0.15, -4.0, 0.006);
+    const auto plain = (std::filesystem::temp_directory_path() / "niceops_band_type_plain.nod").string();
+    write_sphere(sphere, plain);
+    set_pure_tone(plain);
+    REQUIRE_THROWS_WITH(Database(plain), Catch::Matchers::ContainsSubstring("band_type 'pure_tone'"));
+    int ncid = 0, version_var = 0;
+    REQUIRE(nc_open(plain.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+    REQUIRE(nc_inq_varid(ncid, "database_version", &version_var) == NC_NOERR);
+    const int two = 2;
+    REQUIRE(nc_put_var_int(ncid, version_var, &two) == NC_NOERR);
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+    REQUIRE_THROWS_WITH(Database(plain), Catch::Matchers::ContainsSubstring("band_type 'pure_tone'"));
+    std::filesystem::remove(tones);
+    std::filesystem::remove(plain);
+}

@@ -1309,10 +1309,11 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
     // panam records the bands the spheres were built from.  The weighting,
     // absorption and EPNL here take one-third octaves; a database of 1/12-octave,
     // narrowband or pure-tone spheres is refused, not read as one.  Absent: one-
-    // third octaves, as every database built before it.  A format 2 database's
-    // pure tones are its own content (tones.hpp), so pure_tone passes there.
-    if (const auto bands = read_root_text(file_ncid, "band_type");
-            bands && *bands != "third_octave" && !(database_version >= 2 && *bands == "pure_tone"))
+    // third octaves, as every database built before it.  A format 2 database
+    // that lists pure-tone sources (tones.hpp) carries them beside its band
+    // spheres, so pure_tone passes there; a file of tone spheres alone does not.
+    if (const auto bands = read_root_text(file_ncid, "band_type"); bands && *bands != "third_octave"
+            && !(database_version >= 2 && *bands == "pure_tone" && read_root_text(file_ncid, "sources")))
     {
         input_error("Database ", datafile_path, " records band_type '", *bands,
                 "'; NICEOPS reads one-third-octave databases only. Build it from BB spheres "
