@@ -55,7 +55,8 @@ the demo case, 6,551 states by 14,400 observers.
 
 - **Source.** A database of noise spheres around the aircraft, one per operating condition. Each
   state is reduced to the advance ratio μ, the flight path angle γ (to the tip-path plane under
-  `--qsam`, the default, or to the horizontal) and the thrust coefficient C<sub>T</sub>. The
+  `--qsam`, the default, or to the horizontal; zero below 3 kt, where the velocity is a hover's
+  drift) and the thrust coefficient C<sub>T</sub>. The
   velocity is taken in the database's recorded speed reference (the ground if it records none)
   unless `--speed_reference` overrides it ([Speed reference](#speed-reference)). The condition
   picks the spheres, and the direction to the observer the level on them

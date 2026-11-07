@@ -76,8 +76,8 @@ $$
 
 The Q-SAM path angle is the velocity's angle to the tip-path plane. It is the angle at which a
 steady flight condition presents the same rotor inflow, which is what lets steady-flight spheres
-represent a maneuvering state. At $\lvert\mathbf{u}\rvert = 0$ both path angles are taken as zero
-(§3).
+represent a maneuvering state. Below 3 kt ($\lvert\mathbf{u}\rvert \le$ 1.54 m/s) both path angles are
+taken as zero (§3).
 
 **The density.** By default (`--condition_density vehicle`) $\rho$ is the vehicle file's density
 in every case, including when `--temperature` or `--pressure` sets the propagation atmosphere.
@@ -337,7 +337,11 @@ negated and the path angles are recomputed. $\mu$ and the load factor do not dep
 **Static operations** are holds at one point, each for a given duration with the nose on a
 compass heading. They are sampled every 0.02 s at 1 g with zero velocity, so $\mu = 0$. At
 zero velocity (true hover, flown or static) both path angles are zero: the arcsine of §2.1 is
-undefined there, and a stationary aircraft neither climbs nor descends.
+undefined there, and a stationary aircraft neither climbs nor descends. They are zero up to 3 kt
+of air speed: there the velocity is a hover's drift and its angle to the horizontal is noise, so
+a drifting hover would otherwise read climbs and descents. Above 3 kt the angles are the
+velocity's, so slow climbs and descents keep theirs. A multirotor database's axes need no such
+rule: its axial speed over the induced velocity reads drift as hover.
 
 **WGS84 tracks** carry positions, and optionally east, north and up velocities. Without
 velocities, velocities and accelerations come from a cubic smoothing spline [13] that
