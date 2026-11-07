@@ -83,6 +83,46 @@ TEST_CASE("Hover states do not produce NaN flight path angles", "[trajectory]")
     REQUIRE(std::fabs(climbing.fpa - 45.0) < 1e-9);
 }
 
+TEST_CASE("a hover's drift has no flight path angle; 3 kt and faster keeps it", "[trajectory]")
+{
+    // A hovering multirotor drifts 1-2 cm/s while its altitude hold creeps a
+    // few cm/s, so asin(u_z / |u|) is noise: 20-90 degrees, which read the
+    // database's climbs and descents.  Below hover_path_angle_speed both angles
+    // are zero; above it they are the velocity's, so slow measured climbs keep
+    // theirs.
+    dimensional_data vehicle;
+    vehicle.tip_speed = 78.0;
+    vehicle.radius = 0.3556;
+    vehicle.weight = 16.19 * 9.80665;
+    vehicle.rho = 1.14;
+
+    const auto state = [&](double vx, double vz) {
+        State s;
+        s.vx = vx;
+        s.vy = 0.0;
+        s.vz = vz;
+        s.nx = 0.0;
+        s.ny = 0.0;
+        s.nz = 1.0;
+        derive_flight_parameters(s, vehicle);
+        return s;
+    };
+    for (const double vz : {0.05, -0.05, 1e-4, -1e-4})
+    {
+        const State drift = state(0.01, vz);
+        REQUIRE(drift.fpa == 0.0);
+        REQUIRE(drift.fpa_e == 0.0);
+        REQUIRE(drift.mu > 0.0);
+    }
+    // Just under 3 kt, straight up: still hover.
+    REQUIRE(state(0.0, 0.99 * hover_path_angle_speed).fpa == 0.0);
+    // Just over, the measured slow climbs' regime: the velocity's angle.
+    const State climb = state(1.0, 1.25);
+    REQUIRE(std::hypot(1.0, 1.25) > hover_path_angle_speed);
+    REQUIRE(climb.fpa == Catch::Approx(std::atan2(1.25, 1.0) * 180.0 / std::acos(-1.0)).epsilon(1e-12));
+    REQUIRE(climb.fpa_e == Catch::Approx(climb.fpa).epsilon(1e-12));
+}
+
 // ---------------------------------------------------------------------------
 // The labeled WGS84 input format.
 // ---------------------------------------------------------------------------

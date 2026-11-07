@@ -112,6 +112,14 @@ const char* to_string(NoseSource source);
 constexpr double heading_nose_speed = 3.0 * knot; // m/s
 constexpr double velocity_nose_speed = 8.0 * knot; // m/s
 
+// Below this air speed (3 kt, the nose's drift speed) both flight path angles
+// are zero: the velocity is a hover's drift, and its angle to the horizontal is
+// noise.  A hexacopter drifting at 1-2 cm/s with its altitude hold creeping 3-5
+// cm/s took angles of 20-90 degrees, and its states read the database's climbs
+// and descents, 3-5 dB off at 24-49 m.  A hold, not a ramp: a multirotor's
+// measured climbs and descents start at 3 kt, and a ramp would flatten them.
+constexpr double hover_path_angle_speed = heading_nose_speed; // m/s
+
 // The smoothstep weight the nose gives the velocity at horizontal speed
 // `speed`, m/s: 0 at or below heading_nose_speed, 1 at or above
 // velocity_nose_speed.

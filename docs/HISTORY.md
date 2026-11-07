@@ -4,6 +4,13 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## A hover's flight path angle (November 2026)
+
+Below 3 kt of air speed both flight path angles are zero, where they were the velocity's at any
+speed above zero. A hovering track's drift had read the database's climbs and descents; see
+[Departures from D](#a-hovers-drift-has-no-flight-path-angle). A track that hovers predicts
+differently; one that never flies under 3 kt does not.
+
 ## The flyover's near-field comparison in matched frames (November 2026)
 
 FIDELITY's near-field table for the PSU-WOPWOP flyover was made with one untapered FFT of each
@@ -275,7 +282,7 @@ reference figures were drawn at 65–100. That affects figures only; the goldens
 ## Departures from D
 
 Port fidelity is the rule: a D behavior is changed only when a measured case shows it is wrong,
-not when a reading suggests it looks wrong. Three changes have met that bar.
+not when a reading suggests it looks wrong. Four changes have met that bar.
 `golden/state_197421.csv` is trajectory state, which none of them touches, so it is still
 D-derived; `golden/197421_LAE.csv` now comes from the C++ build. D can no longer produce it, and
 regenerating it from D would only restore the departures.
@@ -316,6 +323,17 @@ level, and diverged at r = 0. Spreading is now capped at the sphere's surface (`
 was regenerated a second time, from the build that carries the change: 27 of its 14,400 cells
 moved, by at most 2.0 dB in SEL. They are exactly the observers within about 45 m of the track,
 whose closest approach to a source state is inside the 30.48 m sphere.
+
+### A hover's drift has no flight path angle
+
+D took both flight path angles from the velocity at any speed above zero. A hover drifts: the PSU
+hexacopter's hovers moved 1–2 cm/s with its altitude hold creeping 3–5 cm/s, which made the angle
+20–90 degrees, and its states read the database's climbs and descents. Between a 24 m hover's
+microphone and the same direction the prediction switched by 4.7 dB with the sign of the drift.
+Below 3 kt of air speed both angles are now zero. In the hexacopter's round trip this removed
+the hovers' in-sample fall with height (−1.66 to −0.01 dB median at 49 m) and moved passes, climbs
+and descents by under 0.03 dB ([FIDELITY](FIDELITY.md#a-hovers-drift-and-the-flight-path-angle)).
+The goldens are unchanged: the demo track never flies under 14 m/s.
 
 ## Changes that affect results
 

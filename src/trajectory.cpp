@@ -756,7 +756,7 @@ void derive_path_angles(State& now)
 {
     const auto [ux, uy, uz] = air_velocity(now);
     const double v = std::hypot(ux, uy, uz);
-    if (v > 0.0)
+    if (v > hover_path_angle_speed)
     {
         auto vn_hat = (ux * now.nx + uy * now.ny + uz * now.nz) / v;
         now.fpa_e = 180.0 / pi * std::asin(vn_hat);
@@ -764,12 +764,15 @@ void derive_path_angles(State& now)
     }
     else
     {
-        // True hover: both flight path angles are undefined rather than
-        // infinite, and dividing by v would put a NaN into mu's sphere lookup
-        // and from there into every level.  Zero is the D original's answer
-        // (niceops commit 0b05d3a, "Fixed issue giving NaN flight path angles
-        // in hover"), and it is the right one -- a stationary aircraft is
-        // neither climbing nor descending.
+        // Hover: both flight path angles are zero.  At rest they are undefined
+        // (dividing by v put a NaN into mu's sphere lookup and every level), and
+        // zero is the D original's answer there (niceops commit 0b05d3a); a
+        // stationary aircraft is neither climbing nor descending.  D took the
+        // angle at any speed above zero.  NICEOPS holds it at zero below
+        // hover_path_angle_speed (3 kt), where the velocity is drift and its
+        // angle noise: a few cm/s gave a hovering hexacopter angles of 20-90
+        // degrees, and the resampled track's 1e-4 m/s flipped it between +87
+        // and -87 (HISTORY, departures from D).
         now.fpa_e = 0.0;
         now.fpa = 0.0;
     }

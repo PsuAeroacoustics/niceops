@@ -2656,6 +2656,33 @@ On day 284 (16 held-out runs, 729 microphones, `min2_no284`), every run flew wes
   frame would have turned it by the approach's mean crab: 2–7° (median 4.6°) over the day-286
   approaches, had they ended in hover.
 
+### A hover's drift and the flight path angle
+
+The PSU hexacopter's broadband database (Mid-State, 2023: 258 steady segments, on the helicopter
+axes μ, γ, C<sub>T</sub>) scored by a round trip: each segment's microphones predicted from the
+database built from them (in sample) or from the other days (out of sample). Hovering at 3–49 m,
+the vehicle drifted 1–2 cm/s while its altitude hold crept 3–5 cm/s, so the path angle taken from
+the velocity at any speed was a median 20° at 3 m, 33° at 12 m, 50° at 24 m and 54° at 49 m, and
+the states read the database's +51° climb (4.7 dB quieter at a 24 m hover's 30° microphones) or
+its descents. SEL predicted less measured, median / rms (dB):
+
+| Hovers | Angle at any speed | Angle zero below 3 kt |
+| --- | --- | --- |
+| In sample, 12 m | −1.22 / 2.06 | −0.68 / 1.49 |
+| In sample, 24 m | −1.04 / 2.12 | −0.40 / 1.75 |
+| In sample, 49 m | −1.66 / 2.39 | −0.01 / 1.83 |
+| In sample, June days (all heights) | −0.54 / 2.37 | −0.17 / 2.13 |
+| Out of sample, June days | −0.61 / 2.47 | −0.51 / 2.46 |
+| In sample, October hovers at 1–3 m | −0.45 / 5.16 | −2.60 / 6.06 |
+
+- Passes, climbs and descents change by under 0.03 dB.
+- In sample the error's fall with hover height goes. Out of sample the June days are unchanged:
+  the days differ by more.
+- The October 1–2 m hovers' microphones are 0.5–5° below them, under the sphere build's 5° rim,
+  where the hover sphere is extrapolated; random reads of the louder descents had hidden that it
+  is low there. A third of those recordings' energy is clear of their own background, so the
+  case cannot say more.
+
 ### Speed reference
 
 On the 2017 approaches, taking the velocity through the air (`--speed_reference air`) instead of
