@@ -6,10 +6,12 @@ is, see [FIDELITY](FIDELITY.md).
 
 ## A hover's flight path angle (November 2026)
 
-Below 3 kt of air speed both flight path angles are zero, where they were the velocity's at any
-speed above zero. A hovering track's drift had read the database's climbs and descents; see
-[Departures from D](#a-hovers-drift-has-no-flight-path-angle). A track that hovers predicts
-differently; one that never flies under 3 kt does not.
+Below 3 kt of air speed the flight path angles are drawn to zero (a smoothstep on their sines,
+zero at 1 kt), where they were the velocity's at any speed above zero. A hovering track's drift
+had read the database's climbs and descents; see
+[Departures from D](#a-hovers-drift-has-no-flight-path-angle). A track whose air speed stays above
+3 kt predicts the same; one with any state slower through the air (a hover, slow vertical flight,
+or slow flight in a tailwind) may not.
 
 ## The flyover's near-field comparison in matched frames (November 2026)
 
@@ -283,8 +285,9 @@ reference figures were drawn at 65–100. That affects figures only; the goldens
 
 Port fidelity is the rule: a D behavior is changed only when a measured case shows it is wrong,
 not when a reading suggests it looks wrong. Four changes have met that bar.
-`golden/state_197421.csv` is trajectory state, which none of them touches, so it is still
-D-derived; `golden/197421_LAE.csv` now comes from the C++ build. D can no longer produce it, and
+`golden/state_197421.csv` is trajectory state. The fourth departure changes the path angles
+written there, but only below 3 kt of air speed, which the demo track never reaches (14 m/s and
+faster), so the golden is still D-derived; `golden/197421_LAE.csv` now comes from the C++ build. D can no longer produce it, and
 regenerating it from D would only restore the departures.
 [`internals/testing.md`](internals/testing.md#golden-files) gives the provenance of each golden.
 
@@ -326,16 +329,13 @@ whose closest approach to a source state is inside the 30.48 m sphere.
 
 ### A hover's drift has no flight path angle
 
-D took both flight path angles from the velocity at any speed above zero. A hover drifts: the PSU
-hexacopter's hovers moved 1–2 cm/s with its altitude hold creeping 3–5 cm/s, which made the angle
-20–90 degrees, and its states read the database's climbs and descents. Between a 24 m hover's
-microphone and the same direction the prediction switched by 4.7 dB with the sign of the drift.
-Below 3 kt of air speed both angles are now zero. In the hexacopter's round trip this removed
-the hovers' in-sample dependence on height (−1.69 to −0.14 dB median at 49 m), moved passes, climbs
-and descents by under 0.06 dB, and out of sample left the 3–12 m hovers 1.2–1.4 dB low, where
-the drift's reads of louder descents had offset a difference between days
-([FIDELITY](FIDELITY.md#a-hovers-drift-and-the-flight-path-angle)).
-The goldens are unchanged: the demo track never flies under 14 m/s.
+D took both flight path angles from the velocity at any speed above zero. A hover drifts, and the
+angle of a few cm/s of drift is noise: the PSU hexacopter's hovers read the database's climbs and
+descents, and in a resampled track whose velocity had been written as zero the angle flipped
+between +87° and −87° on 1e-4 m/s. The angles' sines are now scaled by a smoothstep in the air
+speed, zero at or below 1 kt and whole from 3 kt (THEORY §2.1). The measured case is in
+[FIDELITY](FIDELITY.md#a-hovers-drift-and-the-flight-path-angle). The goldens are unchanged:
+the demo track never flies under 14 m/s.
 
 ## Changes that affect results
 

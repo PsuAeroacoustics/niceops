@@ -112,13 +112,26 @@ const char* to_string(NoseSource source);
 constexpr double heading_nose_speed = 3.0 * knot; // m/s
 constexpr double velocity_nose_speed = 8.0 * knot; // m/s
 
-// Below this air speed (3 kt, the nose's drift speed) both flight path angles
-// are zero: the velocity is a hover's drift, and its angle to the horizontal is
-// noise.  A hexacopter drifting at 1-2 cm/s with its altitude hold creeping 3-5
-// cm/s took angles of 20-90 degrees, and its states read the database's climbs
-// and descents, 3-5 dB off at 24-49 m.  A hold, not a ramp: a multirotor's
-// measured climbs and descents start at 3 kt, and a ramp would flatten them.
-constexpr double hover_path_angle_speed = heading_nose_speed; // m/s
+// A hover's velocity is drift, and its angle to the horizontal is noise: a
+// multirotor drifting a few cm/s, its altitude hold creeping as much, took path
+// angles of 20-90 degrees and read the database's climbs and descents
+// (FIDELITY, "A hover's drift and the flight path angle").  So both path
+// angles' sines are scaled by a smoothstep in the 3-D air speed: 0 at or below
+// drift_path_angle_speed (1 kt), 1 at or above full_path_angle_speed (3 kt).
+// The ramp ends about where measured slow climbs and descents start (the
+// hexacopter's slowest at 2.5-3 kt), so those keep most or all of their angles;
+// and it is continuous, where a hold would step a slow climb's condition by up
+// to 90 degrees from one state to the next.  The same weight
+// shrinks a genuine vertical climb or descent slower than 3 kt toward hover:
+// on the helicopter axes (mu, gamma, C_T) slow vertical flight and drift are
+// not told apart (a multirotor database's axes are, THEORY 2.1).
+constexpr double drift_path_angle_speed = 1.0 * knot; // m/s
+constexpr double full_path_angle_speed = 3.0 * knot;  // m/s
+
+// The smoothstep weight on the path angles' sines at 3-D air speed `speed`,
+// m/s: 0 at or below drift_path_angle_speed, 1 at or above
+// full_path_angle_speed.
+double path_angle_weight(double speed);
 
 // The smoothstep weight the nose gives the velocity at horizontal speed
 // `speed`, m/s: 0 at or below heading_nose_speed, 1 at or above

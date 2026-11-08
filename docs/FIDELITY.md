@@ -2669,14 +2669,15 @@ before the flight), on the vehicle's RTK height and the array survey moved onto 
 plates in the field beside the line are scored only above 5° elevation (their response near
 grazing is not modeled). SEL predicted less measured, median / rms (dB):
 
-| Hovers | Angle at any speed | Angle zero below 3 kt |
+| Hovers | Angle at any speed | Angle drawn to zero below 3 kt |
 | --- | --- | --- |
 | In sample, all heights | −0.12 / 2.22 | −0.52 / 1.88 |
 | In sample, 3 m and 49 m (medians) | +1.79, −1.69 | −0.39, −0.14 |
 | Out of sample, all heights | −0.27 / 2.38 | −1.08 / 2.51 |
 | Out of sample, 3–12 m (medians) | +1.34, +0.09, −0.56 | −1.22, −1.35, −1.26 |
 
-- Passes, climbs and descents change by under 0.06 dB.
+- Passes, climbs and descents change by under 0.01 dB (median). A hold at 3 kt in place of the
+  smoothstep gives the same hovers and moves them by up to 0.06 dB.
 - In sample the error's dependence on hover height goes: the states read the hover they flew.
 - Out of sample the 3–12 m hovers fall 1.2–1.4 dB low. The drift's random reads of the louder
   descents had added energy that happened to offset a difference between the days' hovers (June
