@@ -331,8 +331,8 @@ hexacopter's hovers moved 1–2 cm/s with its altitude hold creeping 3–5 cm/s,
 20–90 degrees, and its states read the database's climbs and descents. Between a 24 m hover's
 microphone and the same direction the prediction switched by 4.7 dB with the sign of the drift.
 Below 3 kt of air speed both angles are now zero. In the hexacopter's round trip this removed
-the hovers' in-sample fall with height (−1.69 to −0.14 dB median at 49 m), moved passes, climbs
-and descents by under 0.03 dB, and out of sample left the 3–12 m hovers 1.3–1.7 dB low, where
+the hovers' in-sample dependence on height (−1.69 to −0.14 dB median at 49 m), moved passes, climbs
+and descents by under 0.06 dB, and out of sample left the 3–12 m hovers 1.2–1.4 dB low, where
 the drift's reads of louder descents had offset a difference between days
 ([FIDELITY](FIDELITY.md#a-hovers-drift-and-the-flight-path-angle)).
 The goldens are unchanged: the demo track never flies under 14 m/s.
