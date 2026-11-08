@@ -76,8 +76,14 @@ $$
 
 The Q-SAM path angle is the velocity's angle to the tip-path plane. It is the angle at which a
 steady flight condition presents the same rotor inflow, which is what lets steady-flight spheres
-represent a maneuvering state. At $\lvert\mathbf{u}\rvert = 0$ both path angles are taken as zero
-(§3).
+represent a maneuvering state. Below 3 kt the two angles' sines are scaled toward zero, where the
+velocity is a hover's drift (§3):
+
+$$
+\sin\gamma \to w\,\sin\gamma, \qquad
+w = \begin{cases} 0, & \lvert\mathbf{u}\rvert \le u_0 \\ \sigma^2 (3 - 2\sigma), & u_0 < \lvert\mathbf{u}\rvert < u_1 \\ 1, & \lvert\mathbf{u}\rvert \ge u_1 \end{cases}, \qquad
+\sigma = \frac{\lvert\mathbf{u}\rvert - u_0}{u_1 - u_0}, \qquad u_0 = 1\ \mathrm{kt}, \quad u_1 = 3\ \mathrm{kt}.
+$$
 
 **The density.** By default (`--condition_density vehicle`) $\rho$ is the vehicle file's density
 in every case, including when `--temperature` or `--pressure` sets the propagation atmosphere.
@@ -337,7 +343,14 @@ negated and the path angles are recomputed. $\mu$ and the load factor do not dep
 **Static operations** are holds at one point, each for a given duration with the nose on a
 compass heading. They are sampled every 0.02 s at 1 g with zero velocity, so $\mu = 0$. At
 zero velocity (true hover, flown or static) both path angles are zero: the arcsine of §2.1 is
-undefined there, and a stationary aircraft neither climbs nor descends.
+undefined there, and a stationary aircraft neither climbs nor descends. Below 3 kt of air speed
+the angles' sines are scaled by the smoothstep $w$ of §2.1, zero at or below 1 kt: there the
+velocity is a hover's drift, its angle to the horizontal noise, and a drifting hover would
+otherwise read climbs and descents. The weight is continuous, so a climb flown near 3 kt does not
+step between hover and its own angle, and from 3 kt the angles are the velocity's. A genuine
+vertical climb or descent slower than 3 kt is drawn toward hover too: on the helicopter axes
+$(\mu, \gamma, C_T)$ slow vertical flight and drift are not told apart. A multirotor database's
+axes need no such rule: its axial speed over the induced velocity reads drift as hover.
 
 **WGS84 tracks** carry positions, and optionally east, north and up velocities. Without
 velocities, velocities and accelerations come from a cubic smoothing spline [13] that

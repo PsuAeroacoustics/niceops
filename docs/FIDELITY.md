@@ -2656,6 +2656,33 @@ On day 284 (16 held-out runs, 729 microphones, `min2_no284`), every run flew wes
   frame would have turned it by the approach's mean crab: 2–7° (median 4.6°) over the day-286
   approaches, had they ended in hover.
 
+### A hover's drift and the flight path angle
+
+The PSU hexacopter's broadband database (Mid-State, 2023: 258 steady segments, on the helicopter
+axes μ, γ, C<sub>T</sub>) scored by a round trip: each segment's microphones predicted from the
+database built from them (in sample) or from the other days (out of sample). Hovering at 3–49 m,
+the vehicle drifted 1–2 cm/s while its altitude hold crept 3–5 cm/s, so the path angle taken from
+the velocity at any speed was a median 20° at 3 m, 33° at 12 m, 50° at 24 m and 54° at 49 m, and
+the states read the database's +51° climb (4.7 dB quieter at a 24 m hover's 30° microphones) or
+its descents. The round trip's prediction includes each recording's own background (its seconds
+before the flight), on the vehicle's RTK height and the array survey moved onto the RTK frame; the
+plates in the field beside the line are scored only above 5° elevation (their response near
+grazing is not modeled). SEL predicted less measured, median / rms (dB):
+
+| Hovers | Angle at any speed | Angle drawn to zero below 3 kt |
+| --- | --- | --- |
+| In sample, all heights | −0.12 / 2.22 | −0.52 / 1.88 |
+| In sample, 3 m and 49 m (medians) | +1.79, −1.69 | −0.39, −0.14 |
+| Out of sample, all heights | −0.27 / 2.38 | −1.08 / 2.51 |
+| Out of sample, 3–12 m (medians) | +1.34, +0.09, −0.56 | −1.22, −1.35, −1.26 |
+
+- Passes, climbs and descents change by under 0.01 dB (median). A hold at 3 kt in place of the
+  smoothstep gives the same hovers and moves them by up to 0.06 dB.
+- In sample the error's dependence on hover height goes: the states read the hover they flew.
+- Out of sample the 3–12 m hovers fall 1.2–1.4 dB low. The drift's random reads of the louder
+  descents had added energy that happened to offset a difference between the days' hovers (June
+  1's, the most, predicted from the others'); the rule removes the offset, not the difference.
+
 ### Speed reference
 
 On the 2017 approaches, taking the velocity through the air (`--speed_reference air`) instead of

@@ -83,6 +83,77 @@ TEST_CASE("Hover states do not produce NaN flight path angles", "[trajectory]")
     REQUIRE(std::fabs(climbing.fpa - 45.0) < 1e-9);
 }
 
+TEST_CASE("a hover's drift has no flight path angle; from 3 kt the angle is whole, continuously", "[trajectory]")
+{
+    // A hovering multirotor drifts a few cm/s, so asin(u_z / |u|) is noise
+    // that read the database's climbs and descents.  The angles' sines are
+    // scaled by path_angle_weight in the 3-D air speed: 0 at or below 1 kt, 1
+    // at or above 3 kt, a smoothstep between.
+    dimensional_data vehicle;
+    vehicle.tip_speed = 78.0;
+    vehicle.radius = 0.3556;
+    vehicle.weight = 16.19 * 9.80665;
+    vehicle.rho = 1.14;
+
+    const auto state = [&](double vx, double vz, double wx = 0.0) {
+        State s;
+        s.vx = vx;
+        s.vy = 0.0;
+        s.vz = vz;
+        s.wx = wx;
+        s.nx = 0.0;
+        s.ny = 0.0;
+        s.nz = 1.0;
+        derive_flight_parameters(s, vehicle);
+        return s;
+    };
+    const double deg = 180.0 / pi;
+    for (const double vz : {0.05, -0.05, 1e-4, -1e-4})
+    {
+        const State drift = state(0.01, vz);
+        REQUIRE(drift.fpa == 0.0);
+        REQUIRE(drift.fpa_e == 0.0);
+        REQUIRE(drift.mu > 0.0);
+    }
+    // The weight's edges: 0 at exactly 1 kt, 1 at exactly 3 kt.
+    REQUIRE(path_angle_weight(drift_path_angle_speed) == 0.0);
+    REQUIRE(path_angle_weight(full_path_angle_speed) == 1.0);
+    // Straight up at 1 kt: still hover, both angles.
+    const State at_drift = state(0.0, drift_path_angle_speed);
+    REQUIRE(at_drift.fpa == 0.0);
+    REQUIRE(at_drift.fpa_e == 0.0);
+    // Straight up at exactly 3 kt: the whole angle, both angles.
+    const State at_full = state(0.0, full_path_angle_speed);
+    REQUIRE(at_full.fpa == Catch::Approx(90.0).epsilon(1e-12));
+    REQUIRE(at_full.fpa_e == Catch::Approx(90.0).epsilon(1e-12));
+    // Halfway up the ramp (2 kt, weight 1/2) straight up: asin(1/2), both angles.
+    const State mid = state(0.0, 2.0 * knot);
+    REQUIRE(mid.fpa == Catch::Approx(30.0).epsilon(1e-12));
+    REQUIRE(mid.fpa_e == Catch::Approx(30.0).epsilon(1e-12));
+    // Past 3 kt, the measured slow climbs' regime: the velocity's angle.
+    const State climb = state(1.0, 1.25);
+    REQUIRE(std::hypot(1.0, 1.25) > full_path_angle_speed);
+    REQUIRE(climb.fpa == Catch::Approx(std::atan2(1.25, 1.0) * deg).epsilon(1e-12));
+    REQUIRE(climb.fpa_e == Catch::Approx(climb.fpa).epsilon(1e-12));
+    // The speed is the air's: 5 m/s over the ground into a 5 m/s tailwind is a
+    // hover with no angle; at rest over the ground in a 5 m/s headwind, a
+    // 0.2 m/s climb flies at the air's angle.
+    const State downwind = state(5.0, 0.3, 5.0);
+    REQUIRE(downwind.fpa == 0.0);
+    REQUIRE(downwind.fpa_e == 0.0);
+    const State headwind = state(0.0, 0.2, -5.0);
+    REQUIRE(headwind.fpa == Catch::Approx(std::atan2(0.2, 5.0) * deg).epsilon(1e-12));
+    // Continuous through the ramp: a vertical climb's angle rises without a step.
+    double previous = 0.0;
+    for (double v = 0.0; v <= 4.0 * knot; v += 0.001)
+    {
+        const double angle = state(0.0, v).fpa;
+        REQUIRE(angle >= previous);
+        REQUIRE(angle - previous < 0.5);
+        previous = angle;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The labeled WGS84 input format.
 // ---------------------------------------------------------------------------

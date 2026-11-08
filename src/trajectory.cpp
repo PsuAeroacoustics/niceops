@@ -756,20 +756,24 @@ void derive_path_angles(State& now)
 {
     const auto [ux, uy, uz] = air_velocity(now);
     const double v = std::hypot(ux, uy, uz);
-    if (v > 0.0)
+    const double w = path_angle_weight(v);
+    if (w > 0.0)
     {
-        auto vn_hat = (ux * now.nx + uy * now.ny + uz * now.nz) / v;
-        now.fpa_e = 180.0 / pi * std::asin(vn_hat);
-        now.fpa = 180.0 / pi * std::asin(uz / v);
+        // The sines scaled by the drift weight (trajectory.hpp): a hover's
+        // drift has no angle, slow climbs and descents keep theirs, and the
+        // weight is continuous between them.
+        const auto vn_hat = (ux * now.nx + uy * now.ny + uz * now.nz) / v;
+        now.fpa_e = 180.0 / pi * std::asin(w * vn_hat);
+        now.fpa = 180.0 / pi * std::asin(w * uz / v);
     }
     else
     {
-        // True hover: both flight path angles are undefined rather than
-        // infinite, and dividing by v would put a NaN into mu's sphere lookup
-        // and from there into every level.  Zero is the D original's answer
-        // (niceops commit 0b05d3a, "Fixed issue giving NaN flight path angles
-        // in hover"), and it is the right one -- a stationary aircraft is
-        // neither climbing nor descending.
+        // A hover (at or below 1 kt, the weight 0): both flight path angles are
+        // zero.  At rest they are undefined (dividing by v put a NaN into mu's
+        // sphere lookup and every level), and zero is the D original's answer
+        // there (niceops commit 0b05d3a); D took the angle at any speed above
+        // zero, which below 3 kt reads drift as climbs and descents (HISTORY,
+        // departures from D).
         now.fpa_e = 0.0;
         now.fpa = 0.0;
     }
@@ -1355,6 +1359,16 @@ const char* to_string(NoseSource source)
         break;
     }
     return "velocity";
+}
+
+double path_angle_weight(double speed)
+{
+    if (speed <= drift_path_angle_speed)
+        return 0.0;
+    if (speed >= full_path_angle_speed)
+        return 1.0;
+    const double s = (speed - drift_path_angle_speed) / (full_path_angle_speed - drift_path_angle_speed);
+    return s * s * (3.0 - 2.0 * s);
 }
 
 double nose_velocity_weight(double speed)
