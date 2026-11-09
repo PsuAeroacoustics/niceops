@@ -7424,10 +7424,7 @@ int run(int argc, char* argv[])
     options.tones.ground = *parse_tone_ground(tone_ground);
     options.tones.near_field = tone_near_field == "on";
     database_load.tone_near_field = options.tones.near_field;
-    database_load.tone_blend = tone_blend == "db" ? ToneBlend::db
-            : tone_blend == "complex"              ? ToneBlend::complex
-            : tone_blend == "energy"               ? ToneBlend::energy
-                                                   : ToneBlend::database;
+    database_load.tone_blend = *parse_tone_blend(tone_blend);
     database_load.tone_modes = tone_interpolation == "modes";
     if (!nose.empty())
         options.nose = parse_nose_source(nose);

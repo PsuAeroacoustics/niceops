@@ -581,8 +581,8 @@ the smoother of the two on the grid (its widest step between neighboring cells w
 its peak), which is the phase the resolution check judges: a tone whose phase steps more than 90°
 between neighboring cells within 20 dB of its peak is not resolved, and is summed in energy.
 
-**Rotating modes.** A tone with a phase reference (`rotor_azimuth` or `relative`) is also fitted,
-at every condition, with spherical harmonics in the shaft axes: polar angle $\beta$ from the
+**Rotating modes.** A tone whose conditions blend as complex amplitudes (a `rotor_azimuth` tone,
+or any tone with a phase reference under `--tone_blend complex`) is also fitted, at every condition, with spherical harmonics in the shaft axes: polar angle $\beta$ from the
 sphere frame's up axis, azimuth $\alpha$ about it. These are the rotating modes,
 
 $$

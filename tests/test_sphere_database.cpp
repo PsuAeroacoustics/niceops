@@ -24,6 +24,7 @@
 
 #include "atmosphere.hpp"
 #include "sphere_database.hpp"
+#include "sphere_laplacian.hpp"
 #include "state_condition.hpp"
 #include "tones.hpp"
 #include "trajectory.hpp"
@@ -4065,6 +4066,15 @@ TEST_CASE("a multirotor database blends over the axes it varies; a node is its c
     std::filesystem::remove(path);
 }
 
+// A blend's total weight on one condition.
+static double weight_on(const Database::Blend& blend, std::size_t condition)
+{
+    double total = 0.0;
+    for (std::size_t k = 0; k < blend.weights.size(); k++)
+        total += blend.indices[k] == condition ? blend.weights[k] : 0.0;
+    return total;
+}
+
 TEST_CASE("a multirotor axis that varies only by noise is constant; a hover drifting off it is not clamped",
         "[multirotor]")
 {
@@ -4079,12 +4089,7 @@ TEST_CASE("a multirotor axis that varies only by noise is constant; a hover drif
     REQUIRE(database.active_condition_axes() == std::array<bool, 3> {true, false, false});
     // A drifting hover: almost all on the hover, the rest on 10 mph, and not clamped.
     auto blend = database.blend_at(0.01, 0.004, 0.2330);
-    double hover = 0.0, ten = 0.0;
-    for (std::size_t k = 0; k < blend.weights.size(); k++)
-    {
-        hover += blend.indices[k] == 0 ? blend.weights[k] : 0.0;
-        ten += blend.indices[k] == 1 ? blend.weights[k] : 0.0;
-    }
+    const double hover = weight_on(blend, 0), ten = weight_on(blend, 1);
     REQUIRE(std::fabs(hover - (1.0 - 0.01 / 0.844)) < 1e-9);
     REQUIRE(std::fabs(ten - 0.01 / 0.844) < 1e-9);
     REQUIRE(!blend.flight_path_angle_clamped);
@@ -4231,11 +4236,8 @@ TEST_CASE("a tone locked to its rotor blends its conditions as complex amplitude
     {
         const Database database(path);
         const auto state = database.source_state(position, velocity, normal, 0.2, 0.0, test_ct_reference);
-        for (std::size_t c = 0; c < state.blend.weights.size(); c++)
-        {
-            w_hover += state.blend.indices[c] == 0 ? state.blend.weights[c] : 0.0;
-            w_forward += state.blend.indices[c] == 1 ? state.blend.weights[c] : 0.0;
-        }
+        w_hover = weight_on(state.blend, 0);
+        w_forward = weight_on(state.blend, 1);
         REQUIRE(std::fabs(w_hover - 0.8) < 1e-12);
         REQUIRE(std::fabs(w_forward - 0.2) < 1e-12);
     }
@@ -4335,8 +4337,7 @@ TEST_CASE("a phased tone is read between grid nodes from rotating modes, to 0.01
     // fitted modes read it back between the nodes to 0.01 dB (the fit's smoothness penalty biases it by about 1e-4);
     // the grid's bilinear interpolation is off by more than 0.05 dB.
     const auto field = [](double phi_deg, double theta_deg) {
-        const double p = phi_deg * pi / 180.0, t = theta_deg * pi / 180.0;
-        const double f = std::cos(t), st = std::sin(t) * std::sin(p), up = -std::sin(t) * std::cos(p);
+        const auto [f, st, up] = grid_direction(phi_deg, theta_deg);
         const std::complex<double> i(0.0, 1.0);
         return 2.0 + (f + i * st) * (f + i * st) + 0.6 * up * (f - i * st) + 0.3 * up;
     };
@@ -4368,12 +4369,12 @@ TEST_CASE("a phased tone is read between grid nodes from rotating modes, to 0.01
     for (double phi = -83.0; phi <= 83.0; phi += 11.0)
         for (double theta = 7.0; theta <= 173.0; theta += 13.0)
         {
-            const double p = phi * pi / 180.0, t = theta * pi / 180.0;
-            const Vec3 d = state.frame.nose * std::cos(t) + state.frame.starboard * (std::sin(t) * std::sin(p))
-                    - state.frame.normal * (std::sin(t) * std::cos(p));
+            const auto g = grid_direction(phi, theta);
+            const Vec3 d = (state.frame.nose * g.forward + state.frame.starboard * g.starboard
+                    + state.frame.normal * g.up).normalized();
             Database::ToneLookup a[2], b[2];
-            modes.tone_directivity(0, state, d.normalized(), a);
-            grid.tone_directivity(0, state, d.normalized(), b);
+            modes.tone_directivity(0, state, d, a);
+            grid.tone_directivity(0, state, d, b);
             const auto truth = field(phi, theta);
             const double level = 80.0 + 20.0 * std::log10(std::abs(truth));
             for (std::size_t k = 0; k < 2; k++)
