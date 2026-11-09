@@ -132,8 +132,11 @@ climb), and $M_h$ is the multirotor's loading axis, the counterpart of $C_T$. $\
 air at the state's height by default (`--condition_density atmosphere`; `vehicle` takes the
 vehicle file's), and $c$ the run's sound speed there. The load factor is held at 0.1 below it. The
 conditions blend over $(x, z, M_h)$ as over $(\mu, \gamma, C_T)$ (§2.3), leaving out an axis the
-database does not vary (one built at one weight and air holds one $M_h$). There is no scaling law
-in $M_h$: a state off the database's $M_h$ takes its spheres as they are.
+database does not vary: one whose conditions span no more than 0.02 in $x$ or $z$ (0.1 m/s of a
+5 m/s $v_h$) or 0.005 in $M_h$, unless leaving it out would merge two conditions. Measured
+conditions are means, so level flight's $z$ and one weight's $M_h$ differ between them by noise,
+and an axis normalized by that noise would put every state far outside it. There is no scaling
+law in $M_h$: a state off the database's $M_h$ takes its spheres as they are.
 
 ### 2.2 The sphere database
 
@@ -545,9 +548,23 @@ a = 10^{(L_A(\hat{\mathbf{k}}) - \alpha(f)\,\ell)/20}\, \frac{R_s}{\max(L, r_0)}
 \qquad \ell = \max(L, r_0) - R_a.
 $$
 
-$L_A$ is the tone's level at the sphere radius $R_s$, interpolated in dB over the grid cell and
-the conditions with the band spectrum's weights (empty entries dropped as there), with the
-blend's load-factor correction; $\varphi_A$ is the argument of the complex amplitudes summed with
+$L_A$ is the tone's level at the sphere radius $R_s$, interpolated over the grid cell in dB with
+the band spectrum's weights (empty entries dropped as there), with the blend's load-factor
+correction. At each of the cell's corners its conditions are blended with the condition weights
+$w_c$ (present entries, renormalized) in one of two ways:
+
+- **As complex amplitudes,** $L = 20\log_{10}\lvert\sum_c w_c A_c\rvert / \sum_c w_c$, for a tone whose
+  phase is locked to its rotor (`phase_reference = rotor_azimuth`) and resolved on the grid. A
+  rotor's field is linear in its loading, so a tone whose unsteady loading grows with the condition
+  is blended exactly. A prediction's conditions share that reference by construction; a measured
+  build's do once its runs' timing offsets are fitted together (one common offset left unknown
+  moves every condition's phases alike). A database whose conditions' references are independent
+  says so (`tone_phase_across_conditions = independent`).
+- **In mean-square pressure,** $L = 10\log_{10}\left(\sum_c w_c\lvert A_c\rvert^2 / \sum_c w_c\right)$, for a
+  tone without a usable phase (`relative` or `none`, unresolved on the grid, or a database that
+  says independent), and for the incoherent part.
+
+`--tone_blend` forces one blend, or the levels' dB average. $\varphi_A$ is the argument of the complex amplitudes summed with
 the same weights, which needs no unwrapping and does not dip where neighbors' phases differ.
 Shaft order $m$ of a rotor turning at $\Omega_r$ winds its phase as $e^{+i\sigma m\alpha}$
 about the shaft, $\sigma = \mathrm{sign}(\Omega_r)$ and $\alpha$ the direction's azimuth

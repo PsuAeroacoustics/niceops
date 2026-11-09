@@ -634,6 +634,11 @@ inline Pair load_pair(const Database::Sample& s)
 // band it masked -- is stored as.
 constexpr double empty_level_db = Database::no_energy_floor_db + 1.0;
 
+// A multirotor condition axis whose conditions span no more than this is constant
+// for blending (x and z, multiples of the hover induced velocity; M_h): see
+// Database's load, where active_axes_ is set.
+constexpr double multirotor_axis_tolerance[3] = {0.02, 0.02, 0.005};
+
 inline bool is_empty(double level, double weight)
 {
     return weight != 0.0 && level <= empty_level_db;
@@ -1866,6 +1871,24 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
     if (database_version_ >= 2)
     {
         tone_near_field_ = load.tone_near_field;
+        // How a tone's conditions blend (THEORY 4.4, Database::tone_blend_mode): as complex amplitudes where its
+        // phase is locked to its rotor, unless the database says its conditions' phases are on independent
+        // references (tone_phase_across_conditions = independent: a measured build whose runs' timing offsets fall
+        // in separate sets); in mean-square pressure where it has no usable phase; --tone_blend overrides.
+        const auto across = read_root_text(file_ncid, "tone_phase_across_conditions");
+        if (across && *across != "shared" && *across != "independent")
+            input_error("Database ", datafile_path, " gives tone_phase_across_conditions '", *across,
+                    "'; expected shared or independent.");
+        tone_blend_ = load.tone_blend;
+        tone_phases_independent_ = across && *across == "independent";
+        info("Pure tones blend between conditions ",
+                tone_blend_ == ToneBlend::db       ? "in dB (--tone_blend db)."
+                        : tone_blend_ == ToneBlend::complex ? "as complex amplitudes (--tone_blend complex)."
+                        : tone_blend_ == ToneBlend::energy  ? "in mean-square pressure (--tone_blend energy)."
+                        : tone_phases_independent_
+                        ? "in mean-square pressure: the database's conditions' phases are on independent references."
+                        : "as complex amplitudes where a tone's phase is locked to its rotor, else in mean-square "
+                          "pressure.");
         load_tone_sources(file_ncid, group_ids, datafile_path);
     }
     else if (read_root_text(file_ncid, "sources"))
@@ -1933,8 +1956,42 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
         // single weight and air holds one M_h, and its triangulation is then
         // over (x, z) alone, as a fixed_load_factor one is over (mu, gamma).  A
         // single condition varies none and takes the nearest-condition path.
-        active_axes_ = {advance_ratio_max > advance_ratio_min, flight_path_angle_max > flight_path_angle_min,
-                thrust_coefficient_max > thrust_coefficient_min};
+        //
+        // An axis varies only beyond multirotor_axis_tolerance.  Measured
+        // conditions are means, so level flight's z and one weight's M_h differ
+        // between conditions by noise (z 3.6e-5, M_h 4e-5 in a June 2023
+        // hexacopter build); an axis normalized by that span put a hover
+        // drifting 2 cm/s a hundred spans outside it, and nearly every state was
+        // clamped onto one condition outright: a hover read the 10 mph sphere
+        // (FIDELITY, Multirotor axes that vary only by noise).  The tolerances are the
+        // differences that do not matter: about 0.1 m/s of a 5 m/s induced
+        // velocity, and 2 % of a hover tip Mach number.  Unless dropping the
+        // axes would merge conditions: then each varying axis is kept, as before.
+        const double spans[3] = {advance_ratio_max - advance_ratio_min, flight_path_angle_max - flight_path_angle_min,
+                thrust_coefficient_max - thrust_coefficient_min};
+        const std::vector<double>* values[3] = {&advance_ratios, &flight_path_angles, &thrust_coefficients};
+        std::array<bool, 3> beyond {};
+        for (std::size_t a = 0; a < 3; a++)
+            beyond[a] = spans[a] > multirotor_axis_tolerance[a];
+        bool merged = false;
+        for (std::size_t i = 0; i < advance_ratios.size() && !merged; i++)
+            for (std::size_t j = i + 1; j < advance_ratios.size() && !merged; j++)
+            {
+                bool apart = false;
+                for (std::size_t a = 0; a < 3; a++)
+                    apart = apart
+                            || (beyond[a] && std::fabs((*values[a])[i] - (*values[a])[j]) > multirotor_axis_tolerance[a]);
+                merged = !apart;
+            }
+        if (merged && advance_ratios.size() >= 2)
+            warn("Database ", datafile_path, ": some of its multirotor conditions differ only by less than x, z ",
+                    multirotor_axis_tolerance[0], " or M_h ", multirotor_axis_tolerance[2],
+                    "; every axis that varies at all is blended over, so states near them may be clamped.");
+        active_axes_ = merged ? std::array<bool, 3> {spans[0] > 0.0, spans[1] > 0.0, spans[2] > 0.0} : beyond;
+        for (std::size_t a = 0; a < 3; a++)
+            if (!active_axes_[a] && spans[a] > 0.0)
+                info("Multirotor condition axis ", a == 0 ? "x" : a == 1 ? "z" : "M_h", " spans only ", spans[a],
+                        " across the conditions, within ", multirotor_axis_tolerance[a], ": treated as constant.");
         active_condition_dims_ = static_cast<std::size_t>(active_axes_[0]) + static_cast<std::size_t>(active_axes_[1])
                 + static_cast<std::size_t>(active_axes_[2]);
         if (active_condition_dims_ == 0)
@@ -2554,8 +2611,14 @@ Database::Blend Database::blend_at(double advance_ratio, double flight_path_angl
     const double slack = multirotor ? 1e-12 : 0.0;
     bool clamped[3];
     for (std::size_t a = 0; a < 3; a++)
+    {
+        // An axis a multirotor database treats as constant (multirotor_axis_tolerance)
+        // reports only a query beyond its tolerance.
+        const double tolerance = multirotor && !active_axes_[a] ? multirotor_axis_tolerance[a] : 0.0;
         clamped[a] = (multirotor || active_axes_[a])
-                && (query[a] < lows[a] * (1.0 - slack) - slack || query[a] > highs[a] * (1.0 + slack) + slack);
+                && (query[a] < lows[a] * (1.0 - slack) - slack - tolerance
+                        || query[a] > highs[a] * (1.0 + slack) + slack + tolerance);
+    }
     blend.advance_ratio_clamped = clamped[0];
     blend.flight_path_angle_clamped = clamped[1];
     blend.thrust_coefficient_clamped = clamped[2];
@@ -3020,35 +3083,60 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
     for (std::size_t k = 0; k < tones; k++)
     {
         const int order = s.unwind_order.empty() ? 0 : s.unwind_order[k];
-        // Each corner's conditions blended in dB, empty entries dropped
-        // (blend_present), then the corners by their bilinear weights the same
-        // way: the bands' rule, applied to the tone's level.  The phase is the
-        // argument of the complex amplitudes under the same weights, which needs
-        // no unwrapping and does not dip where neighbors' phases differ.
+        // Each corner's conditions blended, empty entries dropped and the
+        // remaining weights renormalized (THEORY 4.4), by tone_blend_mode: as
+        // complex amplitudes where the tone's phase is locked to its rotor and the
+        // database's conditions share that reference (a rotor's field is linear in
+        // its loading: a tone growing from nearly nothing in one condition to tens
+        // of dB in the next is blended exactly, where in dB the blend fell 6-14 dB
+        // short); in mean-square pressure where it has no usable phase; in dB only
+        // when --tone_blend db asks.  Then the corners by their bilinear weights in
+        // dB.  The phase is the argument of the complex amplitudes under the same
+        // weights, which needs no unwrapping and does not dip where neighbors'
+        // phases differ.
+        const ToneBlendMode mode = tone_blend_mode(s, k);
         double corner_level[4];
         std::complex<double> sum(0.0, 0.0), near_sum(0.0, 0.0);
         const bool near = !s.near_field.empty();
         for (std::size_t corner = 0; corner < 4; corner++)
         {
             double v[4];
-            std::complex<double> corner_sum(0.0, 0.0), corner_near(0.0, 0.0);
+            std::complex<double> corner_sum(0.0, 0.0), corner_near(0.0, 0.0), present(0.0, 0.0);
+            double present_weight = 0.0, power = 0.0;
             for (std::size_t c = 0; c < 4; c++)
             {
                 const std::size_t slot = (blend.indices[c] * n_cells + stencil.corner[corner]) * tones + k;
                 const std::complex<float> a = s.amplitudes[slot];
-                const double magnitude = std::abs(std::complex<double>(a.real(), a.imag()));
+                const std::complex<double> ad(a.real(), a.imag());
+                const double magnitude = std::abs(ad);
                 v[c] = magnitude > 0.0 ? 20.0 * std::log10(magnitude) : no_energy_floor_db;
-                corner_sum += w[c] * std::complex<double>(a.real(), a.imag());
+                corner_sum += w[c] * ad;
+                if (w[c] != 0.0 && v[c] > empty_level_db)
+                {
+                    present += w[c] * ad;
+                    power += w[c] * magnitude * magnitude;
+                    present_weight += w[c];
+                }
                 if (near)
                 {
                     const std::complex<float> b = s.near_field[slot];
                     corner_near += w[c] * std::complex<double>(b.real(), b.imag());
                 }
             }
-            corner_level[corner] = (is_empty(v[0], w[0]) || is_empty(v[1], w[1]) || is_empty(v[2], w[2])
-                                           || is_empty(v[3], w[3]))
-                    ? blend_present(v, w)
-                    : w[0] * v[0] + w[1] * v[1] + w[2] * v[2] + w[3] * v[3];
+            if (mode == ToneBlendMode::complex)
+            {
+                const double m = present_weight > 0.0 ? std::abs(present) / present_weight : 0.0;
+                corner_level[corner] = m > 0.0 ? 20.0 * std::log10(m) : no_energy_floor_db;
+            }
+            else if (mode == ToneBlendMode::energy)
+                corner_level[corner] = present_weight > 0.0 && power > 0.0
+                        ? 10.0 * std::log10(power / present_weight)
+                        : no_energy_floor_db;
+            else
+                corner_level[corner] = (is_empty(v[0], w[0]) || is_empty(v[1], w[1]) || is_empty(v[2], w[2])
+                                               || is_empty(v[3], w[3]))
+                        ? blend_present(v, w)
+                        : w[0] * v[0] + w[1] * v[1] + w[2] * v[2] + w[3] * v[3];
             if (order != 0)
             {
                 const auto unwind = std::polar(1.0, -order * cell_shaft_azimuth_[stencil.corner[corner]]);
@@ -3067,7 +3155,8 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
         out[k].incoherent_db = no_energy_floor_db;
         if (s.has_incoherent)
         {
-            // Blended as the level is: in dB, empty entries dropped.
+            // It has no phase: its conditions blend in mean-square pressure, or in dB
+            // under --tone_blend db; then the corners in dB.
             double corner_incoherent[4];
             for (std::size_t corner = 0; corner < 4; corner++)
             {
@@ -3077,10 +3166,23 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
                     const float x = s.incoherent_db[(blend.indices[c] * n_cells + stencil.corner[corner]) * tones + k];
                     v[c] = std::isfinite(x) ? static_cast<double>(x) : no_energy_floor_db;
                 }
-                corner_incoherent[corner] = (is_empty(v[0], w[0]) || is_empty(v[1], w[1]) || is_empty(v[2], w[2])
-                                                    || is_empty(v[3], w[3]))
-                        ? blend_present(v, w)
-                        : w[0] * v[0] + w[1] * v[1] + w[2] * v[2] + w[3] * v[3];
+                if (mode != ToneBlendMode::db)
+                {
+                    double power = 0.0, total = 0.0;
+                    for (std::size_t c = 0; c < 4; c++)
+                        if (w[c] != 0.0 && v[c] > empty_level_db)
+                        {
+                            power += w[c] * std::pow(10.0, v[c] / 10.0);
+                            total += w[c];
+                        }
+                    corner_incoherent[corner] = total > 0.0 && power > 0.0 ? 10.0 * std::log10(power / total)
+                                                                           : no_energy_floor_db;
+                }
+                else
+                    corner_incoherent[corner] = (is_empty(v[0], w[0]) || is_empty(v[1], w[1])
+                                                        || is_empty(v[2], w[2]) || is_empty(v[3], w[3]))
+                            ? blend_present(v, w)
+                            : w[0] * v[0] + w[1] * v[1] + w[2] * v[2] + w[3] * v[3];
             }
             const double incoherent = (is_empty(corner_incoherent[0], sw[0]) || is_empty(corner_incoherent[1], sw[1])
                                               || is_empty(corner_incoherent[2], sw[2])
@@ -3114,6 +3216,27 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
             out[k].peak_amplitude = 0.0;
         }
     }
+}
+
+Database::ToneBlendMode Database::tone_blend_mode(const ToneSource& s, std::size_t tone) const
+{
+    switch (tone_blend_)
+    {
+    case ToneBlend::db:
+        return ToneBlendMode::db;
+    case ToneBlend::complex:
+        return ToneBlendMode::complex;
+    case ToneBlend::energy:
+        return ToneBlendMode::energy;
+    case ToneBlend::database:
+        break;
+    }
+    // A phase locked to the rotor, resolved on the grid, and on one reference at
+    // every condition (the database does not say independent).
+    const bool resolved = s.energy_only.empty() || s.energy_only[tone] == 0;
+    return s.phase_reference == PhaseReference::rotor_azimuth && resolved && !tone_phases_independent_
+            ? ToneBlendMode::complex
+            : ToneBlendMode::energy;
 }
 
 std::array<double, 3> Database::tone_center(std::size_t source, const Blend& blend) const

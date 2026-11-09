@@ -418,6 +418,15 @@ inline int DirectionBounds::bin(double along, double up, double across, double s
 // Database::screen_suspect_cells).  At namespace scope for the reason
 // BlendOptions is: a nested struct with member initializers cannot be a
 // defaulted argument of its enclosing class's constructor.
+// How a format 2 database's tones blend between operating conditions (--tone_blend).
+enum class ToneBlend
+{
+    database, // complex for a tone locked to its rotor (unless the database says independent), else energy
+    db,
+    complex,
+    energy,
+};
+
 struct DatabaseLoadOptions
 {
     // Write every suspect entry to this CSV (empty: none).
@@ -433,6 +442,9 @@ struct DatabaseLoadOptions
     // Whether to precompute each tone's first-order near-field term, Lap[D A] on
     // the grid (ToneSource::near_field; THEORY 4.4): --tone_near_field on.
     bool tone_near_field = false;
+    // How a tone's conditions blend (--tone_blend; THEORY 4.4): by the tone
+    // (Database::tone_blend_mode), or one blend forced.
+    ToneBlend tone_blend = ToneBlend::database;
     // --source_radius, m: Database::source_radius (0: the sphere radius).
     double source_radius = 0.0;
 };
@@ -1308,6 +1320,18 @@ private:
     // channel rows (the remap the band amplitude takes), which its tones take too.
     std::vector<std::vector<std::size_t>> tone_cell_of_;
     bool tone_near_field_ = false;
+    ToneBlend tone_blend_ = ToneBlend::database;
+    // The root's tone_phase_across_conditions = independent.
+    bool tone_phases_independent_ = false;
+    // How one tone's conditions blend: complex amplitudes, mean-square pressure
+    // or dB.
+    enum class ToneBlendMode
+    {
+        complex,
+        energy,
+        db,
+    };
+    ToneBlendMode tone_blend_mode(const ToneSource& s, std::size_t tone) const;
     // Per condition, the flight speed (m/s) and climb angle (rad) a multirotor
     // condition group records (airspeed, climb_rate), NaN where it does not: the
     // near-field term's flight Mach number.

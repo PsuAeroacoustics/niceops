@@ -637,6 +637,7 @@ and speed scaling. A source gives it at every condition or at none.
 | `--sync_group tag,tag,...` | Adds the named rotors coherently, replacing their database groups, at their mean shaft rate (logged). Repeatable, one group each. Only rotors whose phases are tied to their azimuth can join one. |
 | `--tone_coherence coherent\|energy` | `energy` adds every rotor in energy, each keeping its own ground interference: the level with no synchrophasing. Default `coherent`. |
 | `--tone_ground frequency\|band` | `frequency` (default) reflects each tone at its own frequency where the path allows; `band` applies the band model's correction to free-field tones. |
+| `--tone_blend database\|complex\|energy\|db` | How a tone's operating conditions blend. `database` (default): a tone whose phase is locked to its rotor blends as complex amplitudes, unless the database says its conditions' phases are on independent references (`tone_phase_across_conditions = independent`); a tone without a usable phase, and the incoherent part, in mean-square pressure. `complex`, `energy` or `db` (levels in dB) forces one blend for every tone; `complex` on conditions whose phases are not on one reference interferes them falsely. |
 | `--tone_near_field on\|off` | `on` (default) adds each tone's first-order near-field term to its far-field sphere at each arrival's range; `off` keeps the far field alone. |
 
 **Wind.** With a wind profile (`--atmosphere` with wind columns, or `--wind`), each tone's
@@ -693,6 +694,10 @@ the state's own hover rotor speed, as the share of it the database records.
   0.1 g, and a warning counts such states.
 - **No law in the hover tip Mach number:** a state off the database's range takes the nearest
   spheres as they are, with the clamped states counted in a warning.
+- **An axis whose conditions barely differ is not blended over:** x or z spanning 0.02 or less, or
+  M<sub>h</sub> 0.005 or less, as a measured build's level flight and single weight do by noise. A
+  state is then counted as clamped on it only beyond that tolerance. If leaving the axis out would
+  make two conditions one, it is kept, with a warning.
 - **Refused, naming why:** `--blend aam`, whose search is in airspeed and path angle;
   `--export_sphere` and `--export_aam`, whose condition is μ, γ and C<sub>T</sub>;
   `niceops_procedure --check`; a vehicle file without a weight; and a database without

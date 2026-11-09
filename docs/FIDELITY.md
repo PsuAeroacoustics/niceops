@@ -2384,6 +2384,35 @@ PT build. Harness `tones/`: `wopwop_tandem.py` and `wopwop_flyover.py`.
     100 m hold the far-field sphere's energy within 20° of the axis to 0.6 dB (blade passage; 0.5 dB
     at its harmonics).
 
+### Blending a tone's conditions
+
+PSU-WOPWOP's own per-rotor far-field PT spheres of the PSU hexacopter's rotors (CHARM's blades; two rotors, one each
+sense; 210 rad/s, level) at 0, 2.5, 5, 7.5 and 10 mph. A multirotor database holds only the 0 and 10 mph spheres, whose
+phases share PSU-WOPWOP's reference. It is read at the intermediate speeds at the grid's nodes, so only the blend
+between conditions interpolates, and compared with PSU-WOPWOP's sphere at that speed over the cells within 30 dB of
+each order's loudest (orders 2 to 8). Three loadings:
+- steady, the same at every speed;
+- an arm-passage bump, the same at every speed;
+- CHARM's forward-flight harmonics (1/rev 19–30 % of thrust), growing linearly with speed.
+
+Median over rotors and orders (level rms, dB; complex error |a − a<sub>true</sub>| / |a<sub>true</sub>|):
+
+| Loading | Speed (mph) | In dB | As complex amplitudes |
+| --- | --- | --- | --- |
+| Steady | 2.5 / 5 / 7.5 | 0.002 / 0.002 / 0.002 dB | 0.006 / 0.008 / 0.006 dB |
+| Arm passage | 2.5 / 5 / 7.5 | 0.002 / 0.003 / 0.002 | 0.004 / 0.005 / 0.004 |
+| Forward flight | 2.5 / 5 / 7.5 | 23.9 / 17.7 / 9.3 dB (median −14.3 / −11.9 / −6.5) | 0.14 / 0.10 / 0.05 dB (error 1.9 / 1.3 / 0.7 %) |
+
+- Where the tones do not change between conditions, either blend is exact to hundredths of a dB.
+- Where they grow from almost nothing, the dB blend falls 6–14 dB short and the complex one holds to 0.15 dB.
+- At order 8 of the steady loading, the one tone that does change, the dB blend is 0.42 dB rms and the complex
+  0.03.
+
+Hence a tone locked to its rotor blends as complex amplitudes by default. Held out on measured data, the PSU
+hexacopter's 3 m/s passes (between its hover and 10 mph conditions, in no condition of the database) are predicted
+1–1.7 dB closer than by the dB blend (order 2: +2.33 / 3.92 against +4.05 / 4.81 dB; order 4: +3.10 / 4.70 against
++4.11 / 5.29).
+
 ### `--db_cutoff` and SEL
 
 The cutoff is exact for an observer whose peak level reaches it, but an SEL exceeds its peak level
@@ -2682,6 +2711,34 @@ grazing is not modeled). SEL predicted less measured, median / rms (dB):
 - Out of sample the 3–12 m hovers fall 1.2–1.4 dB low. The drift's random reads of the louder
   descents had added energy that happened to offset a difference between the days' hovers (June
   1's, the most, predicted from the others'); the rule removes the offset, not the difference.
+
+### Multirotor axes that vary only by noise
+
+The PSU hexacopter's measured pure-tone database (Mid-State, June 2023, 7 runs; hover, 10 and
+20 mph) has its three conditions at x = 0, 0.84 and 1.68, but z only at 0, −9.2e-5 and −0.0055 and
+M<sub>h</sub> at 0.2316 to 0.2326: noise in the conditions' means. Normalized by those spans, a hover
+drifting a few cm/s, or any state at a slightly different M<sub>h</sub>, fell far outside z and
+M<sub>h</sub>, was clamped, and read one condition whole. Taking z and M<sub>h</sub> as constant
+(tolerances 0.02 and 0.005) leaves the blend over x. The database's round trip, each order in free
+field at the plates (predicted less measured, mean / rms dB, over segments and plates):
+
+| Condition | Order | Every varying axis | Near-constant axes constant |
+| --- | --- | --- | --- |
+| Hover | 2 | +0.37 / 2.54 | +0.59 / 2.19 |
+| | 4 | +0.47 / 3.58 | +1.01 / 3.10 |
+| 10 mph | 2 | −0.51 / 4.52 | −0.50 / 4.05 |
+| | 4 | +1.46 / 5.03 | +1.20 / 4.41 |
+| 20 mph | 2 | −0.12 / 2.70 | +0.56 / 2.46 |
+| | 4 | −0.33 / 4.19 | +0.63 / 3.71 |
+
+- The 3–5 % of samples that fell where the clamped condition had no data now have it.
+- **Against PSU-WOPWOP:** the same chain on synthetic signals that PSU-WOPWOP predicted for the June
+  flights, with a source whose forward-flight loading harmonics grow with speed (CHARM's 10 mph
+  loading, so the 10 mph tones are up to 90 dB louder than the hover's in some directions). One
+  run's database (hover and 10 mph; z spans 3.6e-5):
+  - its hover samples went from +2.51 / 5.79 and +6.34 / 12.31 dB (orders 2 and 4) to +0.23 / 1.03
+    and +0.38 / 1.31;
+  - its 10 mph samples from −1.07 / 3.06 and −4.24 / 7.78 to −0.53 / 2.09 and −1.76 / 3.95.
 
 ### Speed reference
 

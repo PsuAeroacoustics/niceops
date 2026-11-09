@@ -4,6 +4,26 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## A tone's conditions blend as complex amplitudes (November 2026)
+
+A format 2 database's tones were blended between operating conditions in dB. A tone whose phase is locked to its
+rotor now blends as complex amplitudes, and one without a usable phase, like the incoherent part, in mean-square
+pressure; between conditions whose tones differ by tens of dB the dB blend had fallen 6–14 dB short
+([FIDELITY](FIDELITY.md#blending-a-tones-conditions)). A database may say its conditions' phases are on independent
+references (`tone_phase_across_conditions = independent`), and `--tone_blend db` restores the dB blend. A state at a
+condition's node predicts the same; one between conditions moves wherever its conditions' tones differ.
+
+## Multirotor axes that vary only by noise (November 2026)
+
+A multirotor database blended over every axis whose conditions differed at all, each normalized
+by that span. A measured build's level flight differs in z by noise (3.6e-5 to 0.0055) and its
+single weight in M<sub>h</sub> by 0.4 %, so a hover drifting a few cm/s, or a state at a slightly
+different M<sub>h</sub>, was far outside those axes, clamped, and read one condition whole: a
+hover the 10 mph sphere. Such an axis (x or z spanning 0.02 or less, M<sub>h</sub> 0.005 or less) is
+now constant unless that would merge two conditions. Helicopter databases, and multirotor ones
+whose axes vary beyond the tolerances, predict the same; the measured hexacopter tone database's
+predictions move: see [FIDELITY](FIDELITY.md#multirotor-axes-that-vary-only-by-noise).
+
 ## A hover's flight path angle (November 2026)
 
 Below 3 kt of air speed the flight path angles are drawn to zero (a smoothstep on their sines,

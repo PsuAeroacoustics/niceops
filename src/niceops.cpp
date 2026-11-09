@@ -5474,6 +5474,7 @@ int run(int argc, char* argv[])
     std::string tone_coherence = "coherent";
     std::string tone_ground = "frequency";
     std::string tone_near_field = "on";
+    std::string tone_blend = "database";
     // Empty follows the database's azimuth_reference attribute.
     std::string nose;
     // WGS84 input and output.  An unset origin is taken from the first geodetic
@@ -5878,6 +5879,11 @@ int run(int argc, char* argv[])
             "A format 2 database's tones: on (default) adds each tone's first-order near-field term, "
             "A + (i / (2 k R)) Lap[D A], taken at load from its far-field sphere; off keeps the far field alone.")
             ->check(CLI::IsMember({"on", "off"}));
+    app.add_option("--tone_blend", tone_blend,
+            "A format 2 database's tones between operating conditions: database (default) blends a tone locked to its "
+            "rotor as complex amplitudes (unless the database's tone_phase_across_conditions is independent) and one "
+            "without a usable phase in mean-square pressure; complex, energy or db forces one blend for every tone.")
+            ->check(CLI::IsMember({"database", "db", "complex", "energy"}));
     app.add_option("--tone_ground", tone_ground,
             "A format 2 database's tones over the ground: frequency (default), each arrival's reflection at its own "
             "frequency where the run's path allows; band, the band model's correction on free-field tones.")
@@ -7412,6 +7418,10 @@ int run(int argc, char* argv[])
     options.tones.ground = *parse_tone_ground(tone_ground);
     options.tones.near_field = tone_near_field == "on";
     database_load.tone_near_field = options.tones.near_field;
+    database_load.tone_blend = tone_blend == "db" ? ToneBlend::db
+            : tone_blend == "complex"              ? ToneBlend::complex
+            : tone_blend == "energy"               ? ToneBlend::energy
+                                                   : ToneBlend::database;
     if (!nose.empty())
         options.nose = parse_nose_source(nose);
     // Each distinct --wind and --atmosphere is parsed once, and its warnings
