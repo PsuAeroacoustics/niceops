@@ -876,7 +876,8 @@ std::string write_shared_grid_test_database(const std::string& name,
         bool with_spectrum, double sphere_radius_m = 30.48,
         std::function<double(std::size_t, std::size_t)> channel_dba = {},
         bool reverse_phi_rows = false, std::vector<double> bands = {500.0, 2000.0},
-        std::function<double(std::size_t, std::size_t, std::size_t)> cell_amplitude = {})
+        std::function<double(std::size_t, std::size_t, std::size_t)> cell_amplitude = {},
+        std::vector<double> phis = {-90.0, -30.0, 30.0, 90.0}, std::vector<double> thetas = {0.0, 60.0, 120.0, 180.0})
 {
     const auto path = (std::filesystem::temp_directory_path() / name).string();
     int file = 0;
@@ -894,8 +895,6 @@ std::string write_shared_grid_test_database(const std::string& name,
     REQUIRE(nc_def_var(file, "shared_grid_and_frequency", NC_SHORT, 1, &scalar_dim, &shared_var)
             == NC_NOERR);
 
-    const std::vector<double> phis = {-90.0, -30.0, 30.0, 90.0};
-    const std::vector<double> thetas = {0.0, 60.0, 120.0, 180.0};
     const std::size_t n_channels = phis.size() * thetas.size();
     std::vector<double> phi_channel, theta_channel;
     std::vector<double> row_phis = phis;
@@ -2804,6 +2803,9 @@ struct ToneFixture
     // and phase where set: tones that differ between conditions.
     std::function<double(std::size_t, std::size_t, std::size_t, std::size_t, std::size_t)> condition_amplitude;
     std::function<double(std::size_t, std::size_t, std::size_t, std::size_t, std::size_t)> condition_phase;
+    // The sphere grid (deg); unset, the 4 x 4 of write_shared_grid_test_database.
+    std::vector<double> grid_phis = {-90.0, -30.0, 30.0, 90.0};
+    std::vector<double> grid_thetas = {0.0, 60.0, 120.0, 180.0};
     // The incoherent_amplitude (dB) at condition i, overriding incoherent where set.
     std::function<double(std::size_t, std::size_t, std::size_t, std::size_t, std::size_t)> condition_incoherent;
     // The root's tone_phase_across_conditions; empty: absent.
@@ -2813,7 +2815,8 @@ struct ToneFixture
 std::string write_tone_test_database(const std::string& name, const ToneFixture& f)
 {
     const auto path = write_shared_grid_test_database(name, fixed_load_factor_conditions, false, true, 30.48, {},
-            f.reverse_phi_rows, f.bands);
+            f.reverse_phi_rows, f.bands, {}, f.grid_phis, f.grid_thetas);
+    const std::size_t n_phi = f.grid_phis.size(), n_theta = f.grid_thetas.size();
     int ncid = 0;
     REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
     REQUIRE(nc_redef(ncid) == NC_NOERR);
@@ -2906,12 +2909,12 @@ std::string write_tone_test_database(const std::string& name, const ToneFixture&
                                        : f.harmonics[k] * std::fabs(f.shaft_rates[v.s]) / (2.0 * pi);
         REQUIRE(nc_put_var_double(v.group, v.frequency, frequency.data()) == NC_NOERR);
         std::vector<double> amplitude, phase;
-        for (std::size_t row = 0; row < 4; row++)
-            for (std::size_t n = 0; n < 4; n++)
+        for (std::size_t row = 0; row < n_phi; row++)
+            for (std::size_t n = 0; n < n_theta; n++)
                 for (std::size_t k = 0; k < n_tones; k++)
                 {
                     // The file's row `row` is sorted phi index m.
-                    const std::size_t m = f.reverse_phi_rows ? 3 - row : row;
+                    const std::size_t m = f.reverse_phi_rows ? n_phi - 1 - row : row;
                     amplitude.push_back(f.condition_amplitude ? f.condition_amplitude(v.condition, v.s, m, n, k)
                                     : f.amplitude ? f.amplitude(v.s, m, n, k)
                                                   : 80.0 + 2.0 * static_cast<double>(m) - static_cast<double>(n)
@@ -2924,13 +2927,13 @@ std::string write_tone_test_database(const std::string& name, const ToneFixture&
         if (v.incoherent >= 0)
         {
             std::vector<double> incoherent;
-            for (std::size_t row = 0; row < 4; row++)
-                for (std::size_t n = 0; n < 4; n++)
+            for (std::size_t row = 0; row < n_phi; row++)
+                for (std::size_t n = 0; n < n_theta; n++)
                     for (std::size_t k = 0; k < n_tones; k++)
                         incoherent.push_back(f.condition_incoherent
-                                        ? f.condition_incoherent(v.condition, v.s, f.reverse_phi_rows ? 3 - row : row,
+                                        ? f.condition_incoherent(v.condition, v.s, f.reverse_phi_rows ? n_phi - 1 - row : row,
                                                   n, k)
-                                        : f.incoherent(v.s, f.reverse_phi_rows ? 3 - row : row, n, k));
+                                        : f.incoherent(v.s, f.reverse_phi_rows ? n_phi - 1 - row : row, n, k));
             REQUIRE(nc_put_var_double(v.group, v.incoherent, incoherent.data()) == NC_NOERR);
         }
     }
@@ -4322,6 +4325,67 @@ TEST_CASE("a tone locked to its rotor blends its conditions as complex amplitude
             REQUIRE(std::fabs(c[k].level_db - 50.0) < 1e-5);
     }
     std::filesystem::remove(path3);
+}
+
+TEST_CASE("a phased tone is read between grid nodes from rotating modes, to 0.01 dB where it is band-limited",
+        "[sphere_database][format2][tones]")
+{
+    // A tone that is a polynomial of degree 3 in the direction's components about the shaft (forward, starboard,
+    // up) is a sum of spherical harmonics to degree 3: rotating modes e^{i k alpha}, |k| <= 3.  On a 10 deg grid the
+    // fitted modes read it back between the nodes to 0.01 dB (the fit's smoothness penalty biases it by about 1e-4);
+    // the grid's bilinear interpolation is off by more than 0.05 dB.
+    const auto field = [](double phi_deg, double theta_deg) {
+        const double p = phi_deg * pi / 180.0, t = theta_deg * pi / 180.0;
+        const double f = std::cos(t), st = std::sin(t) * std::sin(p), up = -std::sin(t) * std::cos(p);
+        const std::complex<double> i(0.0, 1.0);
+        return 2.0 + (f + i * st) * (f + i * st) + 0.6 * up * (f - i * st) + 0.3 * up;
+    };
+    ToneFixture fixture;
+    fixture.harmonics = {2, 4};
+    fixture.grid_phis.clear();
+    fixture.grid_thetas.clear();
+    for (int d = -90; d <= 90; d += 10)
+        fixture.grid_phis.push_back(d);
+    for (int d = 0; d <= 180; d += 10)
+        fixture.grid_thetas.push_back(d);
+    const auto phis = fixture.grid_phis, thetas = fixture.grid_thetas;
+    fixture.amplitude = [&](std::size_t, std::size_t m, std::size_t n, std::size_t) {
+        return 80.0 + 20.0 * std::log10(std::abs(field(phis[m], thetas[n])));
+    };
+    fixture.phase = [&](std::size_t m, std::size_t n, std::size_t) {
+        return std::arg(field(phis[m], thetas[n])) * 180.0 / pi;
+    };
+    const auto path = write_tone_test_database("niceops_tone_modes.nod", fixture);
+    const Database modes(path);
+    DatabaseLoadOptions grid_load;
+    grid_load.tone_modes = false;
+    const Database grid(path, grid_load);
+    REQUIRE(modes.tone_sources()[0].mode_degree == std::vector<int> {4, 4});
+    REQUIRE(grid.tone_sources()[0].mode_degree.empty());
+    const Vec3 position(0.0, 0.0, 100.0), velocity(10.0, 0.0, 0.0), normal(0.0, 0.0, 1.0);
+    const auto state = modes.source_state(position, velocity, normal, 0.2, 0.0, test_ct_reference);
+    double worst_modes = 0.0, worst_grid = 0.0;
+    for (double phi = -83.0; phi <= 83.0; phi += 11.0)
+        for (double theta = 7.0; theta <= 173.0; theta += 13.0)
+        {
+            const double p = phi * pi / 180.0, t = theta * pi / 180.0;
+            const Vec3 d = state.frame.nose * std::cos(t) + state.frame.starboard * (std::sin(t) * std::sin(p))
+                    - state.frame.normal * (std::sin(t) * std::cos(p));
+            Database::ToneLookup a[2], b[2];
+            modes.tone_directivity(0, state, d.normalized(), a);
+            grid.tone_directivity(0, state, d.normalized(), b);
+            const auto truth = field(phi, theta);
+            const double level = 80.0 + 20.0 * std::log10(std::abs(truth));
+            for (std::size_t k = 0; k < 2; k++)
+            {
+                worst_modes = std::max(worst_modes, std::fabs(a[k].level_db - level));
+                worst_grid = std::max(worst_grid, std::fabs(b[k].level_db - level));
+                REQUIRE(std::fabs(std::remainder(a[k].phase - std::arg(truth), 2.0 * pi)) < 1e-3);
+            }
+        }
+    REQUIRE(worst_modes < 0.01);
+    REQUIRE(worst_grid > 0.05);
+    std::filesystem::remove(path);
 }
 
 TEST_CASE("band_type pure_tone passes only a format 2 database that lists tone sources", "[sphere_database][format2]")

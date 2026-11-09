@@ -445,6 +445,9 @@ struct DatabaseLoadOptions
     // How a tone's conditions blend (--tone_blend; THEORY 4.4): by the tone
     // (Database::tone_blend_mode), or one blend forced.
     ToneBlend tone_blend = ToneBlend::database;
+    // Read a phased tone between the grid's nodes from rotating modes fitted to
+    // it (--tone_interpolation modes); false keeps the grid's interpolation.
+    bool tone_modes = true;
     // --source_radius, m: Database::source_radius (0: the sphere radius).
     double source_radius = 0.0;
 };
@@ -501,6 +504,16 @@ struct ToneSource
     // Per condition and tone, [condition * tones + tone], its largest |A| over
     // the grid: what the near-field term is capped at twice.
     std::vector<float> peak_amplitude;
+    // With DatabaseLoadOptions::tone_modes, each phased tone as rotating modes:
+    // spherical harmonics in the sphere frame's shaft axes (polar angle from up,
+    // azimuth about up toward starboard), fitted to the grid at every condition
+    // (Database::fit_tone_modes; THEORY 4.4).  mode_degree[tone] is the fit's
+    // degree L, 0 where the tone keeps the grid's interpolation; coefficients
+    // [(condition * tones + tone) * mode_stride + l (l + 1) + k], mode_stride
+    // (L_max + 1)^2 over the source's tones.
+    std::vector<int> mode_degree;
+    std::size_t mode_stride = 0;
+    std::vector<std::complex<double>> modes;
     // Each tone's part without a stable phase (the file's optional
     // incoherent_amplitude): its rms level at the sphere radius, dB re 20 uPa, laid
     // out as `amplitudes`, -inf where it has none; added in energy, each source
@@ -1332,6 +1345,11 @@ private:
         db,
     };
     ToneBlendMode tone_blend_mode(const ToneSource& s, std::size_t tone) const;
+    bool tone_modes_ = true;
+    // Each grid cell's polar angle from the sphere frame's up axis, rad (the
+    // shaft axes the rotating modes are in; cell_shaft_azimuth_ the azimuth).
+    std::vector<double> cell_shaft_polar_;
+    void fit_tone_modes();
     // Per condition, the flight speed (m/s) and climb angle (rad) a multirotor
     // condition group records (airspeed, climb_rate), NaN where it does not: the
     // near-field term's flight Mach number.

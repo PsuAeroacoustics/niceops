@@ -4,6 +4,16 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## Tones between grid nodes from rotating modes (November 2026)
+
+A format 2 database's tones were read between the grid's nodes by bilinear interpolation, the level in dB and the phase
+unwound by the rotor-alone mode, and a tone whose phase that left unresolved was summed in energy. A tone with a phase
+is now fitted with rotating modes (spherical harmonics about the shaft) when the database loads, and read from them
+where it blends its conditions as complex amplitudes; tones the modes resolve keep their phase. On PSU-WOPWOP spheres at
+10° the level between nodes went from 0.78 to 0.03 dB rms (median), and multi-mode tones that had been summed in energy
+are coherent again ([FIDELITY](FIDELITY.md#a-tone-between-grid-nodes)). At a node, and for a tone the fit cannot
+reproduce, nothing changes; `--tone_interpolation grid` restores the old reading.
+
 ## A tone's conditions blend as complex amplitudes (November 2026)
 
 A format 2 database's tones were blended between operating conditions in dB. A tone whose phase is locked to its

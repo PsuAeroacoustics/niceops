@@ -1880,6 +1880,7 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
             input_error("Database ", datafile_path, " gives tone_phase_across_conditions '", *across,
                     "'; expected shared or independent.");
         tone_blend_ = load.tone_blend;
+        tone_modes_ = load.tone_modes;
         tone_phases_independent_ = across && *across == "independent";
         info("Pure tones blend between conditions ",
                 tone_blend_ == ToneBlend::db       ? "in dB (--tone_blend db)."
@@ -2200,6 +2201,89 @@ double shaft_azimuth(double phi_deg, double theta_deg)
     return std::atan2(std::sin(theta) * std::sin(phi), std::cos(theta));
 }
 
+// A sphere direction's polar angle from the frame's up axis (rad): the shaft
+// axes a rotor's rotating modes are written in (shaft_azimuth the azimuth).
+double shaft_polar(double phi_deg, double theta_deg)
+{
+    const double phi = phi_deg * (pi / 180.0), theta = theta_deg * (pi / 180.0);
+    return std::acos(std::clamp(-std::sin(theta) * std::cos(phi), -1.0, 1.0));
+}
+
+// Orthonormal spherical harmonics Y_l^k(polar, azimuth), l <= degree, at index
+// l (l + 1) + k: the fully normalized associated Legendre functions (with the
+// Condon-Shortley phase) by the standard stable recurrences, times e^(i k
+// azimuth), and Y_l^-k = (-1)^k conj(Y_l^k).
+void spherical_harmonics(int degree, double polar, double azimuth, std::complex<double>* out)
+{
+    const double x = std::cos(polar), sine = std::sin(polar);
+    const auto n = static_cast<std::size_t>(degree + 1);
+    thread_local std::vector<double> p;
+    p.assign(n * n, 0.0);
+    const auto at = [&](int l, int m) -> double& { return p[static_cast<std::size_t>(l) * n + static_cast<std::size_t>(m)]; };
+    at(0, 0) = std::sqrt(1.0 / (4.0 * pi));
+    for (int m = 1; m <= degree; m++)
+        at(m, m) = -std::sqrt((2.0 * m + 1.0) / (2.0 * m)) * sine * at(m - 1, m - 1);
+    for (int m = 0; m < degree; m++)
+        at(m + 1, m) = std::sqrt(2.0 * m + 3.0) * x * at(m, m);
+    for (int m = 0; m <= degree; m++)
+        for (int l = m + 2; l <= degree; l++)
+        {
+            const double a = std::sqrt((4.0 * l * l - 1.0) / (static_cast<double>(l) * l - static_cast<double>(m) * m));
+            const double b = std::sqrt(((l - 1.0) * (l - 1.0) - static_cast<double>(m) * m) / (4.0 * (l - 1.0) * (l - 1.0) - 1.0));
+            at(l, m) = a * (x * at(l - 1, m) - b * at(l - 2, m));
+        }
+    for (int l = 0; l <= degree; l++)
+        for (int m = 0; m <= l; m++)
+        {
+            const std::complex<double> y = at(l, m) * std::polar(1.0, m * azimuth);
+            out[l * (l + 1) + m] = y;
+            if (m > 0)
+                out[l * (l + 1) - m] = (m % 2 == 0 ? 1.0 : -1.0) * std::conj(y);
+        }
+}
+
+// Solves A x = b for a Hermitian positive definite A (n x n, row-major, its
+// leading n x n block of a stride-wide array) by Cholesky; false where it is not
+// positive definite.
+bool solve_hermitian(const std::complex<double>* a, std::size_t stride, std::size_t n, const std::complex<double>* b,
+        std::complex<double>* x)
+{
+    std::vector<std::complex<double>> l(n * n, 0.0);
+    for (std::size_t i = 0; i < n; i++)
+    {
+        for (std::size_t j = 0; j <= i; j++)
+        {
+            std::complex<double> sum = a[i * stride + j];
+            for (std::size_t k = 0; k < j; k++)
+                sum -= l[i * n + k] * std::conj(l[j * n + k]);
+            if (i == j)
+            {
+                if (!(sum.real() > 0.0))
+                    return false;
+                l[i * n + i] = std::sqrt(sum.real());
+            }
+            else
+                l[i * n + j] = sum / l[j * n + j].real();
+        }
+    }
+    std::vector<std::complex<double>> y(n);
+    for (std::size_t i = 0; i < n; i++)
+    {
+        std::complex<double> sum = b[i];
+        for (std::size_t k = 0; k < i; k++)
+            sum -= l[i * n + k] * y[k];
+        y[i] = sum / l[i * n + i].real();
+    }
+    for (std::size_t i = n; i-- > 0;)
+    {
+        std::complex<double> sum = y[i];
+        for (std::size_t k = i + 1; k < n; k++)
+            sum -= std::conj(l[k * n + i]) * x[k];
+        x[i] = sum / l[i * n + i].real();
+    }
+    return true;
+}
+
 // A root attribute's list of names, split at commas and blanks.
 std::vector<std::string> split_names(const std::string& text)
 {
@@ -2446,9 +2530,13 @@ void Database::load_tone_sources(int file_ncid, const std::vector<int>& group_id
     {
         const std::size_t n_phi = phis.size(), n_theta = thetas.size();
         cell_shaft_azimuth_.assign(n_phi * n_theta, 0.0);
+        cell_shaft_polar_.assign(n_phi * n_theta, 0.0);
         for (std::size_t m = 0; m < n_phi; m++)
             for (std::size_t n = 0; n < n_theta; n++)
+            {
                 cell_shaft_azimuth_[m * n_theta + n] = shaft_azimuth(phis[m], thetas[n]);
+                cell_shaft_polar_[m * n_theta + n] = shaft_polar(phis[m], thetas[n]);
+            }
     }
     for (auto& source : tone_sources_)
     {
@@ -2500,8 +2588,170 @@ void Database::load_tone_sources(int file_ncid, const std::vector<int>& group_id
                 to_string(source.phase_reference), source.sync_group.empty() ? ", free-running" : ", sync group ",
                 source.sync_group, ".");
     }
+    // The near-field terms first, from the grid, for the tones it resolves; then
+    // the rotating modes, which may resolve more (their near-field term stays 0).
     if (tone_near_field_)
         compute_tone_near_fields(datafile_path);
+    if (tone_modes_)
+        fit_tone_modes();
+}
+
+void Database::fit_tone_modes()
+{
+    // The degree the grid can carry (about 0.8 x 180 deg over its widest step:
+    // 14 on a 10 deg grid, 9 on 15 deg), at most 16.  Each phased tone takes the
+    // smallest even degree from 4 whose fit leaves at most 1 % rms (relative,
+    // over the cells within 30 dB of its peak) at every condition, else the
+    // degree with the least residual where that is at most 5 %, else none (the
+    // grid's interpolation).  The fit is least squares over the cells that hold
+    // the tone, with the smoothness penalty lambda N l (l + 1) |c|^2 (lambda 1e-6,
+    // N the cells): PSU-WOPWOP spheres subsampled to 10 deg are read back at 5 deg
+    // to 0.05 dB rms this way, against 0.78 for the bilinear dB (THEORY 4.4).
+    const double step = std::max(grid_spacing(phis), grid_spacing(thetas));
+    const int l_max = std::min(16, static_cast<int>(std::floor(0.8 * 180.0 / step)));
+    const std::size_t n_cells = phis.size() * thetas.size();
+    const std::size_t conditions = conditions_.size();
+    if (l_max < 4 || tone_sources_.empty())
+        return;
+    const auto stride = static_cast<std::size_t>((l_max + 1) * (l_max + 1));
+    std::vector<std::complex<double>> y(n_cells * stride);
+    for (std::size_t cell = 0; cell < n_cells; cell++)
+        spherical_harmonics(l_max, cell_shaft_polar_[cell], cell_shaft_azimuth_[cell], &y[cell * stride]);
+    // Every cell's contribution to the normal equations, summed once.
+    std::vector<std::complex<double>> gram_all(stride * stride, 0.0);
+    for (std::size_t cell = 0; cell < n_cells; cell++)
+    {
+        const auto* row = &y[cell * stride];
+        for (std::size_t i = 0; i < stride; i++)
+            for (std::size_t j = 0; j < stride; j++)
+                gram_all[i * stride + j] += std::conj(row[i]) * row[j];
+    }
+    std::vector<int> degrees;
+    for (int l = 4; l <= l_max; l += 2)
+        degrees.push_back(l);
+    if (degrees.back() != l_max)
+        degrees.push_back(l_max);
+    constexpr double lambda = 1e-6, tolerance = 0.01, acceptable = 0.05;
+    std::size_t fitted = 0, total = 0;
+    for (auto& source : tone_sources_)
+    {
+        const std::size_t tones = source.tone_count();
+        source.mode_degree.assign(tones, 0);
+        source.mode_stride = stride;
+        source.modes.assign(conditions * tones * stride, 0.0);
+        if (source.phase_reference == PhaseReference::none)
+            continue;
+        std::ostringstream degrees_used;
+        for (std::size_t k = 0; k < tones; k++)
+        {
+            total++;
+            // Per condition: the normal equations over the cells that hold the tone.
+            std::vector<std::vector<std::complex<double>>> grams(conditions), rhs(conditions);
+            std::vector<std::vector<std::size_t>> loud(conditions), present(conditions);
+            bool usable = true;
+            for (std::size_t c = 0; c < conditions && usable; c++)
+            {
+                auto& gram = grams[c];
+                gram = gram_all;
+                rhs[c].assign(stride, 0.0);
+                double peak = 0.0;
+                for (std::size_t cell = 0; cell < n_cells; cell++)
+                    peak = std::max(peak, static_cast<double>(std::abs(source.amplitudes[(c * n_cells + cell) * tones + k])));
+                for (std::size_t cell = 0; cell < n_cells; cell++)
+                {
+                    const auto a = source.amplitudes[(c * n_cells + cell) * tones + k];
+                    const double magnitude = std::abs(a);
+                    const auto* row = &y[cell * stride];
+                    if (!(magnitude > 0.0))
+                    {
+                        for (std::size_t i = 0; i < stride; i++)
+                            for (std::size_t j = 0; j < stride; j++)
+                                gram[i * stride + j] -= std::conj(row[i]) * row[j];
+                        continue;
+                    }
+                    present[c].push_back(cell);
+                    if (magnitude >= peak * 0.0316227766)   // within 30 dB
+                        loud[c].push_back(cell);
+                    for (std::size_t i = 0; i < stride; i++)
+                        rhs[c][i] += std::conj(row[i]) * std::complex<double>(a.real(), a.imag());
+                }
+                usable = present[c].size() >= 16;
+            }
+            if (!usable)
+                continue;
+            int best_degree = 0;
+            double best_residual = std::numeric_limits<double>::infinity();
+            std::vector<std::complex<double>> best;
+            for (const int degree : degrees)
+            {
+                const auto m = static_cast<std::size_t>((degree + 1) * (degree + 1));
+                std::vector<std::complex<double>> coefs(conditions * stride, 0.0);
+                double worst = 0.0;
+                bool solved = true;
+                for (std::size_t c = 0; c < conditions && solved; c++)
+                {
+                    if (present[c].size() < m / 2)
+                    {
+                        solved = false;
+                        break;
+                    }
+                    std::vector<std::complex<double>> a(m * m);
+                    const double n = static_cast<double>(present[c].size());
+                    for (std::size_t i = 0; i < m; i++)
+                    {
+                        for (std::size_t j = 0; j < m; j++)
+                            a[i * m + j] = grams[c][i * stride + j];
+                        const double l = std::floor(std::sqrt(static_cast<double>(i)));
+                        a[i * m + i] += lambda * n * l * (l + 1.0);
+                    }
+                    solved = solve_hermitian(a.data(), m, m, rhs[c].data(), &coefs[c * stride]);
+                    double err = 0.0, norm = 0.0;
+                    for (const std::size_t cell : loud[c])
+                    {
+                        std::complex<double> fit(0.0, 0.0);
+                        for (std::size_t j = 0; j < m; j++)
+                            fit += coefs[c * stride + j] * y[cell * stride + j];
+                        const auto a0 = source.amplitudes[(c * n_cells + cell) * tones + k];
+                        const std::complex<double> truth(a0.real(), a0.imag());
+                        err += std::norm(fit - truth);
+                        norm += std::norm(truth);
+                    }
+                    worst = std::max(worst, norm > 0.0 ? std::sqrt(err / norm) : 0.0);
+                }
+                if (!solved)
+                    continue;
+                if (worst < best_residual)
+                {
+                    best_residual = worst;
+                    best_degree = degree;
+                    best = coefs;
+                }
+                if (worst <= tolerance)
+                    break;
+            }
+            degrees_used << (k ? ", " : "") << source.harmonics[k] << ": ";
+            if (best_degree == 0 || best_residual > acceptable)
+            {
+                degrees_used << "grid (" << std::setprecision(2) << 100.0 * best_residual << " %)";
+                continue;
+            }
+            degrees_used << "L " << best_degree << " (" << std::setprecision(2) << 100.0 * best_residual << " %)";
+            source.mode_degree[k] = best_degree;
+            // The modes resolve its phase, whatever the grid's steps between cells.
+            if (!source.energy_only.empty())
+                source.energy_only[k] = 0;
+            for (std::size_t c = 0; c < conditions; c++)
+                std::copy(best.begin() + static_cast<std::ptrdiff_t>(c * stride),
+                        best.begin() + static_cast<std::ptrdiff_t>((c + 1) * stride),
+                        source.modes.begin() + static_cast<std::ptrdiff_t>((c * tones + k) * stride));
+            fitted++;
+        }
+        if (source.phase_reference != PhaseReference::none)
+            info("Database source ", source.tag, ": rotating modes by shaft order (the fit's rms at the nodes): ",
+                    degrees_used.str(), ".");
+    }
+    info("Pure tones read between the grid's nodes as rotating modes (degree up to ", l_max, "): ", fitted, " of ",
+            total, " phased tones; the rest by the grid's interpolation.");
 }
 
 void Database::compute_tone_near_fields(const std::string& datafile_path)
@@ -3200,6 +3450,35 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
             near_sum *= rewind;
         }
         out[k].phase = s.phase_reference == PhaseReference::none || std::abs(sum) == 0.0 ? 0.0 : std::arg(sum);
+        // A phased tone fitted with rotating modes (fit_tone_modes) is read from
+        // them, its conditions blended as complex coefficients, wherever the grid
+        // holds it at all.
+        if (mode == ToneBlendMode::complex && !s.mode_degree.empty() && s.mode_degree[k] > 0
+                && out[k].level_db > empty_level_db)
+        {
+            const int degree = s.mode_degree[k];
+            const auto m = static_cast<std::size_t>((degree + 1) * (degree + 1));
+            thread_local std::vector<std::complex<double>> harmonics;
+            harmonics.resize(m);
+            spherical_harmonics(degree, shaft_polar(angles[0], angles[1]), alpha, harmonics.data());
+            std::complex<double> a(0.0, 0.0);
+            double total = 0.0;
+            for (std::size_t c = 0; c < 4; c++)
+            {
+                if (w[c] == 0.0)
+                    continue;
+                const auto* coef = &s.modes[(blend.indices[c] * tones + k) * s.mode_stride];
+                std::complex<double> v(0.0, 0.0);
+                for (std::size_t j = 0; j < m; j++)
+                    v += coef[j] * harmonics[j];
+                a += w[c] * v;
+                total += w[c];
+            }
+            const double magnitude = total > 0.0 ? std::abs(a) / total : 0.0;
+            out[k].level_db = magnitude > 0.0 ? 20.0 * std::log10(magnitude) + blend.level_correction_db
+                                              : no_energy_floor_db;
+            out[k].phase = magnitude > 0.0 ? std::arg(a) : 0.0;
+        }
         if (near)
         {
             // In the amplitude's units, the blend's load-factor correction with it.
