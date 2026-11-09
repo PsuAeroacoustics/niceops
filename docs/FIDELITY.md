@@ -2683,6 +2683,34 @@ grazing is not modeled). SEL predicted less measured, median / rms (dB):
   descents had added energy that happened to offset a difference between the days' hovers (June
   1's, the most, predicted from the others'); the rule removes the offset, not the difference.
 
+### Multirotor axes that vary only by noise
+
+The PSU hexacopter's measured pure-tone database (Mid-State, June 2023, 7 runs; hover, 10 and
+20 mph) has its three conditions at x = 0, 0.84 and 1.68, but z only at 0, −9.2e-5 and −0.0055 and
+M<sub>h</sub> at 0.2316 to 0.2326: noise in the conditions' means. Normalized by those spans, a hover
+drifting a few cm/s, or any state at a slightly different M<sub>h</sub>, fell far outside z and
+M<sub>h</sub>, was clamped, and read one condition whole. Taking z and M<sub>h</sub> as constant
+(tolerances 0.02 and 0.005) leaves the blend over x. The database's round trip, each order in free
+field at the plates (predicted less measured, mean / rms dB, over segments and plates):
+
+| Condition | Order | Every varying axis | Near-constant axes constant |
+| --- | --- | --- | --- |
+| Hover | 2 | +0.37 / 2.54 | +0.59 / 2.19 |
+| | 4 | +0.47 / 3.58 | +1.01 / 3.10 |
+| 10 mph | 2 | −0.51 / 4.52 | −0.50 / 4.05 |
+| | 4 | +1.46 / 5.03 | +1.20 / 4.41 |
+| 20 mph | 2 | −0.12 / 2.70 | +0.56 / 2.46 |
+| | 4 | −0.33 / 4.19 | +0.63 / 3.71 |
+
+- The 3–5 % of samples that fell where the clamped condition had no data now have it.
+- **Against PSU-WOPWOP:** the same chain on synthetic signals that PSU-WOPWOP predicted for the June
+  flights, with a source whose forward-flight loading harmonics grow with speed (CHARM's 10 mph
+  loading, so the 10 mph tones are up to 90 dB louder than the hover's in some directions). One
+  run's database (hover and 10 mph; z spans 3.6e-5):
+  - its hover samples went from +2.51 / 5.79 and +6.34 / 12.31 dB (orders 2 and 4) to +0.23 / 1.03
+    and +0.38 / 1.31;
+  - its 10 mph samples from −1.07 / 3.06 and −4.24 / 7.78 to −0.53 / 2.09 and −1.76 / 3.95.
+
 ### Speed reference
 
 On the 2017 approaches, taking the velocity through the air (`--speed_reference air`) instead of

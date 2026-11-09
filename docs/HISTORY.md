@@ -4,6 +4,17 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## Multirotor axes that vary only by noise (November 2026)
+
+A multirotor database blended over every axis whose conditions differed at all, each normalized
+by that span. A measured build's level flight differs in z by noise (3.6e-5 to 0.0055) and its
+single weight in M<sub>h</sub> by 0.4 %, so a hover drifting a few cm/s, or a state at a slightly
+different M<sub>h</sub>, was far outside those axes, clamped, and read one condition whole: a
+hover the 10 mph sphere. Such an axis (x or z spanning 0.02 or less, M<sub>h</sub> 0.005 or less) is
+now constant unless that would merge two conditions. Helicopter databases, and multirotor ones
+whose axes vary beyond the tolerances, predict the same; the measured hexacopter tone database's
+predictions move: see [FIDELITY](FIDELITY.md#multirotor-axes-that-vary-only-by-noise).
+
 ## A hover's flight path angle (November 2026)
 
 Below 3 kt of air speed the flight path angles are drawn to zero (a smoothstep on their sines,

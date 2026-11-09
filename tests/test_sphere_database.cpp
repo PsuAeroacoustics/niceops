@@ -4045,6 +4045,45 @@ TEST_CASE("a multirotor database blends over the axes it varies; a node is its c
     std::filesystem::remove(path);
 }
 
+TEST_CASE("a multirotor axis that varies only by noise is constant; a hover drifting off it is not clamped",
+        "[multirotor]")
+{
+    // A measured build's conditions: hover, 10 and 20 mph in x, but z and M_h only noise (a June 2023 hexacopter
+    // build: z 0, -9.2e-5, -0.0055; M_h 0.2316 to 0.2326).  Before, z and M_h were axes, each normalized by its noise:
+    // a hover drifting 2 cm/s (z 0.004) was a hundred spans outside and clamped onto one condition.
+    const ToneFixture tones;
+    MultirotorFixture fixture;
+    fixture.conditions = {{0.0, 0.0, 0.2316}, {0.844, -9.2e-5, 0.2326}, {1.68, -0.0055, 0.2326}};
+    const auto path = write_multirotor_test_database("niceops_multirotor_noise_axes.nod", tones, fixture);
+    const Database database(path);
+    REQUIRE(database.active_condition_axes() == std::array<bool, 3> {true, false, false});
+    // A drifting hover: almost all on the hover, the rest on 10 mph, and not clamped.
+    auto blend = database.blend_at(0.01, 0.004, 0.2330);
+    double hover = 0.0, ten = 0.0;
+    for (std::size_t k = 0; k < blend.weights.size(); k++)
+    {
+        hover += blend.indices[k] == 0 ? blend.weights[k] : 0.0;
+        ten += blend.indices[k] == 1 ? blend.weights[k] : 0.0;
+    }
+    REQUIRE(std::fabs(hover - (1.0 - 0.01 / 0.844)) < 1e-9);
+    REQUIRE(std::fabs(ten - 0.01 / 0.844) < 1e-9);
+    REQUIRE(!blend.flight_path_angle_clamped);
+    REQUIRE(!blend.thrust_coefficient_clamped);
+    // Beyond the tolerance on a constant axis the state is still said to be off the database.
+    blend = database.blend_at(0.5, 0.1, 0.2316);
+    REQUIRE(blend.flight_path_angle_clamped);
+    blend = database.blend_at(0.5, 0.0, 0.30);
+    REQUIRE(blend.thrust_coefficient_clamped);
+    std::filesystem::remove(path);
+
+    // Conditions that would merge without the near-constant axis keep it: here two differ only in z, by 0.01.
+    fixture.conditions = {{0.0, 0.0, 0.25}, {0.0, 0.01, 0.25}, {1.0, 0.0, 0.25}};
+    const auto merged = write_multirotor_test_database("niceops_multirotor_merged_axes.nod", tones, fixture);
+    const Database kept(merged);
+    REQUIRE(kept.active_condition_axes() == std::array<bool, 3> {true, true, false});
+    std::filesystem::remove(merged);
+}
+
 TEST_CASE("a multirotor database refuses what it cannot place a state with", "[multirotor]")
 {
     const ToneFixture tones;

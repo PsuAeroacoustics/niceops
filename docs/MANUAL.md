@@ -693,6 +693,10 @@ the state's own hover rotor speed, as the share of it the database records.
   0.1 g, and a warning counts such states.
 - **No law in the hover tip Mach number:** a state off the database's range takes the nearest
   spheres as they are, with the clamped states counted in a warning.
+- **An axis whose conditions barely differ is not blended over:** x or z spanning 0.02 or less, or
+  M<sub>h</sub> 0.005 or less, as a measured build's level flight and single weight do by noise. A
+  state is then counted as clamped on it only beyond that tolerance. If leaving the axis out would
+  make two conditions one, it is kept, with a warning.
 - **Refused, naming why:** `--blend aam`, whose search is in airspeed and path angle;
   `--export_sphere` and `--export_aam`, whose condition is μ, γ and C<sub>T</sub>;
   `niceops_procedure --check`; a vehicle file without a weight; and a database without

@@ -634,6 +634,11 @@ inline Pair load_pair(const Database::Sample& s)
 // band it masked -- is stored as.
 constexpr double empty_level_db = Database::no_energy_floor_db + 1.0;
 
+// A multirotor condition axis whose conditions span no more than this is constant
+// for blending (x and z, multiples of the hover induced velocity; M_h): see
+// Database's load, where active_axes_ is set.
+constexpr double multirotor_axis_tolerance[3] = {0.02, 0.02, 0.005};
+
 inline bool is_empty(double level, double weight)
 {
     return weight != 0.0 && level <= empty_level_db;
@@ -1933,8 +1938,42 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
         // single weight and air holds one M_h, and its triangulation is then
         // over (x, z) alone, as a fixed_load_factor one is over (mu, gamma).  A
         // single condition varies none and takes the nearest-condition path.
-        active_axes_ = {advance_ratio_max > advance_ratio_min, flight_path_angle_max > flight_path_angle_min,
-                thrust_coefficient_max > thrust_coefficient_min};
+        //
+        // An axis varies only beyond multirotor_axis_tolerance.  Measured
+        // conditions are means, so level flight's z and one weight's M_h differ
+        // between conditions by noise (z 3.6e-5, M_h 4e-5 in a June 2023
+        // hexacopter build); an axis normalized by that span put a hover
+        // drifting 2 cm/s a hundred spans outside it, and nearly every state was
+        // clamped onto one condition outright: a hover read the 10 mph sphere
+        // (FIDELITY, Multirotor axes that vary only by noise).  The tolerances are the
+        // differences that do not matter: about 0.1 m/s of a 5 m/s induced
+        // velocity, and 2 % of a hover tip Mach number.  Unless dropping the
+        // axes would merge conditions: then each varying axis is kept, as before.
+        const double spans[3] = {advance_ratio_max - advance_ratio_min, flight_path_angle_max - flight_path_angle_min,
+                thrust_coefficient_max - thrust_coefficient_min};
+        const std::vector<double>* values[3] = {&advance_ratios, &flight_path_angles, &thrust_coefficients};
+        std::array<bool, 3> beyond {};
+        for (std::size_t a = 0; a < 3; a++)
+            beyond[a] = spans[a] > multirotor_axis_tolerance[a];
+        bool merged = false;
+        for (std::size_t i = 0; i < advance_ratios.size() && !merged; i++)
+            for (std::size_t j = i + 1; j < advance_ratios.size() && !merged; j++)
+            {
+                bool apart = false;
+                for (std::size_t a = 0; a < 3; a++)
+                    apart = apart
+                            || (beyond[a] && std::fabs((*values[a])[i] - (*values[a])[j]) > multirotor_axis_tolerance[a]);
+                merged = !apart;
+            }
+        if (merged && advance_ratios.size() >= 2)
+            warn("Database ", datafile_path, ": some of its multirotor conditions differ only by less than x, z ",
+                    multirotor_axis_tolerance[0], " or M_h ", multirotor_axis_tolerance[2],
+                    "; every axis that varies at all is blended over, so states near them may be clamped.");
+        active_axes_ = merged ? std::array<bool, 3> {spans[0] > 0.0, spans[1] > 0.0, spans[2] > 0.0} : beyond;
+        for (std::size_t a = 0; a < 3; a++)
+            if (!active_axes_[a] && spans[a] > 0.0)
+                info("Multirotor condition axis ", a == 0 ? "x" : a == 1 ? "z" : "M_h", " spans only ", spans[a],
+                        " across the conditions, within ", multirotor_axis_tolerance[a], ": treated as constant.");
         active_condition_dims_ = static_cast<std::size_t>(active_axes_[0]) + static_cast<std::size_t>(active_axes_[1])
                 + static_cast<std::size_t>(active_axes_[2]);
         if (active_condition_dims_ == 0)
@@ -2554,8 +2593,14 @@ Database::Blend Database::blend_at(double advance_ratio, double flight_path_angl
     const double slack = multirotor ? 1e-12 : 0.0;
     bool clamped[3];
     for (std::size_t a = 0; a < 3; a++)
+    {
+        // An axis a multirotor database treats as constant (multirotor_axis_tolerance)
+        // reports only a query beyond its tolerance.
+        const double tolerance = multirotor && !active_axes_[a] ? multirotor_axis_tolerance[a] : 0.0;
         clamped[a] = (multirotor || active_axes_[a])
-                && (query[a] < lows[a] * (1.0 - slack) - slack || query[a] > highs[a] * (1.0 + slack) + slack);
+                && (query[a] < lows[a] * (1.0 - slack) - slack - tolerance
+                        || query[a] > highs[a] * (1.0 + slack) + slack + tolerance);
+    }
     blend.advance_ratio_clamped = clamped[0];
     blend.flight_path_angle_clamped = clamped[1];
     blend.thrust_coefficient_clamped = clamped[2];

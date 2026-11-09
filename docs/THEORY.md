@@ -132,8 +132,11 @@ climb), and $M_h$ is the multirotor's loading axis, the counterpart of $C_T$. $\
 air at the state's height by default (`--condition_density atmosphere`; `vehicle` takes the
 vehicle file's), and $c$ the run's sound speed there. The load factor is held at 0.1 below it. The
 conditions blend over $(x, z, M_h)$ as over $(\mu, \gamma, C_T)$ (§2.3), leaving out an axis the
-database does not vary (one built at one weight and air holds one $M_h$). There is no scaling law
-in $M_h$: a state off the database's $M_h$ takes its spheres as they are.
+database does not vary: one whose conditions span no more than 0.02 in $x$ or $z$ (0.1 m/s of a
+5 m/s $v_h$) or 0.005 in $M_h$, unless leaving it out would merge two conditions. Measured
+conditions are means, so level flight's $z$ and one weight's $M_h$ differ between them by noise,
+and an axis normalized by that noise would put every state far outside it. There is no scaling
+law in $M_h$: a state off the database's $M_h$ takes its spheres as they are.
 
 ### 2.2 The sphere database
 
