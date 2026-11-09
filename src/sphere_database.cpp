@@ -1871,20 +1871,24 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
     if (database_version_ >= 2)
     {
         tone_near_field_ = load.tone_near_field;
-        // How a tone's conditions blend (THEORY 4.4): as complex amplitudes where the database says its phases share
-        // one reference across its conditions (tone_phase_across_conditions = shared: a prediction's, locked to each
-        // rotor's azimuth at emission), else in dB; --tone_blend db or complex overrides.
+        // How a tone's conditions blend (THEORY 4.4, Database::tone_blend_mode): as complex amplitudes where its
+        // phase is locked to its rotor, unless the database says its conditions' phases are on independent
+        // references (tone_phase_across_conditions = independent: a measured build whose runs' timing offsets fall
+        // in separate sets); in mean-square pressure where it has no usable phase; --tone_blend overrides.
         const auto across = read_root_text(file_ncid, "tone_phase_across_conditions");
         if (across && *across != "shared" && *across != "independent")
             input_error("Database ", datafile_path, " gives tone_phase_across_conditions '", *across,
                     "'; expected shared or independent.");
-        tone_blend_complex_ = load.tone_blend == ToneBlend::complex
-                || (load.tone_blend == ToneBlend::database && across && *across == "shared");
-        info("Pure tones blend between conditions ", tone_blend_complex_ ? "as complex amplitudes" : "in dB",
-                load.tone_blend == ToneBlend::database
-                        ? (across ? " (the database's tone_phase_across_conditions is " + *across + ")."
-                                  : " (the database does not say its phases share a reference across conditions).")
-                        : " (--tone_blend).");
+        tone_blend_ = load.tone_blend;
+        tone_phases_independent_ = across && *across == "independent";
+        info("Pure tones blend between conditions ",
+                tone_blend_ == ToneBlend::db       ? "in dB (--tone_blend db)."
+                        : tone_blend_ == ToneBlend::complex ? "as complex amplitudes (--tone_blend complex)."
+                        : tone_blend_ == ToneBlend::energy  ? "in mean-square pressure (--tone_blend energy)."
+                        : tone_phases_independent_
+                        ? "in mean-square pressure: the database's conditions' phases are on independent references."
+                        : "as complex amplitudes where a tone's phase is locked to its rotor, else in mean-square "
+                          "pressure.");
         load_tone_sources(file_ncid, group_ids, datafile_path);
     }
     else if (read_root_text(file_ncid, "sources"))
@@ -3080,16 +3084,17 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
     {
         const int order = s.unwind_order.empty() ? 0 : s.unwind_order[k];
         // Each corner's conditions blended, empty entries dropped and the
-        // remaining weights renormalized: in dB (the bands' rule, the default),
-        // or with tone_blend_complex_ (--tone_blend complex) as complex
-        // amplitudes, the level the modulus of their weighted sum.  A tone that
-        // grows from nearly nothing in one condition to tens of dB in the next
-        // is linear in its amplitude, not its level: in dB a few percent of
-        // weight on the loud condition moved a hover's level by 10-15 dB (THEORY
-        // 4.4).  Then the corners by their bilinear weights in dB either way.
-        // The phase is the argument of the complex amplitudes under the same
+        // remaining weights renormalized (THEORY 4.4), by tone_blend_mode: as
+        // complex amplitudes where the tone's phase is locked to its rotor and the
+        // database's conditions share that reference (a rotor's field is linear in
+        // its loading: a tone growing from nearly nothing in one condition to tens
+        // of dB in the next is blended exactly, where in dB the blend fell 6-14 dB
+        // short); in mean-square pressure where it has no usable phase; in dB only
+        // when --tone_blend db asks.  Then the corners by their bilinear weights in
+        // dB.  The phase is the argument of the complex amplitudes under the same
         // weights, which needs no unwrapping and does not dip where neighbors'
         // phases differ.
+        const ToneBlendMode mode = tone_blend_mode(s, k);
         double corner_level[4];
         std::complex<double> sum(0.0, 0.0), near_sum(0.0, 0.0);
         const bool near = !s.near_field.empty();
@@ -3097,17 +3102,19 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
         {
             double v[4];
             std::complex<double> corner_sum(0.0, 0.0), corner_near(0.0, 0.0), present(0.0, 0.0);
-            double present_weight = 0.0;
+            double present_weight = 0.0, power = 0.0;
             for (std::size_t c = 0; c < 4; c++)
             {
                 const std::size_t slot = (blend.indices[c] * n_cells + stencil.corner[corner]) * tones + k;
                 const std::complex<float> a = s.amplitudes[slot];
-                const double magnitude = std::abs(std::complex<double>(a.real(), a.imag()));
+                const std::complex<double> ad(a.real(), a.imag());
+                const double magnitude = std::abs(ad);
                 v[c] = magnitude > 0.0 ? 20.0 * std::log10(magnitude) : no_energy_floor_db;
-                corner_sum += w[c] * std::complex<double>(a.real(), a.imag());
-                if (tone_blend_complex_ && w[c] != 0.0 && v[c] > empty_level_db)
+                corner_sum += w[c] * ad;
+                if (w[c] != 0.0 && v[c] > empty_level_db)
                 {
-                    present += w[c] * std::complex<double>(a.real(), a.imag());
+                    present += w[c] * ad;
+                    power += w[c] * magnitude * magnitude;
                     present_weight += w[c];
                 }
                 if (near)
@@ -3116,11 +3123,15 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
                     corner_near += w[c] * std::complex<double>(b.real(), b.imag());
                 }
             }
-            if (tone_blend_complex_)
+            if (mode == ToneBlendMode::complex)
             {
                 const double m = present_weight > 0.0 ? std::abs(present) / present_weight : 0.0;
                 corner_level[corner] = m > 0.0 ? 20.0 * std::log10(m) : no_energy_floor_db;
             }
+            else if (mode == ToneBlendMode::energy)
+                corner_level[corner] = present_weight > 0.0 && power > 0.0
+                        ? 10.0 * std::log10(power / present_weight)
+                        : no_energy_floor_db;
             else
                 corner_level[corner] = (is_empty(v[0], w[0]) || is_empty(v[1], w[1]) || is_empty(v[2], w[2])
                                                || is_empty(v[3], w[3]))
@@ -3144,9 +3155,8 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
         out[k].incoherent_db = no_energy_floor_db;
         if (s.has_incoherent)
         {
-            // Blended as the level is: in dB, empty entries dropped; or, with
-            // tone_blend_complex_, the conditions in mean-square pressure (it has no
-            // phase).
+            // It has no phase: its conditions blend in mean-square pressure, or in dB
+            // under --tone_blend db; then the corners in dB.
             double corner_incoherent[4];
             for (std::size_t corner = 0; corner < 4; corner++)
             {
@@ -3156,7 +3166,7 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
                     const float x = s.incoherent_db[(blend.indices[c] * n_cells + stencil.corner[corner]) * tones + k];
                     v[c] = std::isfinite(x) ? static_cast<double>(x) : no_energy_floor_db;
                 }
-                if (tone_blend_complex_)
+                if (mode != ToneBlendMode::db)
                 {
                     double power = 0.0, total = 0.0;
                     for (std::size_t c = 0; c < 4; c++)
@@ -3206,6 +3216,27 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
             out[k].peak_amplitude = 0.0;
         }
     }
+}
+
+Database::ToneBlendMode Database::tone_blend_mode(const ToneSource& s, std::size_t tone) const
+{
+    switch (tone_blend_)
+    {
+    case ToneBlend::db:
+        return ToneBlendMode::db;
+    case ToneBlend::complex:
+        return ToneBlendMode::complex;
+    case ToneBlend::energy:
+        return ToneBlendMode::energy;
+    case ToneBlend::database:
+        break;
+    }
+    // A phase locked to the rotor, resolved on the grid, and on one reference at
+    // every condition (the database does not say independent).
+    const bool resolved = s.energy_only.empty() || s.energy_only[tone] == 0;
+    return s.phase_reference == PhaseReference::rotor_azimuth && resolved && !tone_phases_independent_
+            ? ToneBlendMode::complex
+            : ToneBlendMode::energy;
 }
 
 std::array<double, 3> Database::tone_center(std::size_t source, const Blend& blend) const

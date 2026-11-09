@@ -551,19 +551,20 @@ $$
 $L_A$ is the tone's level at the sphere radius $R_s$, interpolated over the grid cell in dB with
 the band spectrum's weights (empty entries dropped as there), with the blend's load-factor
 correction. At each of the cell's corners its conditions are blended with the condition weights
-$w_c$ in one of two ways:
+$w_c$ (present entries, renormalized) in one of two ways:
 
-- **As complex amplitudes,** where the database says its phases share one reference across its
-  conditions (`tone_phase_across_conditions = shared`, as a prediction's are, each condition locked
-  to its rotor's azimuth at emission): $L = 20\log_{10}\lvert\sum_c w_c A_c\rvert / \sum_c w_c$
-  over the present entries, and an incoherent part in mean-square pressure. A rotor's field is
-  linear in its loading, so a tone whose unsteady loading grows with the condition is blended
-  exactly.
-- **In dB** otherwise, $L = \sum_c w_c L_c / \sum_c w_c$, which needs no common phase reference;
-  this is the blend for measured databases, whose runs' timing offsets are fitted only relative
-  to one another.
+- **As complex amplitudes,** $L = 20\log_{10}\lvert\sum_c w_c A_c\rvert / \sum_c w_c$, for a tone whose
+  phase is locked to its rotor (`phase_reference = rotor_azimuth`) and resolved on the grid. A
+  rotor's field is linear in its loading, so a tone whose unsteady loading grows with the condition
+  is blended exactly. A prediction's conditions share that reference by construction; a measured
+  build's do once its runs' timing offsets are fitted together (one common offset left unknown
+  moves every condition's phases alike). A database whose conditions' references are independent
+  says so (`tone_phase_across_conditions = independent`).
+- **In mean-square pressure,** $L = 10\log_{10}\left(\sum_c w_c\lvert A_c\rvert^2 / \sum_c w_c\right)$, for a
+  tone without a usable phase (`relative` or `none`, unresolved on the grid, or a database that
+  says independent), and for the incoherent part.
 
-`--tone_blend` forces either. $\varphi_A$ is the argument of the complex amplitudes summed with
+`--tone_blend` forces one blend, or the levels' dB average. $\varphi_A$ is the argument of the complex amplitudes summed with
 the same weights, which needs no unwrapping and does not dip where neighbors' phases differ.
 Shaft order $m$ of a rotor turning at $\Omega_r$ winds its phase as $e^{+i\sigma m\alpha}$
 about the shaft, $\sigma = \mathrm{sign}(\Omega_r)$ and $\alpha$ the direction's azimuth

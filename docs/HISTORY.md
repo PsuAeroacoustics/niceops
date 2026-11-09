@@ -4,13 +4,14 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
-## A tone's conditions blend as complex amplitudes where their phases agree (November 2026)
+## A tone's conditions blend as complex amplitudes (November 2026)
 
-A format 2 database's tones were blended between operating conditions in dB. One that says its phases share a
-reference across its conditions (`tone_phase_across_conditions = shared`, which PANAM writes for PSU-WOPWOP
-predictions) is now blended as complex amplitudes; between conditions whose tones differ by tens of dB the dB blend
-had fallen 6–14 dB short ([FIDELITY](FIDELITY.md#blending-a-tones-conditions)). No database written before carries the
-attribute, so they predict the same; `--tone_blend` forces either blend.
+A format 2 database's tones were blended between operating conditions in dB. A tone whose phase is locked to its
+rotor now blends as complex amplitudes, and one without a usable phase, like the incoherent part, in mean-square
+pressure; between conditions whose tones differ by tens of dB the dB blend had fallen 6–14 dB short
+([FIDELITY](FIDELITY.md#blending-a-tones-conditions)). A database may say its conditions' phases are on independent
+references (`tone_phase_across_conditions = independent`), and `--tone_blend db` restores the dB blend. A state at a
+condition's node predicts the same; one between conditions moves wherever its conditions' tones differ.
 
 ## Multirotor axes that vary only by noise (November 2026)
 

@@ -2408,7 +2408,10 @@ Median over rotors and orders (level rms, dB; complex error |a − a<sub>true</s
 - At order 8 of the steady loading, the one tone that does change, the dB blend is 0.42 dB rms and the complex
   0.03.
 
-Hence `tone_phase_across_conditions = shared`, which PANAM writes for its predictions, selects the complex blend.
+Hence a tone locked to its rotor blends as complex amplitudes by default. Held out on measured data, the PSU
+hexacopter's 3 m/s passes (between its hover and 10 mph conditions, in no condition of the database) are predicted
+1–1.7 dB closer than by the dB blend (order 2: +2.33 / 3.92 against +4.05 / 4.81 dB; order 4: +3.10 / 4.70 against
++4.11 / 5.29).
 
 ### `--db_cutoff` and SEL
 

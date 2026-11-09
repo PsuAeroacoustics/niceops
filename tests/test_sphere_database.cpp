@@ -4194,17 +4194,18 @@ TEST_CASE("a shaft-order tone is interpolated with its phase unwound about the s
     std::filesystem::remove(path);
 }
 
-TEST_CASE("a tone's conditions blend as complex amplitudes where the database shares their phase reference",
+TEST_CASE("a tone locked to its rotor blends its conditions as complex amplitudes; one without a phase in energy",
         "[sphere_database][format2][tones]")
 {
     // A tone 40 dB louder at the second condition (advance ratio 1) than at the
-    // first (hover), its phase turned 60 deg, and an incoherent part the same way:
-    // a forward-flight harmonic that grows from almost nothing.  At advance ratio
-    // 0.2 the weights are 0.8 and 0.2; complex, the level is the modulus of the
-    // weighted sum of amplitudes, and the incoherent part the weighted mean
-    // square; in dB, the weighted levels, as before.  Every cell holds the same
-    // values, so the bilinear interpolation between cells changes nothing.  The amplitudes are stored in single
-    // precision: levels to 1e-5 dB, phases to 1e-6 rad.
+    // first (hover), its phase turned 60 deg: a forward-flight harmonic that grows
+    // from almost nothing.  At advance ratio 0.2 the weights are 0.8 and 0.2.
+    // Locked to its rotor (the fixture's phase_reference rotor_azimuth), the level
+    // is the modulus of the weighted sum of amplitudes; where the database says its
+    // conditions' phases are on independent references, the weighted mean square;
+    // under --tone_blend db, the weighted levels.  Every cell holds the same
+    // values, so the bilinear interpolation between cells changes nothing.  The
+    // amplitudes are stored in single precision: levels to 1e-5 dB, phases to 1e-6.
     ToneFixture fixture;
     fixture.harmonics = {2, 4};
     fixture.condition_amplitude = [](std::size_t i, std::size_t, std::size_t, std::size_t, std::size_t) {
@@ -4213,108 +4214,113 @@ TEST_CASE("a tone's conditions blend as complex amplitudes where the database sh
     fixture.condition_phase = [](std::size_t i, std::size_t, std::size_t, std::size_t, std::size_t) {
         return i == 1 ? 60.0 : 0.0;
     };
-    fixture.incoherent = [](std::size_t, std::size_t, std::size_t, std::size_t) { return 50.0; };
-    const auto path = write_tone_test_database("niceops_tone_blend.nod", fixture);
     const Vec3 position(0.0, 0.0, 100.0), velocity(10.0, 0.0, 0.0), normal(0.0, 0.0, 1.0);
     const Vec3 down(0.3, 0.2, -1.0);
-    Database::ToneLookup db_out[2], complex_out[2];
+    const auto lookup = [&](const std::string& path, ToneBlend blend, Database::ToneLookup* out) {
+        DatabaseLoadOptions load;
+        load.tone_blend = blend;
+        const Database database(path, load);
+        database.tone_directivity(0, database.source_state(position, velocity, normal, 0.2, 0.0, test_ct_reference),
+                down.normalized(), out);
+    };
+    const auto path = write_tone_test_database("niceops_tone_blend.nod", fixture);
     double w_hover = 0.0, w_forward = 0.0;
     {
         const Database database(path);
         const auto state = database.source_state(position, velocity, normal, 0.2, 0.0, test_ct_reference);
         for (std::size_t c = 0; c < state.blend.weights.size(); c++)
         {
-            if (state.blend.indices[c] == 0)
-                w_hover += state.blend.weights[c];
-            if (state.blend.indices[c] == 1)
-                w_forward += state.blend.weights[c];
+            w_hover += state.blend.indices[c] == 0 ? state.blend.weights[c] : 0.0;
+            w_forward += state.blend.indices[c] == 1 ? state.blend.weights[c] : 0.0;
         }
-        REQUIRE(std::fabs(w_hover - (0.8)) < 1e-12);
-        REQUIRE(std::fabs(w_forward - (0.2)) < 1e-12);
-        database.tone_directivity(0, state, down.normalized(), db_out);
+        REQUIRE(std::fabs(w_hover - 0.8) < 1e-12);
+        REQUIRE(std::fabs(w_forward - 0.2) < 1e-12);
     }
-    // The database's own word: tone_phase_across_conditions = shared.  --tone_blend complex forces the same on a
-    // database that does not say it, and --tone_blend db the dB blend on one that does.
-    DatabaseLoadOptions load;
-    load.tone_blend = ToneBlend::complex;
-    fixture.phase_across_conditions = "shared";
-    const auto shared_path = write_tone_test_database("niceops_tone_blend_shared.nod", fixture);
-    fixture.phase_across_conditions.clear();
-    const Database database(shared_path);
-    const auto state = database.source_state(position, velocity, normal, 0.2, 0.0, test_ct_reference);
-    database.tone_directivity(0, state, down.normalized(), complex_out);
     const std::complex<double> hover = std::polar(std::pow(10.0, 50.0 / 20.0), 0.0);
     const std::complex<double> forward = std::polar(std::pow(10.0, 90.0 / 20.0), 60.0 * pi / 180.0);
     const std::complex<double> sum = w_hover * hover + w_forward * forward;
+    const double complex_db = 20.0 * std::log10(std::abs(sum));
+    const double energy_db = 10.0 * std::log10(w_hover * 1e5 + w_forward * 1e9);
+    const double level_db = w_hover * 50.0 + w_forward * 90.0;    // 58 dB, 18 dB below the amplitudes' 76 dB
+    Database::ToneLookup by_default[2], forced_db[2], forced_energy[2], shared[2], independent[2], forced[2];
+    lookup(path, ToneBlend::database, by_default);
+    lookup(path, ToneBlend::db, forced_db);
+    lookup(path, ToneBlend::energy, forced_energy);
+    fixture.phase_across_conditions = "shared";
+    const auto shared_path = write_tone_test_database("niceops_tone_blend_shared.nod", fixture);
+    lookup(shared_path, ToneBlend::database, shared);
+    fixture.phase_across_conditions = "independent";
+    const auto independent_path = write_tone_test_database("niceops_tone_blend_independent.nod", fixture);
+    lookup(independent_path, ToneBlend::database, independent);
+    lookup(independent_path, ToneBlend::complex, forced);
     for (std::size_t k = 0; k < 2; k++)
     {
-        // In dB: 0.8 x 50 + 0.2 x 90 = 58 dB, 18 dB below the amplitudes' 76 dB.
-        REQUIRE(std::fabs(db_out[k].level_db - (w_hover * 50.0 + w_forward * 90.0)) < 1e-5);
-        REQUIRE(std::fabs(complex_out[k].level_db - (20.0 * std::log10(std::abs(sum)))) < 1e-5);
-        REQUIRE(complex_out[k].level_db - db_out[k].level_db > 17.0);
-        // The phase is the weighted sum's argument either way.
-        REQUIRE(std::fabs(complex_out[k].phase - (std::arg(sum))) < 1e-6);
-        REQUIRE(std::fabs(db_out[k].phase - (std::arg(sum))) < 1e-6);
+        REQUIRE(std::fabs(by_default[k].level_db - complex_db) < 1e-5);
+        REQUIRE(std::fabs(shared[k].level_db - complex_db) < 1e-5);
+        REQUIRE(std::fabs(forced[k].level_db - complex_db) < 1e-5);
+        REQUIRE(std::fabs(independent[k].level_db - energy_db) < 1e-5);
+        REQUIRE(std::fabs(forced_energy[k].level_db - energy_db) < 1e-5);
+        REQUIRE(std::fabs(forced_db[k].level_db - level_db) < 1e-5);
+        REQUIRE(by_default[k].level_db - forced_db[k].level_db > 17.0);
+        // The phase is the weighted sum's argument whatever the blend.
+        for (const auto* o : {by_default, forced_db, independent})
+            REQUIRE(std::fabs(o[k].phase - std::arg(sum)) < 1e-6);
     }
-    {
-        const Database forced(path, load);
-        Database::ToneLookup forced_out[2];
-        forced.tone_directivity(0, forced.source_state(position, velocity, normal, 0.2, 0.0, test_ct_reference),
-                down.normalized(), forced_out);
-        DatabaseLoadOptions db_load;
-        db_load.tone_blend = ToneBlend::db;
-        const Database overridden(shared_path, db_load);
-        Database::ToneLookup overridden_out[2];
-        overridden.tone_directivity(0,
-                overridden.source_state(position, velocity, normal, 0.2, 0.0, test_ct_reference),
-                down.normalized(), overridden_out);
-        for (std::size_t k = 0; k < 2; k++)
-        {
-            REQUIRE(std::fabs(forced_out[k].level_db - complex_out[k].level_db) < 1e-9);
-            REQUIRE(std::fabs(overridden_out[k].level_db - db_out[k].level_db) < 1e-9);
-        }
-    }
-    std::filesystem::remove(path);
     std::filesystem::remove(shared_path);
+    std::filesystem::remove(independent_path);
     // Any other word is refused.
     fixture.phase_across_conditions = "sometimes";
     const auto bad = write_tone_test_database("niceops_tone_blend_bad.nod", fixture);
     REQUIRE_THROWS_WITH(Database(bad), Catch::Matchers::ContainsSubstring("tone_phase_across_conditions"));
     std::filesystem::remove(bad);
     fixture.phase_across_conditions.clear();
+    std::filesystem::remove(path);
 
-    // The incoherent part, 50 dB in hover and 90 dB forward, blends in mean square (0.2 x 10^9 dominates: 83.0 dB);
-    // in dB, the weighted levels (58 dB).
+    // A source without a phase locked to its rotor blends in energy by default.
+    for (const char* reference : {"relative", "none"})
+    {
+        fixture.phase_reference = reference;
+        const auto unlocked = write_tone_test_database("niceops_tone_blend_unlocked.nod", fixture);
+        Database::ToneLookup out[2];
+        lookup(unlocked, ToneBlend::database, out);
+        for (std::size_t k = 0; k < 2; k++)
+            REQUIRE(std::fabs(out[k].level_db - energy_db) < 1e-5);
+        std::filesystem::remove(unlocked);
+    }
+    fixture.phase_reference = "rotor_azimuth";
+
+    // The incoherent part, 50 dB in hover and 90 dB forward, blends in mean square (0.2 x 10^9 dominates: 83.0 dB),
+    // or under --tone_blend db as the weighted levels (58 dB).
+    fixture.incoherent = [](std::size_t, std::size_t, std::size_t, std::size_t) { return 0.0; };
     fixture.condition_incoherent = [](std::size_t i, std::size_t, std::size_t, std::size_t, std::size_t) {
         return i == 1 ? 90.0 : 50.0;
     };
     const auto path2 = write_tone_test_database("niceops_tone_blend_incoherent.nod", fixture);
-    const Database plain(path2), complex_db(path2, load);
     Database::ToneLookup a[2], b[2];
-    plain.tone_directivity(0, plain.source_state(position, velocity, normal, 0.2, 0.0, test_ct_reference),
-            down.normalized(), a);
-    complex_db.tone_directivity(0, complex_db.source_state(position, velocity, normal, 0.2, 0.0, test_ct_reference),
-            down.normalized(), b);
+    lookup(path2, ToneBlend::db, a);
+    lookup(path2, ToneBlend::database, b);
     for (std::size_t k = 0; k < 2; k++)
     {
-        REQUIRE(std::fabs(a[k].incoherent_db - (w_hover * 50.0 + w_forward * 90.0)) < 1e-5);
-        REQUIRE(std::fabs(b[k].incoherent_db - (10.0 * std::log10(w_hover * 1e5 + w_forward * 1e9))) < 1e-5);
+        REQUIRE(std::fabs(a[k].incoherent_db - level_db) < 1e-5);
+        REQUIRE(std::fabs(b[k].incoherent_db - energy_db) < 1e-5);
     }
     std::filesystem::remove(path2);
 
     // A condition with no measurement in a direction (an empty entry) drops out and the rest renormalize, as in dB:
     // the hover's 50 dB, not 0.8 of its amplitude.
     fixture.condition_incoherent = nullptr;
+    fixture.incoherent = nullptr;
     fixture.condition_amplitude = [](std::size_t i, std::size_t, std::size_t, std::size_t, std::size_t) {
         return i == 1 ? std::numeric_limits<double>::quiet_NaN() : 50.0;
     };
     const auto path3 = write_tone_test_database("niceops_tone_blend_empty.nod", fixture);
-    const Database with_gap(path3, load);
-    Database::ToneLookup c[2];
-    with_gap.tone_directivity(0, with_gap.source_state(position, velocity, normal, 0.2, 0.0, test_ct_reference),
-            down.normalized(), c);
-    for (std::size_t k = 0; k < 2; k++)
-        REQUIRE(std::fabs(c[k].level_db - 50.0) < 1e-5);
+    for (const ToneBlend blend : {ToneBlend::database, ToneBlend::energy})
+    {
+        Database::ToneLookup c[2];
+        lookup(path3, blend, c);
+        for (std::size_t k = 0; k < 2; k++)
+            REQUIRE(std::fabs(c[k].level_db - 50.0) < 1e-5);
+    }
     std::filesystem::remove(path3);
 }
 

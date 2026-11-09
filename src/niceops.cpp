@@ -5880,10 +5880,10 @@ int run(int argc, char* argv[])
             "A + (i / (2 k R)) Lap[D A], taken at load from its far-field sphere; off keeps the far field alone.")
             ->check(CLI::IsMember({"on", "off"}));
     app.add_option("--tone_blend", tone_blend,
-            "A format 2 database's tones between operating conditions: database (default) blends complex amplitudes "
-            "where the database says its phases share one reference across its conditions "
-            "(tone_phase_across_conditions = shared), else levels in dB; db or complex forces either.")
-            ->check(CLI::IsMember({"database", "db", "complex"}));
+            "A format 2 database's tones between operating conditions: database (default) blends a tone locked to its "
+            "rotor as complex amplitudes (unless the database's tone_phase_across_conditions is independent) and one "
+            "without a usable phase in mean-square pressure; complex, energy or db forces one blend for every tone.")
+            ->check(CLI::IsMember({"database", "db", "complex", "energy"}));
     app.add_option("--tone_ground", tone_ground,
             "A format 2 database's tones over the ground: frequency (default), each arrival's reflection at its own "
             "frequency where the run's path allows; band, the band model's correction on free-field tones.")
@@ -7420,6 +7420,7 @@ int run(int argc, char* argv[])
     database_load.tone_near_field = options.tones.near_field;
     database_load.tone_blend = tone_blend == "db" ? ToneBlend::db
             : tone_blend == "complex"              ? ToneBlend::complex
+            : tone_blend == "energy"               ? ToneBlend::energy
                                                    : ToneBlend::database;
     if (!nose.empty())
         options.nose = parse_nose_source(nose);
