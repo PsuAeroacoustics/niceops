@@ -4,6 +4,14 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## A tone's conditions blend as complex amplitudes where their phases agree (November 2026)
+
+A format 2 database's tones were blended between operating conditions in dB. One that says its phases share a
+reference across its conditions (`tone_phase_across_conditions = shared`, which PANAM writes for PSU-WOPWOP
+predictions) is now blended as complex amplitudes; between conditions whose tones differ by tens of dB the dB blend
+had fallen 6–14 dB short ([FIDELITY](FIDELITY.md#blending-a-tones-conditions)). No database written before carries the
+attribute, so they predict the same; `--tone_blend` forces either blend.
+
 ## Multirotor axes that vary only by noise (November 2026)
 
 A multirotor database blended over every axis whose conditions differed at all, each normalized

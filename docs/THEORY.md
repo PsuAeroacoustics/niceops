@@ -548,9 +548,22 @@ a = 10^{(L_A(\hat{\mathbf{k}}) - \alpha(f)\,\ell)/20}\, \frac{R_s}{\max(L, r_0)}
 \qquad \ell = \max(L, r_0) - R_a.
 $$
 
-$L_A$ is the tone's level at the sphere radius $R_s$, interpolated in dB over the grid cell and
-the conditions with the band spectrum's weights (empty entries dropped as there), with the
-blend's load-factor correction; $\varphi_A$ is the argument of the complex amplitudes summed with
+$L_A$ is the tone's level at the sphere radius $R_s$, interpolated over the grid cell in dB with
+the band spectrum's weights (empty entries dropped as there), with the blend's load-factor
+correction. At each of the cell's corners its conditions are blended with the condition weights
+$w_c$ in one of two ways:
+
+- **As complex amplitudes,** where the database says its phases share one reference across its
+  conditions (`tone_phase_across_conditions = shared`, as a prediction's are, each condition locked
+  to its rotor's azimuth at emission): $L = 20\log_{10}\lvert\sum_c w_c A_c\rvert / \sum_c w_c$
+  over the present entries, and an incoherent part in mean-square pressure. A rotor's field is
+  linear in its loading, so a tone whose unsteady loading grows with the condition is blended
+  exactly.
+- **In dB** otherwise, $L = \sum_c w_c L_c / \sum_c w_c$, which needs no common phase reference;
+  this is the blend for measured databases, whose runs' timing offsets are fitted only relative
+  to one another.
+
+`--tone_blend` forces either. $\varphi_A$ is the argument of the complex amplitudes summed with
 the same weights, which needs no unwrapping and does not dip where neighbors' phases differ.
 Shaft order $m$ of a rotor turning at $\Omega_r$ winds its phase as $e^{+i\sigma m\alpha}$
 about the shaft, $\sigma = \mathrm{sign}(\Omega_r)$ and $\alpha$ the direction's azimuth

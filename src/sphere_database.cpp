@@ -1871,6 +1871,20 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
     if (database_version_ >= 2)
     {
         tone_near_field_ = load.tone_near_field;
+        // How a tone's conditions blend (THEORY 4.4): as complex amplitudes where the database says its phases share
+        // one reference across its conditions (tone_phase_across_conditions = shared: a prediction's, locked to each
+        // rotor's azimuth at emission), else in dB; --tone_blend db or complex overrides.
+        const auto across = read_root_text(file_ncid, "tone_phase_across_conditions");
+        if (across && *across != "shared" && *across != "independent")
+            input_error("Database ", datafile_path, " gives tone_phase_across_conditions '", *across,
+                    "'; expected shared or independent.");
+        tone_blend_complex_ = load.tone_blend == ToneBlend::complex
+                || (load.tone_blend == ToneBlend::database && across && *across == "shared");
+        info("Pure tones blend between conditions ", tone_blend_complex_ ? "as complex amplitudes" : "in dB",
+                load.tone_blend == ToneBlend::database
+                        ? (across ? " (the database's tone_phase_across_conditions is " + *across + ")."
+                                  : " (the database does not say its phases share a reference across conditions).")
+                        : " (--tone_blend).");
         load_tone_sources(file_ncid, group_ids, datafile_path);
     }
     else if (read_root_text(file_ncid, "sources"))
@@ -3065,18 +3079,25 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
     for (std::size_t k = 0; k < tones; k++)
     {
         const int order = s.unwind_order.empty() ? 0 : s.unwind_order[k];
-        // Each corner's conditions blended in dB, empty entries dropped
-        // (blend_present), then the corners by their bilinear weights the same
-        // way: the bands' rule, applied to the tone's level.  The phase is the
-        // argument of the complex amplitudes under the same weights, which needs
-        // no unwrapping and does not dip where neighbors' phases differ.
+        // Each corner's conditions blended, empty entries dropped and the
+        // remaining weights renormalized: in dB (the bands' rule, the default),
+        // or with tone_blend_complex_ (--tone_blend complex) as complex
+        // amplitudes, the level the modulus of their weighted sum.  A tone that
+        // grows from nearly nothing in one condition to tens of dB in the next
+        // is linear in its amplitude, not its level: in dB a few percent of
+        // weight on the loud condition moved a hover's level by 10-15 dB (THEORY
+        // 4.4).  Then the corners by their bilinear weights in dB either way.
+        // The phase is the argument of the complex amplitudes under the same
+        // weights, which needs no unwrapping and does not dip where neighbors'
+        // phases differ.
         double corner_level[4];
         std::complex<double> sum(0.0, 0.0), near_sum(0.0, 0.0);
         const bool near = !s.near_field.empty();
         for (std::size_t corner = 0; corner < 4; corner++)
         {
             double v[4];
-            std::complex<double> corner_sum(0.0, 0.0), corner_near(0.0, 0.0);
+            std::complex<double> corner_sum(0.0, 0.0), corner_near(0.0, 0.0), present(0.0, 0.0);
+            double present_weight = 0.0;
             for (std::size_t c = 0; c < 4; c++)
             {
                 const std::size_t slot = (blend.indices[c] * n_cells + stencil.corner[corner]) * tones + k;
@@ -3084,16 +3105,27 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
                 const double magnitude = std::abs(std::complex<double>(a.real(), a.imag()));
                 v[c] = magnitude > 0.0 ? 20.0 * std::log10(magnitude) : no_energy_floor_db;
                 corner_sum += w[c] * std::complex<double>(a.real(), a.imag());
+                if (tone_blend_complex_ && w[c] != 0.0 && v[c] > empty_level_db)
+                {
+                    present += w[c] * std::complex<double>(a.real(), a.imag());
+                    present_weight += w[c];
+                }
                 if (near)
                 {
                     const std::complex<float> b = s.near_field[slot];
                     corner_near += w[c] * std::complex<double>(b.real(), b.imag());
                 }
             }
-            corner_level[corner] = (is_empty(v[0], w[0]) || is_empty(v[1], w[1]) || is_empty(v[2], w[2])
-                                           || is_empty(v[3], w[3]))
-                    ? blend_present(v, w)
-                    : w[0] * v[0] + w[1] * v[1] + w[2] * v[2] + w[3] * v[3];
+            if (tone_blend_complex_)
+            {
+                const double m = present_weight > 0.0 ? std::abs(present) / present_weight : 0.0;
+                corner_level[corner] = m > 0.0 ? 20.0 * std::log10(m) : no_energy_floor_db;
+            }
+            else
+                corner_level[corner] = (is_empty(v[0], w[0]) || is_empty(v[1], w[1]) || is_empty(v[2], w[2])
+                                               || is_empty(v[3], w[3]))
+                        ? blend_present(v, w)
+                        : w[0] * v[0] + w[1] * v[1] + w[2] * v[2] + w[3] * v[3];
             if (order != 0)
             {
                 const auto unwind = std::polar(1.0, -order * cell_shaft_azimuth_[stencil.corner[corner]]);
@@ -3112,7 +3144,9 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
         out[k].incoherent_db = no_energy_floor_db;
         if (s.has_incoherent)
         {
-            // Blended as the level is: in dB, empty entries dropped.
+            // Blended as the level is: in dB, empty entries dropped; or, with
+            // tone_blend_complex_, the conditions in mean-square pressure (it has no
+            // phase).
             double corner_incoherent[4];
             for (std::size_t corner = 0; corner < 4; corner++)
             {
@@ -3122,10 +3156,23 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
                     const float x = s.incoherent_db[(blend.indices[c] * n_cells + stencil.corner[corner]) * tones + k];
                     v[c] = std::isfinite(x) ? static_cast<double>(x) : no_energy_floor_db;
                 }
-                corner_incoherent[corner] = (is_empty(v[0], w[0]) || is_empty(v[1], w[1]) || is_empty(v[2], w[2])
-                                                    || is_empty(v[3], w[3]))
-                        ? blend_present(v, w)
-                        : w[0] * v[0] + w[1] * v[1] + w[2] * v[2] + w[3] * v[3];
+                if (tone_blend_complex_)
+                {
+                    double power = 0.0, total = 0.0;
+                    for (std::size_t c = 0; c < 4; c++)
+                        if (w[c] != 0.0 && v[c] > empty_level_db)
+                        {
+                            power += w[c] * std::pow(10.0, v[c] / 10.0);
+                            total += w[c];
+                        }
+                    corner_incoherent[corner] = total > 0.0 && power > 0.0 ? 10.0 * std::log10(power / total)
+                                                                           : no_energy_floor_db;
+                }
+                else
+                    corner_incoherent[corner] = (is_empty(v[0], w[0]) || is_empty(v[1], w[1])
+                                                        || is_empty(v[2], w[2]) || is_empty(v[3], w[3]))
+                            ? blend_present(v, w)
+                            : w[0] * v[0] + w[1] * v[1] + w[2] * v[2] + w[3] * v[3];
             }
             const double incoherent = (is_empty(corner_incoherent[0], sw[0]) || is_empty(corner_incoherent[1], sw[1])
                                               || is_empty(corner_incoherent[2], sw[2])

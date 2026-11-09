@@ -2384,6 +2384,32 @@ PT build. Harness `tones/`: `wopwop_tandem.py` and `wopwop_flyover.py`.
     100 m hold the far-field sphere's energy within 20° of the axis to 0.6 dB (blade passage; 0.5 dB
     at its harmonics).
 
+### Blending a tone's conditions
+
+PSU-WOPWOP's own per-rotor far-field PT spheres of the PSU hexacopter's rotors (CHARM's blades; two rotors, one each
+sense; 210 rad/s, level) at 0, 2.5, 5, 7.5 and 10 mph. A multirotor database holds only the 0 and 10 mph spheres, whose
+phases share PSU-WOPWOP's reference. It is read at the intermediate speeds at the grid's nodes, so only the blend
+between conditions interpolates, and compared with PSU-WOPWOP's sphere at that speed over the cells within 30 dB of
+each order's loudest (orders 2 to 8). Three loadings:
+- steady, the same at every speed;
+- an arm-passage bump, the same at every speed;
+- CHARM's forward-flight harmonics (1/rev 19–30 % of thrust), growing linearly with speed.
+
+Median over rotors and orders (level rms, dB; complex error |a − a<sub>true</sub>| / |a<sub>true</sub>|):
+
+| Loading | Speed (mph) | In dB | As complex amplitudes |
+| --- | --- | --- | --- |
+| Steady | 2.5 / 5 / 7.5 | 0.002 / 0.002 / 0.002 dB | 0.006 / 0.008 / 0.006 dB |
+| Arm passage | 2.5 / 5 / 7.5 | 0.002 / 0.003 / 0.002 | 0.004 / 0.005 / 0.004 |
+| Forward flight | 2.5 / 5 / 7.5 | 23.9 / 17.7 / 9.3 dB (median −14.3 / −11.9 / −6.5) | 0.14 / 0.10 / 0.05 dB (error 1.9 / 1.3 / 0.7 %) |
+
+- Where the tones do not change between conditions, either blend is exact to hundredths of a dB.
+- Where they grow from almost nothing, the dB blend falls 6–14 dB short and the complex one holds to 0.15 dB.
+- At order 8 of the steady loading, the one tone that does change, the dB blend is 0.42 dB rms and the complex
+  0.03.
+
+Hence `tone_phase_across_conditions = shared`, which PANAM writes for its predictions, selects the complex blend.
+
 ### `--db_cutoff` and SEL
 
 The cutoff is exact for an observer whose peak level reaches it, but an SEL exceeds its peak level
