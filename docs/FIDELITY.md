@@ -2413,6 +2413,27 @@ hexacopter's 3 m/s passes (between its hover and 10 mph conditions, in no condit
 1–1.7 dB closer than by the dB blend (order 2: +2.33 / 3.92 against +4.05 / 4.81 dB; order 4: +3.10 / 4.70 against
 +4.11 / 5.29).
 
+### A tone between grid nodes
+
+PSU-WOPWOP's 5° per-rotor far-field PT spheres (as in [Blending a tone's conditions](#blending-a-tones-conditions):
+steady, arm-passage and forward-flight loadings; two rotors; hover and 10 mph) are subsampled to a 10° or 15° grid,
+written as one-condition databases, and read by NICEOPS at every 5° node the coarse grid lacks. Level rms over the cells
+within 30 dB of each order's loudest (orders 2–8), median over the cases (90th percentile), dB:
+
+| Grid | `--tone_interpolation grid` | `modes` |
+| --- | --- | --- |
+| 10° | 0.78 (1.26) | 0.03 (0.14) |
+| 15° | 1.10 (1.62) | 0.03 (0.14) |
+
+- **The arm-passage tones gain most.** Their several modes defeat unwinding by one, so on the grid every one was
+  unresolved and summed in energy, at 0.9–1.0 dB. The modes read them to 0.01–0.08 dB with their phase.
+- **Interpolating the unwound complex amplitude** bilinearly (a single mode) is worse than the dB grid: 1.60 (2.73) at
+  10°.
+- **Where the modes lose.** The steady loading's order 8 at 10 mph, a weak tone with a rough 5° truth, is off by
+  2.5 dB against the grid's 2.0, the only case where the modes lose.
+- **The measured hexacopter's per-rotor tones** (gridded at 5° from single plates) fit no better than 50 % rms at the
+  nodes. They keep the grid, and its round trip is unchanged.
+
 ### `--db_cutoff` and SEL
 
 The cutoff is exact for an observer whose peak level reaches it, but an SEL exceeds its peak level

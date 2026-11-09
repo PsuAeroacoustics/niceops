@@ -414,19 +414,26 @@ inline int DirectionBounds::bin(double along, double up, double across, double s
             + (across >= 0.0 ? half_azimuth + sector : half_azimuth - 1 - sector);
 }
 
-// What the loader does with the cells its screen finds suspect (see
-// Database::screen_suspect_cells).  At namespace scope for the reason
-// BlendOptions is: a nested struct with member initializers cannot be a
-// defaulted argument of its enclosing class's constructor.
-// How a format 2 database's tones blend between operating conditions (--tone_blend).
+// How a format 2 database's tones blend between operating conditions
+// (--tone_blend; THEORY 4.4): complex amplitudes, mean-square pressure or dB;
+// `database` (an option only, resolved per tone at load) is complex for a tone
+// locked to its rotor and resolved, unless the database's
+// tone_phase_across_conditions is independent, else energy.
 enum class ToneBlend
 {
-    database, // complex for a tone locked to its rotor (unless the database says independent), else energy
+    database,
     db,
     complex,
     energy,
 };
 
+std::optional<ToneBlend> parse_tone_blend(const std::string& name);
+const char* to_string(ToneBlend blend);
+
+// What the loader does with the cells its screen finds suspect (see
+// Database::screen_suspect_cells).  At namespace scope for the reason
+// BlendOptions is: a nested struct with member initializers cannot be a
+// defaulted argument of its enclosing class's constructor.
 struct DatabaseLoadOptions
 {
     // Write every suspect entry to this CSV (empty: none).
@@ -443,8 +450,11 @@ struct DatabaseLoadOptions
     // the grid (ToneSource::near_field; THEORY 4.4): --tone_near_field on.
     bool tone_near_field = false;
     // How a tone's conditions blend (--tone_blend; THEORY 4.4): by the tone
-    // (Database::tone_blend_mode), or one blend forced.
+    // (ToneSource::blend), or one blend forced.
     ToneBlend tone_blend = ToneBlend::database;
+    // Read a phased tone between the grid's nodes from rotating modes fitted to
+    // it (--tone_interpolation modes); false keeps the grid's interpolation.
+    bool tone_modes = true;
     // --source_radius, m: Database::source_radius (0: the sphere radius).
     double source_radius = 0.0;
 };
@@ -501,6 +511,19 @@ struct ToneSource
     // Per condition and tone, [condition * tones + tone], its largest |A| over
     // the grid: what the near-field term is capped at twice.
     std::vector<float> peak_amplitude;
+    // With DatabaseLoadOptions::tone_modes, each phased tone as rotating modes:
+    // spherical harmonics in the sphere frame's shaft axes (polar angle from up,
+    // azimuth about up toward starboard), fitted to the grid at every condition
+    // (Database::fit_tone_modes; THEORY 4.4).  mode_degree[tone] is the fit's
+    // degree L, 0 where the tone keeps the grid's interpolation; coefficients
+    // [(condition * tones + tone) * mode_stride + l (l + 1) + k], mode_stride
+    // (L_max + 1)^2 over the source's tones.
+    std::vector<int> mode_degree;
+    std::size_t mode_stride = 0;
+    std::vector<std::complex<double>> modes;
+    // Per tone, how its conditions blend (complex, energy or db: never
+    // database), resolved at load from DatabaseLoadOptions::tone_blend.
+    std::vector<ToneBlend> blend;
     // Each tone's part without a stable phase (the file's optional
     // incoherent_amplitude): its rms level at the sphere radius, dB re 20 uPa, laid
     // out as `amplitudes`, -inf where it has none; added in energy, each source
@@ -1320,18 +1343,9 @@ private:
     // channel rows (the remap the band amplitude takes), which its tones take too.
     std::vector<std::vector<std::size_t>> tone_cell_of_;
     bool tone_near_field_ = false;
-    ToneBlend tone_blend_ = ToneBlend::database;
-    // The root's tone_phase_across_conditions = independent.
-    bool tone_phases_independent_ = false;
-    // How one tone's conditions blend: complex amplitudes, mean-square pressure
-    // or dB.
-    enum class ToneBlendMode
-    {
-        complex,
-        energy,
-        db,
-    };
-    ToneBlendMode tone_blend_mode(const ToneSource& s, std::size_t tone) const;
+    // Each phased tone that `blend` (database, or complex) reads as complex
+    // amplitudes fitted with rotating modes (ToneSource::modes).
+    void fit_tone_modes(ToneBlend blend);
     // Per condition, the flight speed (m/s) and climb angle (rad) a multirotor
     // condition group records (airspeed, climb_rate), NaN where it does not: the
     // near-field term's flight Mach number.
@@ -1339,7 +1353,10 @@ private:
     // Each tone's near-field term over the grid (ToneSource::near_field).
     void compute_tone_near_fields(const std::string& datafile_path);
     // The constructor's reading of a format 2 database's source subgroups.
-    void load_tone_sources(int file_ncid, const std::vector<int>& group_ids, const std::string& datafile_path);
+    // `blend` is --tone_blend, database already made energy where the database's
+    // conditions' phases are independent; `modes` fits rotating modes.
+    void load_tone_sources(int file_ncid, const std::vector<int>& group_ids, const std::string& datafile_path,
+            ToneBlend blend, bool modes);
 };
 
 // Write a single interpolated sphere as a one-group .nod database, the same

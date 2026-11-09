@@ -580,6 +580,30 @@ At the grid's nodes it is the stored phase. Each tone is unwound only where that
 the smoother of the two on the grid (its widest step between neighboring cells within 20 dB of
 its peak), which is the phase the resolution check judges: a tone whose phase steps more than 90°
 between neighboring cells within 20 dB of its peak is not resolved, and is summed in energy.
+
+**Rotating modes.** A tone whose conditions blend as complex amplitudes (a `rotor_azimuth` tone,
+or any tone with a phase reference under `--tone_blend complex`) is also fitted, at every condition, with spherical harmonics in the shaft axes: polar angle $\beta$ from the
+sphere frame's up axis, azimuth $\alpha$ about it. These are the rotating modes,
+
+$$
+A(\beta, \alpha) = \sum_{l \le L} \sum_{|k| \le l} c_{lk}\, Y_l^k(\beta, \alpha), \qquad
+Y_l^k \propto P_l^{|k|}(\cos\beta)\, e^{ik\alpha},
+$$
+
+the rotor-alone mode $k = \sigma m$ and the interaction modes beside it all included.
+
+- **The fit** is least squares over the cells that hold the tone, with a smoothness penalty
+  $\lambda N \sum l(l+1)\lvert c_{lk}\rvert^2$ ($\lambda = 10^{-6}$, $N$ the cells).
+- **The degree** is the smallest even $L \ge 4$ that leaves at most 1 % rms at the nodes within
+  30 dB of the peak, at every condition, up to $0.8 \times 180°$ over the grid's widest step (and
+  16). Failing that, it is the degree with the least residual, if that is at most 5 %. Otherwise
+  the tone keeps the grid's interpolation.
+- **Where it is fitted,** the tone is resolved whatever its steps between cells, and a tone that
+  blends its conditions as complex amplitudes is read from its modes: $A = \sum_c w_c A_c(\beta,
+  \alpha) / \sum_c w_c$, its level and phase that sum's.
+- **The near-field term** keeps the grid's, which is 0 for a tone only the modes resolve.
+- `--tone_interpolation grid` keeps the grid's interpolation for every tone.
+
 $\psi_r$ is the rotor's azimuth (`--rotor_azimuth`, in its own sense of rotation); by default the
 azimuth its phases were locked to (the source's `azimuth`, the first sphere's), which reproduces
 the phasing it was predicted with, and zero, the stored rotor-locked phase itself, where the

@@ -522,6 +522,30 @@ const char* to_string(PhaseReference reference)
     return "none";
 }
 
+std::optional<ToneBlend> parse_tone_blend(const std::string& name)
+{
+    for (const ToneBlend blend : {ToneBlend::database, ToneBlend::db, ToneBlend::complex, ToneBlend::energy})
+        if (name == to_string(blend))
+            return blend;
+    return std::nullopt;
+}
+
+const char* to_string(ToneBlend blend)
+{
+    switch (blend)
+    {
+    case ToneBlend::db:
+        return "db";
+    case ToneBlend::complex:
+        return "complex";
+    case ToneBlend::energy:
+        return "energy";
+    case ToneBlend::database:
+        break;
+    }
+    return "database";
+}
+
 // Repair the azimuth labels of a sphere written by a pre-versioned builder.
 //
 // Source spheres cover only the lower half of the roll circle, phi in [-90, 90]
@@ -715,6 +739,29 @@ inline double blend_present(const double* v, const double* w)
         }
     }
     return total > 0.0 ? sum / total : Database::no_energy_floor_db;
+}
+
+// Four levels (dB) blended in dB: the weighted sum where no entry with a weight
+// is empty, blend_present otherwise.
+inline double blend_db(const double* v, const double* w)
+{
+    if (is_empty(v[0], w[0]) || is_empty(v[1], w[1]) || is_empty(v[2], w[2]) || is_empty(v[3], w[3]))
+        return blend_present(v, w);
+    return w[0] * v[0] + w[1] * v[1] + w[2] * v[2] + w[3] * v[3];
+}
+
+// Four levels (dB) blended in mean-square pressure, empty entries dropped and
+// the remaining weights renormalized (a tone's part without a phase).
+inline double blend_energy(const double* v, const double* w)
+{
+    double power = 0.0, total = 0.0;
+    for (std::size_t k = 0; k < 4; k++)
+        if (w[k] != 0.0 && v[k] > empty_level_db)
+        {
+            power += w[k] * std::pow(10.0, v[k] / 10.0);
+            total += w[k];
+        }
+    return total > 0.0 && power > 0.0 ? 10.0 * std::log10(power / total) : Database::no_energy_floor_db;
 }
 
 // The four bracketing operating conditions of one grid cell, blended by their
@@ -1871,25 +1918,26 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
     if (database_version_ >= 2)
     {
         tone_near_field_ = load.tone_near_field;
-        // How a tone's conditions blend (THEORY 4.4, Database::tone_blend_mode): as complex amplitudes where its
-        // phase is locked to its rotor, unless the database says its conditions' phases are on independent
-        // references (tone_phase_across_conditions = independent: a measured build whose runs' timing offsets fall
-        // in separate sets); in mean-square pressure where it has no usable phase; --tone_blend overrides.
+        // How a tone's conditions blend (THEORY 4.4, ToneSource::blend): as complex amplitudes where its phase is
+        // locked to its rotor, unless the database says its conditions' phases are on independent references
+        // (tone_phase_across_conditions = independent: a measured build whose runs' timing offsets fall in separate
+        // sets); in mean-square pressure where it has no usable phase; --tone_blend overrides.
         const auto across = read_root_text(file_ncid, "tone_phase_across_conditions");
         if (across && *across != "shared" && *across != "independent")
             input_error("Database ", datafile_path, " gives tone_phase_across_conditions '", *across,
                     "'; expected shared or independent.");
-        tone_blend_ = load.tone_blend;
-        tone_phases_independent_ = across && *across == "independent";
-        info("Pure tones blend between conditions ",
-                tone_blend_ == ToneBlend::db       ? "in dB (--tone_blend db)."
-                        : tone_blend_ == ToneBlend::complex ? "as complex amplitudes (--tone_blend complex)."
-                        : tone_blend_ == ToneBlend::energy  ? "in mean-square pressure (--tone_blend energy)."
-                        : tone_phases_independent_
-                        ? "in mean-square pressure: the database's conditions' phases are on independent references."
-                        : "as complex amplitudes where a tone's phase is locked to its rotor, else in mean-square "
-                          "pressure.");
-        load_tone_sources(file_ncid, group_ids, datafile_path);
+        const bool independent = across && *across == "independent";
+        const ToneBlend blend = load.tone_blend == ToneBlend::database && independent ? ToneBlend::energy
+                                                                                      : load.tone_blend;
+        if (load.tone_blend != ToneBlend::database)
+            info("Pure tones blend between conditions by --tone_blend ", to_string(blend), ".");
+        else
+            info("Pure tones blend between conditions ",
+                    independent ? "in mean-square pressure: the database's conditions' phases are on independent "
+                                  "references."
+                                : "as complex amplitudes where a tone's phase is locked to its rotor, else in "
+                                  "mean-square pressure.");
+        load_tone_sources(file_ncid, group_ids, datafile_path, blend, load.tone_modes);
     }
     else if (read_root_text(file_ncid, "sources"))
         input_error("Database ", datafile_path, " lists pure-tone sources but has database_version ",
@@ -2200,6 +2248,131 @@ double shaft_azimuth(double phi_deg, double theta_deg)
     return std::atan2(std::sin(theta) * std::sin(phi), std::cos(theta));
 }
 
+// A sphere direction's polar angle from the frame's up axis (rad): the shaft
+// axes a rotor's rotating modes are written in (shaft_azimuth the azimuth).
+double shaft_polar(double phi_deg, double theta_deg)
+{
+    return std::acos(std::clamp(grid_direction(phi_deg, theta_deg).up, -1.0, 1.0));
+}
+
+// The largest degree of a tone's rotating modes (Database::fit_tone_modes).
+constexpr int max_mode_degree = 16;
+
+// The fully normalized associated Legendre recurrences' factors to
+// max_mode_degree, computed once.
+struct LegendreFactors
+{
+    static constexpr int n = max_mode_degree + 1;
+    double diagonal[n] {}, next[n] {}, a[n][n] {}, b[n][n] {};
+};
+
+const LegendreFactors& legendre_factors()
+{
+    static const LegendreFactors f = [] {
+        LegendreFactors t;
+        for (int m = 1; m < LegendreFactors::n; m++)
+            t.diagonal[m] = -std::sqrt((2.0 * m + 1.0) / (2.0 * m));
+        for (int m = 0; m < LegendreFactors::n; m++)
+            t.next[m] = std::sqrt(2.0 * m + 3.0);
+        for (int m = 0; m < LegendreFactors::n; m++)
+            for (int l = m + 2; l < LegendreFactors::n; l++)
+            {
+                const double mm = static_cast<double>(m) * m;
+                t.a[l][m] = std::sqrt((4.0 * l * l - 1.0) / (static_cast<double>(l) * l - mm));
+                t.b[l][m] = std::sqrt(((l - 1.0) * (l - 1.0) - mm) / (4.0 * (l - 1.0) * (l - 1.0) - 1.0));
+            }
+        return t;
+    }();
+    return f;
+}
+
+// Orthonormal spherical harmonics Y_l^k(polar, azimuth), l <= degree <=
+// max_mode_degree, at index l (l + 1) + k: the fully normalized associated
+// Legendre functions (with the Condon-Shortley phase) by the standard stable
+// recurrences, times e^(i k azimuth), and Y_l^-k = (-1)^k conj(Y_l^k).  The
+// index does not depend on `degree`, so a lower degree's are a prefix.
+void spherical_harmonics(int degree, double polar, double azimuth, std::complex<double>* out)
+{
+    assert(degree >= 0 && degree <= max_mode_degree);
+    const LegendreFactors& f = legendre_factors();
+    const double x = std::cos(polar), sine = std::sin(polar);
+    double p[LegendreFactors::n][LegendreFactors::n];
+    p[0][0] = std::sqrt(1.0 / (4.0 * pi));
+    for (int m = 1; m <= degree; m++)
+        p[m][m] = f.diagonal[m] * sine * p[m - 1][m - 1];
+    for (int m = 0; m < degree; m++)
+        p[m + 1][m] = f.next[m] * x * p[m][m];
+    for (int m = 0; m <= degree; m++)
+        for (int l = m + 2; l <= degree; l++)
+            p[l][m] = f.a[l][m] * (x * p[l - 1][m] - f.b[l][m] * p[l - 2][m]);
+    const std::complex<double> turn = std::polar(1.0, azimuth);
+    std::complex<double> winding(1.0, 0.0);
+    for (int m = 0; m <= degree; m++, winding *= turn)
+        for (int l = m; l <= degree; l++)
+        {
+            const std::complex<double> y = p[l][m] * winding;
+            out[l * (l + 1) + m] = y;
+            if (m > 0)
+                out[l * (l + 1) - m] = (m % 2 == 0 ? 1.0 : -1.0) * std::conj(y);
+        }
+}
+
+// Adds sign * conj(row) row^T to the lower triangle of the n x n Hermitian
+// `gram` (row-major).
+void add_outer(const std::complex<double>* row, std::size_t n, double sign, std::complex<double>* gram)
+{
+    for (std::size_t i = 0; i < n; i++)
+    {
+        const std::complex<double> left = sign * std::conj(row[i]);
+        for (std::size_t j = 0; j <= i; j++)
+            gram[i * n + j] += left * row[j];
+    }
+}
+
+// Factors the Hermitian A (its lower triangle, row-major, stride wide) in place
+// as L L^H, as far as it is positive definite: returns the rows factored (n
+// where it all is).  The factor's leading m x m block is that of A's leading
+// block, so one factorization serves every m up to the count.
+std::size_t cholesky(std::complex<double>* a, std::size_t stride, std::size_t n)
+{
+    for (std::size_t i = 0; i < n; i++)
+        for (std::size_t j = 0; j <= i; j++)
+        {
+            std::complex<double> sum = a[i * stride + j];
+            for (std::size_t k = 0; k < j; k++)
+                sum -= a[i * stride + k] * std::conj(a[j * stride + k]);
+            if (i == j)
+            {
+                if (!(sum.real() > 0.0))
+                    return i;
+                a[i * stride + i] = std::sqrt(sum.real());
+            }
+            else
+                a[i * stride + j] = sum / a[j * stride + j].real();
+        }
+    return n;
+}
+
+// Solves A x = b with the leading n x n block of cholesky's factor of A.
+void cholesky_solve(const std::complex<double>* l, std::size_t stride, std::size_t n, const std::complex<double>* b,
+        std::complex<double>* x)
+{
+    for (std::size_t i = 0; i < n; i++)
+    {
+        std::complex<double> sum = b[i];
+        for (std::size_t k = 0; k < i; k++)
+            sum -= l[i * stride + k] * x[k];
+        x[i] = sum / l[i * stride + i].real();
+    }
+    for (std::size_t i = n; i-- > 0;)
+    {
+        std::complex<double> sum = x[i];
+        for (std::size_t k = i + 1; k < n; k++)
+            sum -= std::conj(l[k * stride + i]) * x[k];
+        x[i] = sum / l[i * stride + i].real();
+    }
+}
+
 // A root attribute's list of names, split at commas and blanks.
 std::vector<std::string> split_names(const std::string& text)
 {
@@ -2238,7 +2411,8 @@ std::vector<double> read_exact(int ncid, const char* name, std::size_t count, co
 
 } // namespace
 
-void Database::load_tone_sources(int file_ncid, const std::vector<int>& group_ids, const std::string& datafile_path)
+void Database::load_tone_sources(int file_ncid, const std::vector<int>& group_ids, const std::string& datafile_path,
+        ToneBlend blend, bool modes)
 {
     // A format 2 database may hold spheres alone; its sources are listed at the
     // root, each a subgroup of every condition group.
@@ -2484,24 +2658,215 @@ void Database::load_tone_sources(int file_ncid, const std::vector<int>& group_id
                     "with their phase unwound about the shaft; ",
                     std::count(source.energy_only.begin(), source.energy_only.end(), 0), " resolved (",
                     resolved_wound, " without unwinding).");
-        const auto unresolved = static_cast<std::size_t>(std::count(source.energy_only.begin(), source.energy_only.end(), 1));
-        if (source.phase_reference != PhaseReference::none && unresolved > 0)
-        {
-            std::ostringstream orders;
-            for (std::size_t k = 0; k < source.tone_count(); k++)
-                if (source.energy_only[k])
-                    orders << (orders.tellp() > 0 ? ", " : "") << source.harmonics[k];
-            warn("Database ", datafile_path, ": source ", source.tag, " has ", unresolved, " of ", source.tone_count(),
-                    " tones (shaft orders ", orders.str(), ") whose phase steps more than 90 degrees between "
-                    "neighboring cells within 20 dB of their peak: the grid does not resolve them, and they will be "
-                    "summed in energy.");
-        }
         info("Database source ", source.tag, ": ", source.tone_count(), " tones, phase_reference ",
                 to_string(source.phase_reference), source.sync_group.empty() ? ", free-running" : ", sync group ",
                 source.sync_group, ".");
     }
+    // The near-field terms first, from the grid, for the tones it resolves; then
+    // the rotating modes, which may resolve more (their near-field term stays 0).
     if (tone_near_field_)
         compute_tone_near_fields(datafile_path);
+    if (modes)
+        fit_tone_modes(blend);
+    for (auto& source : tone_sources_)
+    {
+        const std::size_t tones = source.tone_count();
+        source.blend.resize(tones);
+        for (std::size_t k = 0; k < tones; k++)
+            source.blend[k] = blend != ToneBlend::database ? blend
+                    : source.phase_reference == PhaseReference::rotor_azimuth && !source.energy_only[k]
+                    ? ToneBlend::complex
+                    : ToneBlend::energy;
+        const auto unresolved = static_cast<std::size_t>(std::count(source.energy_only.begin(), source.energy_only.end(), 1));
+        if (source.phase_reference != PhaseReference::none && unresolved > 0)
+        {
+            std::ostringstream orders;
+            for (std::size_t k = 0; k < tones; k++)
+                if (source.energy_only[k])
+                    orders << (orders.tellp() > 0 ? ", " : "") << source.harmonics[k];
+            warn("Database ", datafile_path, ": source ", source.tag, " has ", unresolved, " of ", tones,
+                    " tones (shaft orders ", orders.str(), ") whose phase steps more than 90 degrees between "
+                    "neighboring cells within 20 dB of their peak: the grid does not resolve them, and they will be "
+                    "summed in energy.");
+        }
+    }
+}
+
+void Database::fit_tone_modes(ToneBlend blend)
+{
+    // The degree the grid can carry (about 0.8 x 180 deg over its widest step:
+    // 14 on a 10 deg grid, 9 on 15 deg), at most max_mode_degree.  Each tone read
+    // as complex amplitudes takes the smallest even degree from 4 whose fit leaves
+    // at most 1 % rms (relative, over the cells within 30 dB of its peak) at every
+    // condition, else the degree with the least residual where that is at most
+    // 5 %, else none (the grid's interpolation).  The fit is least squares over the
+    // cells that hold the tone, with the smoothness penalty lambda N l (l + 1)
+    // |c|^2 (lambda 1e-6, N the cells): PSU-WOPWOP spheres subsampled to 10 deg are
+    // read back at 5 deg to 0.05 dB rms this way, against 0.78 for the bilinear dB
+    // (THEORY 4.4).  The degrees are nested (spherical_harmonics), so one Cholesky
+    // factorization per condition at the largest serves them all.
+    const double step = std::max(grid_spacing(phis), grid_spacing(thetas));
+    const int l_max = std::min(max_mode_degree, static_cast<int>(std::floor(0.8 * 180.0 / step)));
+    // The sources whose tones are read as complex amplitudes, given a phase.
+    const auto fitted_source = [blend](const ToneSource& s) {
+        return blend == ToneBlend::complex ? s.phase_reference != PhaseReference::none
+                                           : blend == ToneBlend::database && s.phase_reference == PhaseReference::rotor_azimuth;
+    };
+    if (l_max < 4 || std::none_of(tone_sources_.begin(), tone_sources_.end(), fitted_source))
+        return;
+    const std::size_t n_theta = thetas.size(), n_cells = phis.size() * n_theta;
+    const std::size_t conditions = conditions_.size();
+    const auto stride = static_cast<std::size_t>((l_max + 1) * (l_max + 1));
+    std::vector<std::complex<double>> y(n_cells * stride);
+    for (std::size_t cell = 0; cell < n_cells; cell++)
+        spherical_harmonics(l_max, shaft_polar(phis[cell / n_theta], thetas[cell % n_theta]),
+                cell_shaft_azimuth_[cell], &y[cell * stride]);
+    // Every cell's contribution to the normal equations, summed once (lower triangle).
+    std::vector<std::complex<double>> gram_all(stride * stride, 0.0);
+    for (std::size_t cell = 0; cell < n_cells; cell++)
+        add_outer(&y[cell * stride], stride, 1.0, gram_all.data());
+    std::vector<int> degrees;
+    for (int l = 4; l <= l_max; l += 2)
+        degrees.push_back(l);
+    if (degrees.back() != l_max)
+        degrees.push_back(l_max);
+    constexpr double lambda = 1e-6, tolerance = 0.01, acceptable = 0.05;
+    // Per tone: each degree's coefficients at every condition, whether it solved
+    // everywhere, and its worst residual.
+    std::vector<std::complex<double>> work(stride * stride), rhs(stride), coefs(degrees.size() * conditions * stride);
+    std::vector<char> solved(degrees.size());
+    std::vector<double> worst(degrees.size());
+    std::vector<std::size_t> loud;
+    std::size_t fitted = 0, total = 0;
+    for (auto& source : tone_sources_)
+    {
+        if (!fitted_source(source))
+            continue;
+        const std::size_t tones = source.tone_count();
+        source.mode_degree.assign(tones, 0);
+        source.mode_stride = stride;
+        source.modes.assign(conditions * tones * stride, 0.0);
+        std::ostringstream degrees_used;
+        for (std::size_t k = 0; k < tones; k++)
+        {
+            total++;
+            const auto amplitude = [&](std::size_t c, std::size_t cell) {
+                const auto a = source.amplitudes[(c * n_cells + cell) * tones + k];
+                return std::complex<double>(a.real(), a.imag());
+            };
+            std::fill(solved.begin(), solved.end(), 1);
+            std::fill(worst.begin(), worst.end(), 0.0);
+            bool usable = true;
+            for (std::size_t c = 0; c < conditions && usable; c++)
+            {
+                // The normal equations over the cells that hold the tone: from
+                // those, or every cell's less the rest, whichever are fewer.
+                std::size_t present = 0;
+                double peak = 0.0;
+                for (std::size_t cell = 0; cell < n_cells; cell++)
+                {
+                    const double magnitude = std::abs(amplitude(c, cell));
+                    present += magnitude > 0.0;
+                    peak = std::max(peak, magnitude);
+                }
+                usable = present >= 16;
+                if (!usable)
+                    break;
+                const bool from_present = 2 * present <= n_cells;
+                if (from_present)
+                    std::fill(work.begin(), work.end(), 0.0);
+                else
+                    work = gram_all;
+                std::fill(rhs.begin(), rhs.end(), 0.0);
+                loud.clear();
+                for (std::size_t cell = 0; cell < n_cells; cell++)
+                {
+                    const auto a = amplitude(c, cell);
+                    const double magnitude = std::abs(a);
+                    const auto* row = &y[cell * stride];
+                    if (!(magnitude > 0.0))
+                    {
+                        if (!from_present)
+                            add_outer(row, stride, -1.0, work.data());
+                        continue;
+                    }
+                    if (from_present)
+                        add_outer(row, stride, 1.0, work.data());
+                    if (magnitude >= peak * 0.0316227766)   // within 30 dB
+                        loud.push_back(cell);
+                    for (std::size_t i = 0; i < stride; i++)
+                        rhs[i] += std::conj(row[i]) * a;
+                }
+                const double n = static_cast<double>(present);
+                for (std::size_t i = 0; i < stride; i++)
+                {
+                    const double l = std::floor(std::sqrt(static_cast<double>(i)));
+                    work[i * stride + i] += lambda * n * l * (l + 1.0);
+                }
+                const std::size_t rank = cholesky(work.data(), stride, stride);
+                for (std::size_t d = 0; d < degrees.size(); d++)
+                {
+                    const auto m = static_cast<std::size_t>((degrees[d] + 1) * (degrees[d] + 1));
+                    if (!solved[d] || m > rank || present < m / 2)
+                    {
+                        solved[d] = 0;
+                        continue;
+                    }
+                    auto* x = &coefs[(d * conditions + c) * stride];
+                    cholesky_solve(work.data(), stride, m, rhs.data(), x);
+                    double err = 0.0, norm = 0.0;
+                    for (const std::size_t cell : loud)
+                    {
+                        std::complex<double> fit(0.0, 0.0);
+                        for (std::size_t j = 0; j < m; j++)
+                            fit += x[j] * y[cell * stride + j];
+                        const auto truth = amplitude(c, cell);
+                        err += std::norm(fit - truth);
+                        norm += std::norm(truth);
+                    }
+                    worst[d] = std::max(worst[d], norm > 0.0 ? std::sqrt(err / norm) : 0.0);
+                }
+            }
+            if (!usable)
+                continue;
+            std::size_t best = degrees.size();
+            double best_residual = std::numeric_limits<double>::infinity();
+            for (std::size_t d = 0; d < degrees.size(); d++)
+            {
+                if (!solved[d])
+                    continue;
+                if (worst[d] < best_residual)
+                {
+                    best_residual = worst[d];
+                    best = d;
+                }
+                if (worst[d] <= tolerance)
+                    break;
+            }
+            degrees_used << (k ? ", " : "") << source.harmonics[k] << ": ";
+            if (!(best_residual <= acceptable))
+            {
+                degrees_used << "grid (" << std::setprecision(2) << 100.0 * best_residual << " %)";
+                continue;
+            }
+            degrees_used << "L " << degrees[best] << " (" << std::setprecision(2) << 100.0 * best_residual << " %)";
+            source.mode_degree[k] = degrees[best];
+            // The modes resolve its phase, whatever the grid's steps between cells.
+            source.energy_only[k] = 0;
+            const auto m = static_cast<std::ptrdiff_t>((degrees[best] + 1) * (degrees[best] + 1));
+            for (std::size_t c = 0; c < conditions; c++)
+            {
+                const auto from = coefs.begin() + static_cast<std::ptrdiff_t>((best * conditions + c) * stride);
+                std::copy(from, from + m,
+                        source.modes.begin() + static_cast<std::ptrdiff_t>((c * tones + k) * stride));
+            }
+            fitted++;
+        }
+        info("Database source ", source.tag, ": rotating modes by shaft order (the fit's rms at the nodes): ",
+                degrees_used.str(), ".");
+    }
+    info("Pure tones read between the grid's nodes as rotating modes (degree up to ", l_max, "): ", fitted, " of ",
+            total, " phased tones; the rest by the grid's interpolation.");
 }
 
 void Database::compute_tone_near_fields(const std::string& datafile_path)
@@ -3080,11 +3445,15 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
     // The direction's own azimuth about the shaft, for a tone interpolated
     // unwound (ToneSource::unwind_order).
     const double alpha = shaft_azimuth(angles[0], angles[1]);
+    // Rotating modes (fit_tone_modes) at the direction, to the source's largest
+    // degree (a lower degree's are a prefix), taken when a tone first needs them.
+    thread_local std::vector<std::complex<double>> harmonics;
+    bool have_harmonics = false;
     for (std::size_t k = 0; k < tones; k++)
     {
         const int order = s.unwind_order.empty() ? 0 : s.unwind_order[k];
         // Each corner's conditions blended, empty entries dropped and the
-        // remaining weights renormalized (THEORY 4.4), by tone_blend_mode: as
+        // remaining weights renormalized (THEORY 4.4), by ToneSource::blend: as
         // complex amplitudes where the tone's phase is locked to its rotor and the
         // database's conditions share that reference (a rotor's field is linear in
         // its loading: a tone growing from nearly nothing in one condition to tens
@@ -3093,28 +3462,35 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
         // when --tone_blend db asks.  Then the corners by their bilinear weights in
         // dB.  The phase is the argument of the complex amplitudes under the same
         // weights, which needs no unwrapping and does not dip where neighbors'
-        // phases differ.
-        const ToneBlendMode mode = tone_blend_mode(s, k);
+        // phases differ.  An entry is empty where its amplitude is 0: a float's
+        // smallest is far above empty_level_db.
+        const ToneBlend mode = s.blend[k];
         double corner_level[4];
         std::complex<double> sum(0.0, 0.0), near_sum(0.0, 0.0);
         const bool near = !s.near_field.empty();
         for (std::size_t corner = 0; corner < 4; corner++)
         {
             double v[4];
-            std::complex<double> corner_sum(0.0, 0.0), corner_near(0.0, 0.0), present(0.0, 0.0);
+            std::complex<double> corner_sum(0.0, 0.0), corner_near(0.0, 0.0);
             double present_weight = 0.0, power = 0.0;
             for (std::size_t c = 0; c < 4; c++)
             {
                 const std::size_t slot = (blend.indices[c] * n_cells + stencil.corner[corner]) * tones + k;
                 const std::complex<float> a = s.amplitudes[slot];
                 const std::complex<double> ad(a.real(), a.imag());
-                const double magnitude = std::abs(ad);
-                v[c] = magnitude > 0.0 ? 20.0 * std::log10(magnitude) : no_energy_floor_db;
                 corner_sum += w[c] * ad;
-                if (w[c] != 0.0 && v[c] > empty_level_db)
+                if (mode == ToneBlend::db)
                 {
-                    present += w[c] * ad;
-                    power += w[c] * magnitude * magnitude;
+                    const double magnitude = std::abs(ad);
+                    v[c] = magnitude > 0.0 ? 20.0 * std::log10(magnitude) : no_energy_floor_db;
+                }
+                else if (w[c] != 0.0 && ad != 0.0)
+                {
+                    if (mode == ToneBlend::energy)
+                    {
+                        const double magnitude = std::abs(ad);
+                        power += w[c] * magnitude * magnitude;
+                    }
                     present_weight += w[c];
                 }
                 if (near)
@@ -3123,20 +3499,17 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
                     corner_near += w[c] * std::complex<double>(b.real(), b.imag());
                 }
             }
-            if (mode == ToneBlendMode::complex)
+            if (mode == ToneBlend::complex)
             {
-                const double m = present_weight > 0.0 ? std::abs(present) / present_weight : 0.0;
+                const double m = present_weight > 0.0 ? std::abs(corner_sum) / present_weight : 0.0;
                 corner_level[corner] = m > 0.0 ? 20.0 * std::log10(m) : no_energy_floor_db;
             }
-            else if (mode == ToneBlendMode::energy)
+            else if (mode == ToneBlend::energy)
                 corner_level[corner] = present_weight > 0.0 && power > 0.0
                         ? 10.0 * std::log10(power / present_weight)
                         : no_energy_floor_db;
             else
-                corner_level[corner] = (is_empty(v[0], w[0]) || is_empty(v[1], w[1]) || is_empty(v[2], w[2])
-                                               || is_empty(v[3], w[3]))
-                        ? blend_present(v, w)
-                        : w[0] * v[0] + w[1] * v[1] + w[2] * v[2] + w[3] * v[3];
+                corner_level[corner] = blend_db(v, w);
             if (order != 0)
             {
                 const auto unwind = std::polar(1.0, -order * cell_shaft_azimuth_[stencil.corner[corner]]);
@@ -3146,12 +3519,52 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
             sum += sw[corner] * corner_sum;
             near_sum += sw[corner] * corner_near;
         }
-        const double level = (is_empty(corner_level[0], sw[0]) || is_empty(corner_level[1], sw[1])
-                                     || is_empty(corner_level[2], sw[2]) || is_empty(corner_level[3], sw[3]))
-                ? blend_present(corner_level, sw)
-                : sw[0] * corner_level[0] + sw[1] * corner_level[1] + sw[2] * corner_level[2]
-                        + sw[3] * corner_level[3];
-        out[k].level_db = level <= empty_level_db ? no_energy_floor_db : level + blend.level_correction_db;
+        const double level = blend_db(corner_level, sw);
+        out[k].level_db = no_energy_floor_db;
+        out[k].phase = 0.0;
+        if (level <= empty_level_db)
+            ;
+        else if (!s.mode_degree.empty() && s.mode_degree[k] > 0)
+        {
+            // A tone fitted with rotating modes is read from them, its conditions
+            // blended as complex coefficients, wherever the grid holds it at all.
+            assert(mode == ToneBlend::complex);
+            if (!have_harmonics)
+            {
+                const int degree = *std::max_element(s.mode_degree.begin(), s.mode_degree.end());
+                harmonics.resize(static_cast<std::size_t>((degree + 1) * (degree + 1)));
+                spherical_harmonics(degree, shaft_polar(angles[0], angles[1]), alpha, harmonics.data());
+                have_harmonics = true;
+            }
+            const auto m = static_cast<std::size_t>((s.mode_degree[k] + 1) * (s.mode_degree[k] + 1));
+            std::complex<double> a(0.0, 0.0);
+            for (std::size_t c = 0; c < 4; c++)
+            {
+                if (w[c] == 0.0)
+                    continue;
+                const auto* coef = &s.modes[(blend.indices[c] * tones + k) * s.mode_stride];
+                std::complex<double> v(0.0, 0.0);
+                for (std::size_t j = 0; j < m; j++)
+                    v += coef[j] * harmonics[j];
+                a += w[c] * v;
+            }
+            const double magnitude = std::abs(a);
+            if (magnitude > 0.0)
+            {
+                out[k].level_db = 20.0 * std::log10(magnitude) + blend.level_correction_db;
+                out[k].phase = std::arg(a);
+            }
+        }
+        else
+        {
+            out[k].level_db = level + blend.level_correction_db;
+            if (order != 0)
+                sum *= std::polar(1.0, order * alpha);
+            if (s.phase_reference != PhaseReference::none && std::abs(sum) != 0.0)
+                out[k].phase = std::arg(sum);
+        }
+        if (order != 0)
+            near_sum *= std::polar(1.0, order * alpha);
         out[k].incoherent_db = no_energy_floor_db;
         if (s.has_incoherent)
         {
@@ -3166,40 +3579,12 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
                     const float x = s.incoherent_db[(blend.indices[c] * n_cells + stencil.corner[corner]) * tones + k];
                     v[c] = std::isfinite(x) ? static_cast<double>(x) : no_energy_floor_db;
                 }
-                if (mode != ToneBlendMode::db)
-                {
-                    double power = 0.0, total = 0.0;
-                    for (std::size_t c = 0; c < 4; c++)
-                        if (w[c] != 0.0 && v[c] > empty_level_db)
-                        {
-                            power += w[c] * std::pow(10.0, v[c] / 10.0);
-                            total += w[c];
-                        }
-                    corner_incoherent[corner] = total > 0.0 && power > 0.0 ? 10.0 * std::log10(power / total)
-                                                                           : no_energy_floor_db;
-                }
-                else
-                    corner_incoherent[corner] = (is_empty(v[0], w[0]) || is_empty(v[1], w[1])
-                                                        || is_empty(v[2], w[2]) || is_empty(v[3], w[3]))
-                            ? blend_present(v, w)
-                            : w[0] * v[0] + w[1] * v[1] + w[2] * v[2] + w[3] * v[3];
+                corner_incoherent[corner] = mode == ToneBlend::db ? blend_db(v, w) : blend_energy(v, w);
             }
-            const double incoherent = (is_empty(corner_incoherent[0], sw[0]) || is_empty(corner_incoherent[1], sw[1])
-                                              || is_empty(corner_incoherent[2], sw[2])
-                                              || is_empty(corner_incoherent[3], sw[3]))
-                    ? blend_present(corner_incoherent, sw)
-                    : sw[0] * corner_incoherent[0] + sw[1] * corner_incoherent[1] + sw[2] * corner_incoherent[2]
-                            + sw[3] * corner_incoherent[3];
+            const double incoherent = blend_db(corner_incoherent, sw);
             if (incoherent > empty_level_db)
                 out[k].incoherent_db = incoherent + blend.level_correction_db;
         }
-        if (order != 0)
-        {
-            const auto rewind = std::polar(1.0, order * alpha);
-            sum *= rewind;
-            near_sum *= rewind;
-        }
-        out[k].phase = s.phase_reference == PhaseReference::none || std::abs(sum) == 0.0 ? 0.0 : std::arg(sum);
         if (near)
         {
             // In the amplitude's units, the blend's load-factor correction with it.
@@ -3216,27 +3601,6 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
             out[k].peak_amplitude = 0.0;
         }
     }
-}
-
-Database::ToneBlendMode Database::tone_blend_mode(const ToneSource& s, std::size_t tone) const
-{
-    switch (tone_blend_)
-    {
-    case ToneBlend::db:
-        return ToneBlendMode::db;
-    case ToneBlend::complex:
-        return ToneBlendMode::complex;
-    case ToneBlend::energy:
-        return ToneBlendMode::energy;
-    case ToneBlend::database:
-        break;
-    }
-    // A phase locked to the rotor, resolved on the grid, and on one reference at
-    // every condition (the database does not say independent).
-    const bool resolved = s.energy_only.empty() || s.energy_only[tone] == 0;
-    return s.phase_reference == PhaseReference::rotor_azimuth && resolved && !tone_phases_independent_
-            ? ToneBlendMode::complex
-            : ToneBlendMode::energy;
 }
 
 std::array<double, 3> Database::tone_center(std::size_t source, const Blend& blend) const
