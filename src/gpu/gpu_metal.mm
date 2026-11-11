@@ -155,6 +155,16 @@ const char* Device::backend()
     return "metal";
 }
 
+std::string Device::why_none()
+{
+    return get() ? "" : "Metal finds no device";
+}
+
+bool compile_only(const std::vector<std::string>&)
+{
+    return false;
+}
+
 std::string Device::name() const
 {
     return impl_->device.name.UTF8String;

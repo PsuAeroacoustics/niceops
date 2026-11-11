@@ -1384,6 +1384,15 @@ a column up to the source, 0.1 dB at most where the profile has weight.
 - **In a run.** `niceops --buildings` on the demo approach: SELs within 1e-6 dB of the CPU's, with
   the states sampled and with every state evaluated. `niceops_point_field` over every fifth of its
   source positions, the shared faces sampled on both: band levels within 0.04 dB.
+- **On an AMD GPU** (HIP, an Instinct MI210), the same checks: pair sums within 1.7e-5 dB and
+  integrals within 1.8e-6 dB; the UTD transition function within 6.2e-7; a Filon panel within
+  3.6e-5 of the panel; the GPU's amplitudes within 4.7e-4 dB of the CPU's, 8.5e-4 dB with the
+  shared faces sampled (286 rays over shared faces); the partial sums within 4.9e-4 dB; and
+  `niceops --buildings` on the demo approach, SELs within 1e-6 dB. The wedge coefficient is within
+  4.9e-7 of the terms it sums, but 1.4e-4 of D itself at a wedge of n = 1.0002, whose four terms
+  cancel in pairs by 2,000 times: one float rounding of its terms is 6e-8 of them. The M4 Pro's
+  worst over the same wedges, 3e-5, is a quarter of that rounding there, so the test holds D to
+  its terms (1e-5).
 - **The levels** differ from the CPU's by what the CPU's cutoff leaves out, the pairs whose sinc
   has fallen below 1/30, which the integral keeps:
 

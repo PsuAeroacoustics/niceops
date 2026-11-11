@@ -225,7 +225,12 @@ void BandEnergies::submit()
     unsigned* pairs = which_pairs_.as<unsigned>();
     unsigned* integrals = which_quadrature_.as<unsigned>();
     unsigned* gpu_amplitudes = which_rays_.as<unsigned>();
-    float* amplitude = amplitude_.as<float>();
+    // Only a RaySet's amplitudes come from the host; the GPU forms a
+    // PointRaySet's, and a backend that copies (HIP) would otherwise take the
+    // buffer for the CPU's and copy it over and back.
+    float* amplitude = std::any_of(sets_.begin(), sets_.end(), [](const Entry& e) { return e.host != nullptr; })
+            ? amplitude_.as<float>()
+            : nullptr;
     float* length = length_.as<float>();
     float* rel = rel_.as<float>();
     float* rule = rule_.as<float>();

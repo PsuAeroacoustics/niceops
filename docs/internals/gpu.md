@@ -13,11 +13,14 @@ The GPU paths: the backend interface, the kernel dialect, how `niceops_point_fie
 | --- | --- |
 | `src/gpu/gpu.hpp` | The backend-neutral interface: `Device`, shared `Buffer`s, compiled `Kernel`s, `Batch`es of dispatches. No backend type appears in it. |
 | `src/gpu/gpu_metal.mm` | The Metal backend, in Objective-C++. |
+| `src/gpu/gpu_cuda.cpp` | The CUDA backend: the driver API and NVRTC, both opened with `dlopen` ([below](#the-cuda-backend)). |
+| `src/gpu/gpu_hip.cpp` | The HIP backend, for AMD GPUs: the HIP runtime and hiprtc, both opened with `dlopen`, through `prelude_cuda.h` ([below](#the-hip-backend)). |
+| `cmake/probe_cuda_device.cpp`, `cmake/probe_hip_device.cpp` | Run at configure by a CUDA or HIP build: whether a device answers and takes the backend, which decides whether the `--gpu` tests are registered. |
 | `src/gpu/gpu_disabled.cpp` | The backend of a build without one: `Device::get()` is null. |
 | `src/gpu/band_energy` | `BandEnergies`: a batch of ray sets on the GPU, either `RaySet`s (amplitudes from the host) or `PointRaySet`s (rays whose amplitudes the GPU forms). `plan_nodes` picks each problem's form. |
 | `src/gpu/point_rays` | `pack_point_rays`: a `PointSourceField`'s rays as the GPU's records, with a directional source's weights and how the rays add (`PointRayPacking`). |
 | `src/gpu/band_stream` | `BandStream`: packed sets from worker threads to the GPU a batch at a time, two in flight, each set's energies handed back; `niceops_point_field` and `UrbanDistrict::levels` share it. |
-| `src/gpu/kernels/` | Kernel sources in the dialect: `prelude_metal.h`; `common.h` (complex floats, the group sum, `nk_phase`); `wedge.h` (Faddeeva, the UTD transition, the wedge coefficient, Filon's panel); the `*_types.h` records shared with the host; `band_energy.kern`, `point_rays.kern`, `canyon_wave.kern`, `fdtd.kern`; `wedge_check.kern`, for the tests. |
+| `src/gpu/kernels/` | Kernel sources in the dialect: `prelude_metal.h`, `prelude_cuda.h`; `common.h` (complex floats, the group sum, `nk_phase`); `wedge.h` (Faddeeva, the UTD transition, the wedge coefficient, Filon's panel); the `*_types.h` records shared with the host; `band_energy.kern`, `point_rays.kern`, `canyon_wave.kern`, `fdtd.kern`; `wedge_check.kern`, for the tests. |
 | `src/canyon_wave.cpp` (`run_gpu`) | The canyon solver's march on the GPU, beside `run()`. |
 | `src/fdtd.cpp` (`march_gpu`) | The 3-D FDTD reference's march on the GPU, beside `march_cpu` ([urban.md](urban.md#the-full-wave-reference-srcfdtd-niceops_fdtd_field)). |
 | `cmake/embed_kernels.cmake` | Embeds every file of `NICEOPS_KERNEL_SOURCES` as a string, for `gpu::kernel_source()`. |
@@ -49,12 +52,15 @@ band's middle), then `band_pair_sum` and `band_quadrature` over their problems.
   flags, and the types `uint` and `uint32_t`. No standard library, exceptions, recursion or `double`;
   complex numbers are `nk_complex` from `common.h`, not a backend's vector type. A record the
   host fills goes in a `*_types.h` of fixed-width integers and floats, included by both sides, so
-  the layouts agree. A CUDA or HIP backend needs a `prelude_cuda.h` mapping the same names
-  (`extern "C" __global__`, `blockIdx.x`, `__shared__`, `__constant__`, `static __device__ inline`
-  for `NK_FN`, `sincosf`, `uint` and `uint32_t` typedefs, and an `NK_GROUP_ARGS` that is empty) and a `gpu_cuda.cpp` behind `gpu.hpp`, compiling the same sources
-  with NVRTC; arguments bind by position, which the slots already are.
+  the layouts agree. `prelude_cuda.h` maps the same names onto CUDA and HIP (`extern "C" __global__`,
+  `blockIdx.x`, `__shared__`, `__constant__`, `static __device__ inline`, `sincosf`, an empty
+  `NK_GROUP_ARGS`, and empty address-space words). CUDA and HIP bind arguments by position, so **a
+  kernel's slots must run 0, 1, 2, ... in its parameter order**: Metal would take them in any order,
+  CUDA and HIP silently would not. A value (`NK_VALUE`) is passed by value there, a reference on Metal;
+  nothing may take its address.
 - **No shader toolchain.** Metal compiles the sources at run time (`newLibraryWithSource`), which
-  needs the framework only; Command Line Tools without Xcode have no offline `metal` compiler. A
+  needs the framework only; Command Line Tools without Xcode have no offline `metal` compiler. CUDA
+  compiles them with NVRTC, opened at run time like the driver, and HIP with hiprtc likewise. A
   program is the prelude, `common.h`, then the sources a `Device::kernel` call names, in order;
   each program and kernel is compiled once and cached.
 - **Safe math and precise functions** (`MTLMathModeSafe`, `MTLMathFloatingPointFunctionsPrecise`):
@@ -62,7 +68,13 @@ band's middle), then `band_pair_sum` and `band_quadrature` over their problems.
   reassociating them. From macOS 15 the functions (`exp`, `log`, `atan2`, `sqrt`) default to the
   fast variants whatever the math mode, `exp` erring by 4e-6 on [-87, 0] against the precise 2e-7,
   where before macOS 15 `fastMathEnabled = NO` gave the precise ones: without the second setting the
-  results would differ by OS. They cost nothing measurable on the demo approach and moved its SELs by 5e-9 dB.
+  results would differ by OS. They cost nothing measurable on the demo approach and moved its SELs by 5e-9 dB. NVRTC's
+  defaults are already precise (`--prec-div`, `--prec-sqrt`, no flush to zero), and CUDA takes
+  `--fmad=false` besides, so that no multiply and add the kernels write apart is fused behind them.
+  **hiprtc contracts by default**: its default's results matched `-ffp-contract=fast`'s to the bit
+  on the wedge check, and `-ffp-contract=off` changed them. HIP therefore passes
+  `-ffp-contract=off`, `-fno-fast-math`, `-fno-gpu-flush-denormals-to-zero` and
+  `-fhip-fp32-correctly-rounded-divide-sqrt`, the last two HIP's defaults, stated.
 - **A batch dropped mid-encoding ends its encoder** (`Batch::Impl`'s destructor). An exception
   between a batch's first dispatch and its commit releases the encoder, and Metal aborts the
   process when an encoder is released without `endEncoding`, so the exception's message was never
@@ -143,9 +155,118 @@ band's middle), then `band_pair_sum` and `band_quadrature` over their problems.
   PML slab cell, the recording). Otherwise the default marches on the CPU and says so, and
   `--gpu` (`FdtdSetup::gpu_required`) is refused with the reason; `FdtdRecording::gpu` says which
   ran.
-- **CI never builds the Metal backend.** It runs on Linux, where `NICEOPS_GPU=AUTO` is `OFF`.
-  `point_field_gpu_refused` and `buildings_gpu_refused` cover the disabled backend there; everything
-  else here is tested only on a Mac (`[gpu]`, `point_field_gpu_*`, `buildings_gpu_*`).
+- **CI never builds a GPU backend.** It runs on Linux without the CUDA toolkit or ROCm, where
+  `NICEOPS_GPU=AUTO` is `OFF`. `point_field_gpu_refused` and `buildings_gpu_refused` cover the
+  disabled backend there; everything else here is tested only on a Mac, an NVIDIA machine or an
+  AMD one (`[gpu]`, `point_field_gpu_*`, `buildings_gpu_*`).
+
+## The CUDA backend
+
+`gpu_cuda.cpp` puts `gpu.hpp` on the CUDA driver API. It is written to keep Metal's semantics, which
+the callers rely on, rather than CUDA's habits.
+
+- **Nothing of CUDA is linked.** `libcuda.so.1` and NVRTC (`libnvrtc.so.<major>` of the headers
+  built against, then `libnvrtc.so`) are opened with `dlopen` on the first `Device::get()`, each entry
+  point looked up by the name `cuda.h` maps it to (its `_v2`). A binary built with the backend thus
+  starts where there is no driver, and `get()` is null there with the reason in `Device::why_none()`,
+  which `require` prints: `--gpu: no GPU device: the CUDA driver did not start (...)`.
+- **Buffers are managed memory**, which the CPU and the GPU both address, as Metal's shared buffers
+  are. The callers fill one batch's inputs while the previous batch runs (`BandStream`, the
+  canyon's and the FDTD's two in flight), which managed memory allows only on a device with
+  concurrent managed access: every NVIDIA GPU from Pascal on under Linux. A device without it is no
+  device. A new buffer is zeroed on the device, on a stream of its own (the batches' would wait for
+  the batches in flight), so that a field only the GPU uses is never paged through the CPU. At
+  commit each buffer the batch names is prefetched to the device ahead of its kernels, rather than
+  faulted over a page at a time; the driver's export of `cuMemPrefetchAsync` is optional.
+- **A batch records its dispatches and launches them at `commit()`**, between two events, on the
+  device's one stream. Batches then run in commit order, as a Metal queue's command buffers do, and
+  the CPU's writes made between a dispatch and the commit are seen, as on Metal. A batch holds every
+  buffer it names; dropped after its commit and before its `wait()`, it waits in its destructor, so a
+  buffer is never freed under a kernel. `wait()` reports a kernel's fault (an out-of-range access,
+  say) as Metal's does; the context is lost after one, as CUDA's are.
+- **The architecture** is the device's compute capability, or the highest NVRTC knows below it; the
+  program goes to PTX and the driver compiles that for the card, so an older toolkit's NVRTC serves a
+  newer card. `max_buffer_bytes()` is the device's memory and `working_set_bytes()` what is free less
+  a tenth (at most 512 MB): managed memory could oversubscribe, but an FDTD march that paged would be
+  slower than the CPU's.
+- **`gpu::compile_only`** compiles a program without a device (NVRTC needs none), so a machine with
+  the toolkit and no working driver still checks every kernel against the dialect (`every kernel
+  program compiles for the backend`). Metal cannot, and the case skips there. On sm_89 every kernel
+  assembles without register spills; `face_ratios`'s probe arrays are its 616-byte stack frame.
+- **The `--gpu` tests need a device at configure.** CTest cannot skip a fixture's setup and the
+  comparisons that need it together, so configure runs `cmake/probe_cuda_device.cpp`: where no device
+  answers, `NICEOPS_GPU_DEVICE` is off and the tests that pass `--gpu` are registered as refusals,
+  matching `no GPU device`. Reconfigure after starting a driver.
+- **Not yet measured on a device.** The kernels compile and assemble, and the host code is built and
+  tested against a missing driver; no kernel has yet run on an NVIDIA GPU, so the `[gpu]` cases and
+  the `*_gpu_matches_cpu` comparisons are its first test. Until they pass on a device, treat the
+  CUDA results as unverified. The kernels' sources under `prelude_cuda.h` have run on an AMD GPU
+  through the HIP backend ([below](#the-hip-backend)); NVRTC, the driver API and this backend's
+  host code are untested. The HIP backend left managed memory for what migrating it a page at a
+  time cost on the MI210; whether CUDA's managed memory costs as much on an NVIDIA GPU is not
+  measured, and the `BandStream::Energies` kept across streams serve both.
+
+## The HIP backend
+
+`gpu_hip.cpp` puts `gpu.hpp` on HIP, for AMD GPUs: the HIP runtime in place of the driver API,
+hiprtc in place of NVRTC, `hipModuleLaunchKernel` in place of `cuLaunchKernel`, and `prelude_cuda.h`
+unchanged (hiprtc defines `__global__`, `__shared__`, `blockIdx` and `sincosf` alike). Its memory is
+not CUDA's: see the first two points. It has run on an Instinct MI210 (gfx90a, ROCm 7.1), where
+every `[gpu]` case and `*_gpu_matches_cpu` comparison passes.
+
+- **Nothing of ROCm is linked.** `libamdhip64.so` and `libhiprtc.so` of the headers' major version
+  are opened on the first `Device::get()`, from the loader's path and then from the configured
+  ROCm's `lib` (`NICEOPS_ROCM_LIB_DIR`). Entry points are looked up by the name the header maps
+  each to (`hipGetDevicePropertiesR0600`, whose struct is the headers'); `hipMalloc` and
+  `hipHostMalloc` are typed by hand, since the header overloads them. The host compiler reads the
+  headers with `__HIP_PLATFORM_AMD__`, so GCC builds the backend: ROCm's clang is not needed.
+- **A buffer is device memory and a pinned host copy, not managed memory.** On the MI210, managed
+  memory without XNACK stays in host memory, where a copy kernel read it at 51 GB/s against
+  1,215 GB/s from device memory. With XNACK on (`HSA_XNACK=1`) it migrates, but a page at a time
+  in each direction: with the CPU writing 16 MB of a batch's inputs and a kernel reading them, the
+  CPU's writes took 9.2 ms and the GPU's side 14.7 ms, against 0.57 and 0.66 ms for device memory
+  and explicit copies. The demo approach among buildings took 15.5 s on the GPU that way, against
+  23.5 s on 14 threads of the CPU. `hipDeviceAttributeConcurrentManagedAccess` reads 1 with XNACK
+  off or on, so it tells nothing. Without managed memory the backend needs no XNACK, and takes any
+  device HIP does.
+- **The copies follow `data()`**, which is the CPU's only way to a buffer's contents:
+  - `data()` brings the host's copy up to date where a finished batch wrote the device's, and
+    marks the buffer touched and the CPU's.
+  - A commit copies over each buffer it names that the CPU touched since the last copy, unless a
+    batch in flight names it or a finished one wrote it since. Then the device's copy is the newer
+    and the CPU, which may not write a buffer in flight, only read it: the canyon's partial
+    energies are read after one batch's `wait()` while the next, which writes them too, runs.
+  - Each buffer a batch's kernels may write (an `NK_OUT` slot, read from the kernel's signature in
+    its source) comes back as the batch ends if it is the CPU's, else when `data()` asks for it.
+  - So a kernel's scratch (the point model's amplitudes and phasors) and the FDTD's and canyon's
+    fields never cross. Copied whole both ways, these were most of a batch's traffic.
+  - **What callers owe the HIP backend**: write a buffer before the commit that reads it and read
+    it after the `wait()` (as on Metal); take `data()` afresh after each `wait()` rather than keep
+    its pointer across batches; and take it only for a buffer the CPU fills or reads.
+    `BandEnergies::submit` takes `amplitude_` only for sets that bring their amplitudes.
+- **Pinning host memory is the expensive allocation**, so freed buffers' blocks are pooled (up to
+  1 GB idle; capacities a power of two to 64 MB, an eighth of one past it; a buffer takes the
+  smallest idle block it fits that is not a quarter larger), and host copies are mapped on 2 MB
+  boundaries, advised into transparent huge pages, zeroed and then registered. `hipHostMalloc`
+  took 213 ms for 256 MB with its zeroing and 62 ms to free; this takes 35 and 3. A
+  `UrbanDistrict::levels` call keeps its two `BandEnergies` across the streams it makes, one for
+  each group of pairs (`BandStream::Energies`): made afresh each time, they regrew their buffers
+  from nothing, and allocating took three times the kernels' time.
+- **Compiled code objects are cached on disk** (`NICEOPS_KERNEL_CACHE`, else
+  `$XDG_CACHE_HOME/niceops/kernels` or `~/.cache/niceops/kernels`; `off` for none). hiprtc took
+  1.2 s over `point_rays.kern` on every run; ROCm's own cache (`AMD_COMGR_CACHE`) saved none of
+  it. An entry holds its whole key (hiprtc's version, the options, the target, the program) and a
+  load compares it byte for byte; an entry the runtime will not load is compiled afresh.
+  `compile_only` never uses the cache.
+- **The target is the device's own target ID** (`gfx90a:sramecc+:xnack-`); `compile_only` compiles
+  for `gfx90a`, which needs no device.
+- **HIP's current device is a thread's**, so every call binds it (`hipSetDevice`): a `BandStream`'s
+  GPU thread is not the one that made the device. The first device is taken; `HIP_VISIBLE_DEVICES`
+  chooses another.
+- **A grid counts threads in 32 bits** on AMD, so a dispatch of 2^32 threads or more is refused.
+  Wavefronts are 64 wide, which no kernel assumes: the group sums take the group's size.
+- **A kernel's memory fault comes back from `wait()`**, as on CUDA: the event's synchronize
+  returns `hipErrorIllegalAddress` ("an illegal memory access was encountered").
 
 ## The canyon wave solver
 
@@ -181,6 +302,16 @@ an M4 Pro (the development build, asserts on): `niceops --buildings` takes 1.2 s
 against 3.2 s with `--no-gpu`, its SELs within 1e-6 dB of the CPU's; `niceops_point_field` over
 every fifth of those source positions, 9,177 pairs, takes 0.81 s against 1.49 s on 14 threads, its
 band levels within 0.04 dB.
+
+The same demo approach on an Instinct MI210 (HIP), the host an EPYC 9684X (96 cores, 192
+threads), the kernels cached: `niceops --buildings` takes 4.3 s on the GPU at `-j 14` against
+23.5 s with `--no-gpu`, and 4.8 s against 3.2 s on every thread, its SELs within 1e-6 dB of the
+CPU's. On every thread the GPU is busy 1.3 s (0.75 s of kernels, 0.53 s of copies) of the 2.8 s
+between its first work and its last, and waits on the host the rest: the workers' packing and
+the one thread that fills each batch set the pace there. Each of the HIP backend's measures took
+the `-j 14` run from 15.5 s on managed memory: explicit copies 9.1 s; the pool 8.2; the
+energies kept across streams 6.5; huge pages 5.8; the code-object cache 5.0; the copies
+following `data()` 4.3.
 
 On the 49-block district, an M4 Pro (10 performance and 4 efficiency cores, 20 GPU cores), with
 every shared face's integral at every wavenumber.
