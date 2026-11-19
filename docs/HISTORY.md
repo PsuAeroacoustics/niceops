@@ -4,6 +4,15 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## Stored rotor directivities, their exact near field, and body axes (November 2026)
+
+A source that stores the directivity its grid was evaluated from (panam's fitted rotors) is now read from it as stored,
+at its own degree, in place of modes fitted to the grid; panam's fitted hexacopter databases store degree 11, where the
+fit had stopped at 4 (0.6–0.9 % rms at the nodes), and a hover's held-out segments moved by 0.011 dB rms, up to 1 dB in
+the nulls. Every tone read from its modes now takes its near-field term from them, exactly, in place of the grid's
+differences, which were zero for a tone only the modes resolve. A source may be in the airframe's axes (`frame =
+body`), read in the attitude `--attitude` gives; without it nothing changes.
+
 ## Tones between grid nodes from rotating modes (November 2026)
 
 A format 2 database's tones were read between the grid's nodes by bilinear interpolation, the level in dB and the phase

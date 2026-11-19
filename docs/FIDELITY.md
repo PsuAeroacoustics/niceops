@@ -2610,6 +2610,24 @@ of predicted and measured power, against about 0 for the energy sum of the phase
   9.90 dB in free field (the loudest raise it 3.53 dB), each certified the global optimum by a
   semidefinite bound to 0.000 dB. The incoherent part does not lock: with it the benefit is
   1.40 dB at most.
+- **Body axes do not matter in hover.** The same folds fitted with each sample's direction in its
+  rotors' body axes (from the logged attitude), the database's sources in body axes and NICEOPS
+  given the logged attitude (`--attitude`): the airframe tilted 3.7° rms, and every score moved by
+  0.01–0.08 (Leq and rms in dB, beating as above).
+
+  | Held out | Order | Leq, level frame | Leq, body axes | Beating, level → body |
+  | --- | --- | --- | --- | --- |
+  | Plates | 2 | −0.87 (2.19) | −0.79 (2.17) | 0.41 → 0.41 |
+  | | 4 | +0.51 (2.36) | +0.53 (2.36) | 0.01 → 0.02 |
+  | Heights | 2 | +0.12 (1.81) | +0.12 (1.89) | 0.57 → 0.56 |
+  | | 4 | +1.28 (2.89) | +1.23 (2.81) | 0.01 → 0.02 |
+  | Days | 2 | −0.43 (2.44) | −0.42 (2.47) | 0.56 → 0.55 |
+  | | 4 | +0.14 (2.65) | +0.19 (2.65) | −0.04 → −0.04 |
+
+  NICEOPS reproduces the fit's own body-axes prediction as closely as the level one's (correlation
+  0.97–0.98 at blade passage, 0.76–0.80 at order 4; means within 0.06 dB), which checks its
+  attitude and hub placement against the harness's geometry. Both runs read the databases'
+  stored directivities (degree 11).
 
 ### Database screen
 

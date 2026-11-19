@@ -289,6 +289,38 @@ the sources only in format 2. Things to keep:
   data and is filled from the neighboring cells, as a tone's is: a writer must give a quiet
   direction a finite floor. PANAM's measured writer once wrote a non-negative fit's zeros as
   -inf, and the fill put energy beside them (a 5 dB spike through the off-receiver ground ratio).
+- **A stored directivity is the tone's modes as they stand** (`ToneSource::stored_modes`, read in
+  `load_tone_sources`, taken in `fit_tone_modes` before any fit). Keep:
+  - **The conversion** from panam's frame and units: polar angle from down, so (-1)^(l + k), and
+    peak Pa to rms over 20 uPa. The check against the grid (0.1 % rms within 30 dB of the peak, else
+    refused) is what catches a convention slip; panam's fitted hexacopter databases reproduce their
+    grids to 6e-8.
+  - **Its degree, not the fit's.** Those databases store degree 11; the fit to their 5° grids
+    stopped at 4, the first even degree within 1 % (0.6-0.9 %). Over a hover's held-out segments
+    the two differ by 0.011 dB rms, up to 1 dB in the nulls. A degree past `max_mode_degree` falls
+    back to the fit with a warning.
+  - Tested by `a source's stored directivity is read as its rotating modes exactly between the
+    nodes`: degree 10 on a 15° grid, beyond the 9 the grid carries, read between the nodes to
+    1e-6 dB; and 1 % louder coefficients refused.
+- **A mode-read tone's near-field term is its modes'** (`ToneSource::near_modes`,
+  `compute_mode_near_fields`). D A is projected exactly to degree L + 1 and scaled by -l (l + 1),
+  so `spherical_harmonics` runs to `max_mode_degree + 1`. The grid's differences, which the term
+  was read from before, depend on which form they unwind (shaft order 2 or 4 on the same field
+  disagreed by 6 % of the peak), and are zero for a tone only the modes resolve. Tested by `a
+  mode-read tone's near-field term is its modes' Laplacian exactly`: in hover against -l (l + 1)
+  per mode to 1e-6, and at M 0.59 against the three-dimensional Laplacian of the direction's field
+  by central differences (r = 1), to 1e-5.
+- **A source in body axes is read in the airframe's** (`ToneSource::body_frame`, the source's
+  `frame` attribute; `AttitudeHistory`, `body_frame` in `src/tones.cpp`). `prepare` builds the body
+  frame once per state and places those sources' hubs with it; `evaluate` hands it to
+  `tone_directivity`, which reads the grid, the modes and the incoherent part in it in place of
+  the state's frame. The band spectrum stays in the sphere frame. Without `--attitude` a body source
+  is read in the sphere frame (a warning), so a run without one is the old run. Tested by `a source
+  in body axes turns with the airframe's attitude`: level along the nose is the run without an
+  attitude to 1e-9; pitched 12° and rolled -20°, the power at each observer equals the level
+  airframe's at the observer turned back about the vehicle, to 1e-9; and the refusals (no body
+  source, no frame bearing). `an attitude's body axes when level along the nose or pitched or
+  rolled` pins the angle conventions.
 - **Multirotor axes share the helicopter's three slots** (`ConditionAxes`, THEORY 2.1):
   `condition(i)` is (x, z, M_h) there, `blend_at` takes the multirotor axes in its own branch, and the
   helicopter code is untouched, branch for branch, so its blends are the old ones to the bit.

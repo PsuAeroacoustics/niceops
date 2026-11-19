@@ -137,7 +137,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--min_load_factor` | With `two_sided`, the smallest load factor, g, the law is taken to. Default 0.5; at most 1. Refused without `two_sided`. |
 | `--speed_reference` | `ground` or `air`: which velocity sets μ, the path angle and the `velocity` nose. Default: what the database records, ground if nothing ([Speed reference](#speed-reference)). |
 | `--condition_density` | `vehicle` or `atmosphere`: which air density C<sub>T</sub> (or a multirotor database's axes) is formed with, the vehicle file's or the run's air at each state's height. Default: `vehicle` for a helicopter database, `atmosphere` for a multirotor one ([The density in C<sub>T</sub>](#the-density-in-ct)). |
-| `--rotor_azimuth`, `--rotor_history`, `--sync_group`, `--tone_coherence`, `--tone_ground`, `--tone_near_field` | A format 2 database's rotor tones: each rotor's azimuth, or its logged azimuth and speed over time, coherent groups declared for the run, coherent or energy sums, the ground per tone or per band, and the spheres' near-field term ([Pure-tone sources](#pure-tone-sources-format-2)). |
+| `--rotor_azimuth`, `--rotor_history`, `--attitude`, `--sync_group`, `--tone_coherence`, `--tone_ground`, `--tone_near_field` | A format 2 database's rotor tones: each rotor's azimuth, or its logged azimuth and speed over time, the airframe's attitude for sources in body axes, coherent groups declared for the run, coherent or energy sums, the ground per tone or per band, and the spheres' near-field term ([Pure-tone sources](#pure-tone-sources-format-2)). |
 | `--nose` | `velocity`, `ground_velocity` or `heading`. Default: what the database's `azimuth_reference` records, `velocity` if nothing ([The sphere's nose](#the-spheres-nose)). |
 | `--accept_vehicle_mismatch` | Warn, rather than refuse, when the vehicle file disagrees with the database by more than 2 percent ([Vehicle file](#vehicle-file)). |
 | `--source_radius` | The source's own size, in `--units`. Inside the database's sphere radius, spreading and absorption run on down to it, and below it the level is held. Default: the sphere radius, so an observer inside the sphere hears the sphere's level. For a source much smaller than its sphere, such as a multirotor on a 100 ft sphere passing a few meters from a microphone. Refused at or below 0, or beyond the sphere radius. |
@@ -630,15 +630,30 @@ data, filled from the neighboring cells: give a quiet direction a low finite lev
 in energy, each rotor on its own whatever its sync group, with the tone's own frequency, ground
 and speed scaling. A source gives it at every condition or at none.
 
+A source may store the directivity its grid was evaluated from, as panam's fitted sources do:
+`directivity_real` and `directivity_imag` (tone, coefficient), complex peak pressure in Pa at the
+sphere radius as orthonormal spherical harmonics to the variable's `degree` attribute (16 at
+most), polar angle from the down axis and azimuth from the nose toward starboard. Under
+`--tone_interpolation modes` its phased tones are then read from it as stored, exact between the
+grid's nodes whatever their degree, in place of a fit to the grid. The grid must be that
+directivity evaluated: a database whose two differ by more than 0.1 % is refused. A source gives it
+at every condition or at none.
+
+A source whose group attribute `frame` is `body` is in the airframe's axes: its grid, its stored
+directivity and its hub turn with the vehicle's attitude, given by `--attitude`. The default,
+`sphere`, is the database's sphere frame, which follows the flight. A run without `--attitude` reads
+a body-axes source in the sphere frame, as if the airframe were level along its nose, and warns.
+
 | Option | What it does |
 | --- | --- |
 | `--rotor_azimuth tag=deg,...` | Sets each named rotor's azimuth, in degrees in its own sense of rotation: the synchrophasing angle. Repeatable. Default: the azimuth each rotor's phases were locked to (the `azimuth` the database records for it), which reproduces the phasing it was predicted with; without one, the stored phases as they are. |
+| `--attitude FILE` | Reads the database's sources in body axes (`frame = body`) in the airframe's attitude over time: a CSV of `time` (s, the trajectory's), `heading` (compass degrees), `pitch` (degrees, nose up) and `roll` (degrees, right side down), the aerospace yaw, pitch and roll. Needs the frame's bearing (`--frame_bearing`, or a WGS84 track). Every state must lie within it. Refused for a database with no source in body axes. Between samples each angle is interpolated linearly, the heading the short way round. |
 | `--rotor_history FILE` | Replays rotors from a log: a CSV of `time` (s, the trajectory's) and, for each rotor, `<tag>_azimuth` (degrees in its own sense of rotation, wrapped or not) and `<tag>_rate` (rad/s, either sign). The named rotors add coherently with each other (in energy under `--tone_coherence energy`), each at its logged azimuth and at its logged shaft rate's frequencies at every state: free-running rotors heard with the interference they had. Every state must lie within the log; a rotor cannot be both replayed and set by `--rotor_azimuth` or grouped by `--sync_group`. Samples must be close enough that each step turns less than half a turn more or less than the rate says. Only rotors whose phases are tied to their azimuth can be replayed. |
 | `--sync_group tag,tag,...` | Adds the named rotors coherently, replacing their database groups, at their mean shaft rate (logged). Repeatable, one group each. Only rotors whose phases are tied to their azimuth can join one. |
 | `--tone_coherence coherent\|energy` | `energy` adds every rotor in energy, each keeping its own ground interference: the level with no synchrophasing. Default `coherent`. |
 | `--tone_ground frequency\|band` | `frequency` (default) reflects each tone at its own frequency where the path allows; `band` applies the band model's correction to free-field tones. |
 | `--tone_blend database\|complex\|energy\|db` | How a tone's operating conditions blend. `database` (default): a tone whose phase is locked to its rotor blends as complex amplitudes, unless the database says its conditions' phases are on independent references (`tone_phase_across_conditions = independent`); a tone without a usable phase, and the incoherent part, in mean-square pressure. `complex`, `energy` or `db` (levels in dB) forces one blend for every tone; `complex` on conditions whose phases are not on one reference interferes them falsely. |
-| `--tone_interpolation modes\|grid` | How a tone is read between the sphere's grid nodes. `modes` (default) fits each tone whose conditions blend as complex amplitudes with rotating modes (spherical harmonics about the shaft) when the database loads, and reads it from them. A tone the fit cannot reproduce to 5 % rms at the nodes (measured per-rotor tones, typically) keeps the grid. `grid` interpolates every tone's level bilinearly in dB and its phase unwound by the rotor-alone mode. The log gives each tone's degree and fit. |
+| `--tone_interpolation modes\|grid` | How a tone is read between the sphere's grid nodes. `modes` (default) reads each tone whose conditions blend as complex amplitudes from rotating modes (spherical harmonics about the shaft): the directivity the source stores, where it stores one, else modes fitted to the grid when the database loads. A tone the fit cannot reproduce to 5 % rms at the nodes (measured per-rotor tones, typically) keeps the grid. `grid` interpolates every tone's level bilinearly in dB and its phase unwound by the rotor-alone mode. The log gives each tone's degree and fit. |
 | `--tone_near_field on\|off` | `on` (default) adds each tone's first-order near-field term to its far-field sphere at each arrival's range; `off` keeps the far field alone. |
 
 **Wind.** With a wind profile (`--atmosphere` with wind columns, or `--wind`), each tone's

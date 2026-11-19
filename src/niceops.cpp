@@ -3016,6 +3016,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& path_job,
     // Each ground class's admittance at any frequency, for the per-frequency
     // ground (empty without a ground model).
     std::vector<AdmittanceTable> tone_admittance;
+    if (options.tones.attitude && !(database.has_tones() && database.band_content() != BandContent::total))
+        input_error("--attitude turns a format 2 database's pure-tone sources in body axes, and the run evaluates "
+                "no tones (", database.has_tones() ? "the bands already hold them, band_content total"
+                                                   : "the database has none", "). Refused.");
     if (database.has_tones() && database.band_content() == BandContent::total)
     {
         warn("The database carries ", database.tone_sources().size(), " pure-tone sources and its band spectrum "
@@ -3037,7 +3041,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& path_job,
         if (!std::isnan(options.db_cutoff))
             input_error("--db_cutoff does not combine with a database's pure tones: the cutoff's bound is on the "
                     "band spectrum, which leaves the tones out.");
-        tone_evaluator.emplace(database, options.tones, band_gains, sound_speed);
+        ToneRunOptions tone_options = options.tones;
+        tone_options.frame_bearing_deg = known_frame_bearing(options);
+        tone_evaluator.emplace(database, tone_options, band_gains, sound_speed);
         const auto& groups = tone_evaluator->groups();
         for (const auto& g : groups)
         {
@@ -3084,6 +3090,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& path_job,
                     input_error("--rotor_history covers ", span[0], " to ", span[1], " s, and the trajectory has a "
                             "state at ", trajectory.states[it].t, " s: trim the trajectory to the log, or log longer.");
             log("Tones: replaying the --rotor_history rotors at their logged azimuths and shaft rates, coherently.");
+        }
+        if (tone_evaluator->follows_attitude())
+        {
+            const auto span = tone_evaluator->attitude_span();
+            for (std::size_t it = 0; it < nt; it++)
+                if (!(trajectory.states[it].t >= span[0] && trajectory.states[it].t <= span[1]))
+                    input_error("--attitude covers ", span[0], " to ", span[1], " s, and the trajectory has a state "
+                            "at ", trajectory.states[it].t, " s: trim the trajectory to the log, or log longer.");
+            log("Tones: sources in body axes are read in the airframe's axes from --attitude.");
         }
         for (std::size_t it = 0; it < nt; it++)
         {
@@ -5470,6 +5485,7 @@ int run(int argc, char* argv[])
     std::string condition_density;
     std::vector<std::string> rotor_azimuth_args;
     std::string rotor_history_file;
+    std::string attitude_file;
     std::vector<std::string> sync_group_args;
     std::string tone_coherence = "coherent";
     std::string tone_ground = "frequency";
@@ -5869,6 +5885,11 @@ int run(int argc, char* argv[])
             "<tag>_azimuth (degrees in its own sense of rotation) and <tag>_rate (rad/s). The named rotors add "
             "coherently with each other, each at its logged azimuth and shaft rate at every state: free-running "
             "rotors' interference as it was. Every state must lie within the log.");
+    app.add_option("--attitude", attitude_file,
+            "A format 2 database's sources in body axes (frame = body) read in the airframe's axes over time: a CSV "
+            "of time (s, the trajectory's), heading (compass degrees), pitch (degrees, nose up) and roll (degrees, "
+            "right side down). Needs the frame's bearing (--frame_bearing, or a WGS84 track). Every state must lie "
+            "within it.");
     app.add_option("--sync_group", sync_group_args,
             "A format 2 database's rotors: tag,tag,... adds the named sources coherently, replacing their database "
             "groups, at the group's mean shaft rate. Repeatable, one group each.");
@@ -7420,6 +7441,8 @@ int run(int argc, char* argv[])
         options.tones.sync_groups.push_back(parse_sync_group(text));
     if (!rotor_history_file.empty())
         options.tones.rotor_history = read_rotor_history(rotor_history_file);
+    if (!attitude_file.empty())
+        options.tones.attitude = read_attitude(attitude_file);
     options.tones.coherence = *parse_tone_coherence(tone_coherence);
     options.tones.ground = *parse_tone_ground(tone_ground);
     options.tones.near_field = tone_near_field == "on";

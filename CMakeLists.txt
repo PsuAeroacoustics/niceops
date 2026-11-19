@@ -1907,7 +1907,13 @@ add_test(NAME tones_refuse_unknown_group COMMAND niceops -d integrated/tones_b40
 set_tests_properties(tones_refuse_unknown_group PROPERTIES PASS_REGULAR_EXPRESSION "--sync_group names source tail, which the database does not carry")
 add_test(NAME tones_refuse_bad_azimuth COMMAND niceops -d integrated/tones_b407.nod ${TONE_RUN} --rotor_azimuth left0 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(tones_refuse_bad_azimuth PROPERTIES PASS_REGULAR_EXPRESSION "give each source as tag=degrees")
-set_tests_properties(tones_total_runs_on_bands tones_refuse_no_spectral tones_refuse_db_cutoff tones_refuse_buildings tones_refuse_export tones_refuse_unknown_group tones_refuse_bad_azimuth PROPERTIES FIXTURES_REQUIRED tone_databases)
+# --attitude turns sources in body axes only: refused for a database whose sources are in its sphere frame, and for
+# one whose run evaluates no tones.
+add_test(NAME tones_refuse_attitude_sphere_frame COMMAND niceops -d integrated/tones_b407.nod ${TONE_RUN} --attitude tests/data/attitude_level.csv --frame_bearing 210 -o integrated/tones_refuse_attitude.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_refuse_attitude_sphere_frame PROPERTIES PASS_REGULAR_EXPRESSION "are in its sphere frame, which follows the flight. Refused")
+add_test(NAME tones_refuse_attitude_no_tones COMMAND niceops -d databases/B407_fixed_load_factor.nod ${TONE_RUN} --attitude tests/data/attitude_level.csv --frame_bearing 210 -o integrated/tones_refuse_attitude_no_tones.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(tones_refuse_attitude_no_tones PROPERTIES PASS_REGULAR_EXPRESSION "the run evaluates no tones")
+set_tests_properties(tones_total_runs_on_bands tones_refuse_no_spectral tones_refuse_db_cutoff tones_refuse_buildings tones_refuse_export tones_refuse_unknown_group tones_refuse_bad_azimuth tones_refuse_attitude_sphere_frame PROPERTIES FIXTURES_REQUIRED tone_databases)
 # A multirotor database (condition_axes multirotor): the tone fixture restated in momentum similarity's axes,
 # run with a hexacopter's vehicle file; its axes take the run's air by default, and what cannot place a state is
 # refused.

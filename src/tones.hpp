@@ -40,6 +40,7 @@
 #include <atomic>
 #include <complex>
 #include <cstddef>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -95,6 +96,31 @@ struct RotorHistory
 // partner, or a rotor that turns backward.
 std::map<std::string, RotorHistory> read_rotor_history(const std::string& path);
 
+// The vehicle's attitude over time (--attitude): the airframe's axes, which a
+// source in body axes (ToneSource::body_frame) is read in at each state.
+struct AttitudeHistory
+{
+    // s, increasing, in the trajectory's time.
+    std::vector<double> time;
+    // rad: the compass heading (unwrapped, each step the short way round), the
+    // pitch (nose up) and the roll (right side down), the aerospace yaw, pitch
+    // and roll that turn north-east-down into the body's forward-right-down.
+    std::vector<double> heading, pitch, roll;
+    // The body's axes at t (linear in the angles between samples; t must lie
+    // within the history) in the local frame whose +x lies along the compass
+    // bearing `frame_bearing_deg`: nose forward, starboard, normal up.
+    SphereFrame frame_at(double t, double frame_bearing_deg) const;
+};
+
+// The airframe's axes from the aerospace angles (rad) in the local frame whose
+// +x lies along the compass bearing `frame_bearing_deg`.
+SphereFrame body_frame(double heading, double pitch, double roll, double frame_bearing_deg);
+
+// An --attitude file: a CSV of time (s, the trajectory's), heading (compass
+// degrees), pitch and roll (degrees).  Refuses a file whose time does not
+// increase, a non-finite value, a missing column, or text after the data.
+AttitudeHistory read_attitude(const std::string& path);
+
 struct ToneRunOptions
 {
     ToneCoherence coherence = ToneCoherence::coherent;
@@ -112,6 +138,11 @@ struct ToneRunOptions
     // any other), each at its logged azimuth and rate at every state: a replay of
     // free-running rotors, their interference as it was.
     std::map<std::string, RotorHistory> rotor_history;
+    // --attitude: the airframe's axes over time, in which each source in body
+    // axes is read (its grid, modes and hub); and the compass bearing of the
+    // local +x they are turned into the run's frame by.
+    std::optional<AttitudeHistory> attitude;
+    double frame_bearing_deg = std::numeric_limits<double>::quiet_NaN();
     // --tone_near_field on: each arrival's tone takes the first-order near-field
     // term, A + (i / (2 k R)) Lap[D A] (THEORY 4.4), where the database holds it
     // (DatabaseLoadOptions::tone_near_field).
@@ -196,6 +227,10 @@ public:
         // database's rate)^tone_speed_exponent; 1 where the two agree or the
         // database gives no exponent.
         std::vector<double> amplitude_scales;
+        // The airframe's axes at this state (--attitude), in which each source in
+        // body axes is read; unset without an attitude, when such a source is read
+        // in the state's sphere frame.
+        std::optional<SphereFrame> body;
     };
     // `time` is the state's (s, the trajectory's), which a --rotor_history needs.
     StateTones prepare(const Database::SourceState& state, const Vec3& velocity,
@@ -206,6 +241,15 @@ public:
         return !histories_.empty();
     }
     std::array<double, 2> history_span() const;
+    // Whether the run reads sources in body axes in an --attitude, and its span.
+    bool follows_attitude() const
+    {
+        return options_.attitude.has_value();
+    }
+    std::array<double, 2> attitude_span() const
+    {
+        return {options_.attitude->time.front(), options_.attitude->time.back()};
+    }
 
     // The ground for the per-frequency path: the model and its admittance at any
     // frequency.  Null: free field, direct arrivals only.
