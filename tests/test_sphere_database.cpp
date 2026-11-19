@@ -4890,6 +4890,68 @@ TEST_CASE("a stored directivity's degree is bounded before it is used", "[sphere
     std::filesystem::remove(path);
 }
 
+TEST_CASE("the modes blend each condition's own coefficients", "[sphere_database][format2][tones]")
+{
+    // Condition c holds (1 + c) times the field, stored and on the grid alike.  Between conditions the tone is the
+    // complex blend sum_c w_c (1 + c) A: a lookup that read one condition's modes for all, or the wrong one, is off by
+    // decibels.  Stored modes and modes fitted to the grid both.
+    constexpr int degree = 4;
+    auto fixture = stored_modes_fixture(degree);
+    const auto level = fixture.amplitude;
+    fixture.condition_amplitude = [level](std::size_t i, std::size_t s, std::size_t m, std::size_t n, std::size_t k) {
+        return level(s, m, n, k) + 20.0 * std::log10(1.0 + static_cast<double>(i));
+    };
+    const auto fitted_path = write_tone_test_database("niceops_tone_modes_conditions_fitted.nod", fixture);
+    const auto stored_path = write_tone_test_database("niceops_tone_modes_conditions_stored.nod", fixture);
+    add_stored_modes(stored_path, degree, 2, 1.0, "", [](std::size_t i) { return 1.0 + static_cast<double>(i); });
+    const Database fitted(fitted_path), stored(stored_path);
+    REQUIRE(stored.tone_sources()[0].stored_degree == degree);
+    REQUIRE(fitted.tone_sources()[0].stored_degree == 0);
+    REQUIRE(fitted.tone_sources()[0].mode_degree[0] > 0);
+    for (const auto& [mu, gamma] : {std::pair {0.3, 0.0}, std::pair {0.0, 0.4}, std::pair {0.3, 0.4}})
+    {
+        const auto state = stored.source_state(Vec3(0.0, 0.0, 100.0), Vec3(10.0, 0.0, 0.0), Vec3(0.0, 0.0, 1.0), mu,
+                gamma, test_ct_reference);
+        double scale = 0.0, spread = 0.0;
+        for (std::size_t c = 0; c < 4; c++)
+        {
+            scale += state.blend.weights[c] * (1.0 + static_cast<double>(state.blend.indices[c]));
+            if (state.blend.weights[c] > 0.0 && state.blend.weights[c] < 1.0)
+                spread += 1.0;
+        }
+        REQUIRE(spread >= 2.0);
+        double worst_stored = 0.0, worst_fitted = 0.0, peak = 0.0;
+        for (double phi = -83.0; phi <= 83.0; phi += 11.0)
+            for (double theta = 7.0; theta <= 173.0; theta += 13.0)
+            {
+                const auto g = grid_direction(phi, theta);
+                const Vec3 d = (state.frame.nose * g.forward + state.frame.starboard * g.starboard
+                        + state.frame.normal * g.up).normalized();
+                Database::ToneLookup a[2], b[2];
+                stored.tone_directivity(0, state, d, a);
+                fitted.tone_directivity(0, state, d, b);
+                for (std::size_t k = 0; k < 2; k++)
+                {
+                    const auto truth = scale * panam_directivity(stored_test_coefficients(degree, k), degree, phi, theta);
+                    const double truth_db = 20.0 * std::log10(std::abs(truth) / std::sqrt(2.0) / 20e-6);
+                    worst_stored = std::max(worst_stored, std::fabs(a[k].level_db - truth_db));
+                    // The fit, compared as complex amplitudes against the peak (in dB its small error is large in
+                    // the field's nulls): grid amplitude is rms over 20 uPa.
+                    const auto unit = truth / (std::sqrt(2.0) * 20e-6);
+                    peak = std::max(peak, std::abs(unit));
+                    worst_fitted = std::max(worst_fitted,
+                            std::abs(std::polar(std::pow(10.0, b[k].level_db / 20.0), b[k].phase) - unit));
+                    REQUIRE(std::fabs(std::remainder(a[k].phase - std::arg(truth), 2.0 * pi)) < 1e-6);
+                }
+            }
+        REQUIRE(worst_stored < 1e-6);
+        // The fit's own error is 0.14 % of the peak here; a wrong condition would be 20 % or more.
+        REQUIRE(worst_fitted < 1e-2 * peak);
+    }
+    std::filesystem::remove(fitted_path);
+    std::filesystem::remove(stored_path);
+}
+
 TEST_CASE("a condition without a stored tone drops out of the modes' blend", "[sphere_database][format2][tones]")
 {
     // Condition 1 holds no grid entry for the tones and zero coefficients (panam's writer where a condition lacks

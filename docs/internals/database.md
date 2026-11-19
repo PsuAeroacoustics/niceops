@@ -308,7 +308,8 @@ the sources only in format 2. Things to keep:
   - Tested by `a source's stored directivity is read as its rotating modes exactly between the
     nodes`: degree 10 on a 15° grid, beyond the 9 the grid carries, read between the nodes to
     1e-6 dB; and 1 % louder coefficients refused. `a condition without a stored tone drops out of
-    the modes' blend`, `a stored directivity's degree is bounded before it is used` and `the
+    the modes' blend`, `the modes blend each condition's own coefficients` (conditions that differ, so a
+    lookup pinned to one condition is 2.3 dB off), `a stored directivity's degree is bounded before it is used` and `the
     rotating modes' harmonics are the closed forms with the Condon-Shortley phase` (the conventions
     panam's coefficients rely on, independent of the recurrences) go with it.
 - **A mode-read tone's near-field term is its modes'** (`ToneSource::near_modes`,
