@@ -2262,7 +2262,8 @@ constexpr int max_mode_degree = 16;
 // max_mode_degree, computed once.
 struct LegendreFactors
 {
-    static constexpr int n = max_mode_degree + 1;
+    // One degree beyond the modes': their near-field term's (compute_mode_near_fields).
+    static constexpr int n = max_mode_degree + 2;
     double diagonal[n] {}, next[n] {}, a[n][n] {}, b[n][n] {};
 };
 
@@ -2286,14 +2287,16 @@ const LegendreFactors& legendre_factors()
     return f;
 }
 
+} // namespace
+
 // Orthonormal spherical harmonics Y_l^k(polar, azimuth), l <= degree <=
-// max_mode_degree, at index l (l + 1) + k: the fully normalized associated
+// max_mode_degree + 1, at index l (l + 1) + k: the fully normalized associated
 // Legendre functions (with the Condon-Shortley phase) by the standard stable
 // recurrences, times e^(i k azimuth), and Y_l^-k = (-1)^k conj(Y_l^k).  The
 // index does not depend on `degree`, so a lower degree's are a prefix.
 void spherical_harmonics(int degree, double polar, double azimuth, std::complex<double>* out)
 {
-    assert(degree >= 0 && degree <= max_mode_degree);
+    assert(degree >= 0 && degree <= max_mode_degree + 1);
     const LegendreFactors& f = legendre_factors();
     const double x = std::cos(polar), sine = std::sin(polar);
     double p[LegendreFactors::n][LegendreFactors::n];
@@ -2316,6 +2319,8 @@ void spherical_harmonics(int degree, double polar, double azimuth, std::complex<
                 out[l * (l + 1) - m] = (m % 2 == 0 ? 1.0 : -1.0) * std::conj(y);
         }
 }
+
+namespace {
 
 // Adds sign * conj(row) row^T to the lower triangle of the n x n Hermitian
 // `gram` (row-major).
@@ -2584,6 +2589,68 @@ void Database::load_tone_sources(int file_ncid, const std::vector<int>& group_id
                             static_cast<float>(std::pow(10.0, level / 20.0)), static_cast<float>(phase[slot] * pi / 180.0));
                 }
             }
+            // The source's axes: the database's sphere frame, or the airframe's.
+            {
+                const std::string frame = read_root_text(sid, "frame").value_or("sphere");
+                if (frame != "sphere" && frame != "body")
+                    input_error(what, " has frame '", frame, "'; expected sphere (the database's sphere frame) or "
+                            "body (the airframe's axes).");
+                if (i == 0)
+                    source.body_frame = frame == "body";
+                else if (source.body_frame != (frame == "body"))
+                    input_error(what, " has frame ", frame, ", unlike sphere 0; a source keeps its axes at every "
+                            "condition.");
+            }
+            // The fitted directivity the grid was evaluated from (optional): complex
+            // peak pressure (Pa) at the sphere radius as orthonormal spherical
+            // harmonics, polar angle from the down axis, azimuth from the nose toward
+            // starboard, l <= degree and k = -l..l in that order.  Converted to the
+            // modes' convention (polar from up: Y_l^k(pi - b, a) = (-1)^(l + k)
+            // Y_l^k(b, a)) and units (rms over 20 uPa).
+            int stored_id = 0;
+            const bool stored = NC_NOERR == nc_inq_varid(sid, "directivity_real", &stored_id);
+            if (i == 0)
+                source.stored_degree = stored ? -1 : 0;
+            else if (stored != (source.stored_degree != 0))
+                input_error(what, stored ? " has" : " has no", " directivity_real, unlike sphere 0; a source "
+                        "stores its fitted directivity at every condition or at none.");
+            if (stored)
+            {
+                // Read as a number, whole and bounded before any arithmetic on it; a
+                // degree past what the run evaluates (max_mode_degree) is read, and
+                // falls back to a fit.
+                double degree_value = std::numeric_limits<double>::quiet_NaN();
+                if (netcdf::single_value(sid, stored_id, "degree", degree_value) != netcdf::Single::ok
+                        || !(degree_value >= 0.0) || degree_value != std::floor(degree_value))
+                    input_error(what, ": directivity_real needs its expansion's degree (an attribute degree, a "
+                            "whole number from 0), and has ", degree_value, ".");
+                if (degree_value > 1000.0)
+                    input_error(what, ": directivity_real has degree ", degree_value, "; an expansion's degree is at "
+                            "most 1000.");
+                const int degree = static_cast<int>(degree_value);
+                if (source.stored_degree > 0 && degree != source.stored_degree)
+                    input_error(what, ": directivity_real has degree ", degree, ", unlike sphere 0's ",
+                            source.stored_degree, "; a source's fitted directivity keeps its degree.");
+                if (degree == 0)
+                    input_error(what, ": directivity_real has degree 0, which carries no directivity.");
+                const auto n = static_cast<std::size_t>((degree + 1) * (degree + 1));
+                const auto re = read_exact(sid, "directivity_real", tones * n, what);
+                const auto im = read_exact(sid, "directivity_imag", tones * n, what);
+                source.stored_degree = degree;
+                const double scale = 1.0 / (std::sqrt(2.0) * 20e-6);
+                for (std::size_t k = 0; k < tones; k++)
+                    for (int l = 0; l <= degree; l++)
+                        for (int q = -l; q <= l; q++)
+                        {
+                            const std::size_t j = static_cast<std::size_t>(l * (l + 1) + q);
+                            const double x = re[k * n + j], y = im[k * n + j];
+                            if (!std::isfinite(x) || !std::isfinite(y))
+                                input_error(what, ": directivity_real or directivity_imag holds a non-finite "
+                                        "coefficient.");
+                            const double sign = (l + q) % 2 == 0 ? 1.0 : -1.0;
+                            source.stored_modes.push_back(sign * scale * std::complex<double>(x, y));
+                        }
+            }
             // The tones' parts without a stable phase (optional): level only, added in
             // energy (THEORY 4.4).  A source carries them at every condition or none.
             int incoherent_id = 0;
@@ -2668,6 +2735,8 @@ void Database::load_tone_sources(int file_ncid, const std::vector<int>& group_id
         compute_tone_near_fields(datafile_path);
     if (modes)
         fit_tone_modes(blend);
+    if (modes && tone_near_field_)
+        compute_mode_near_fields();
     for (auto& source : tone_sources_)
     {
         const std::size_t tones = source.tone_count();
@@ -2712,10 +2781,82 @@ void Database::fit_tone_modes(ToneBlend blend)
         return blend == ToneBlend::complex ? s.phase_reference != PhaseReference::none
                                            : blend == ToneBlend::database && s.phase_reference == PhaseReference::rotor_azimuth;
     };
-    if (l_max < 4 || std::none_of(tone_sources_.begin(), tone_sources_.end(), fitted_source))
-        return;
     const std::size_t n_theta = thetas.size(), n_cells = phis.size() * n_theta;
     const std::size_t conditions = conditions_.size();
+    // A source that stores the directivity its grid was evaluated from is read
+    // from it as it stands: the expansion itself, at its own degree, exact
+    // between the nodes where a fit to the grid stops at the first degree within
+    // 1 %.  It must reproduce the grid, or the two are not one field.
+    for (auto& source : tone_sources_)
+    {
+        if (source.stored_degree <= 0 || !fitted_source(source))
+            continue;
+        const int degree = source.stored_degree;
+        if (degree > max_mode_degree)
+        {
+            warn("Database source ", source.tag, " stores its directivity to degree ", degree, ", beyond the ",
+                    max_mode_degree, " the run evaluates: its tones are fitted to the grid instead.");
+            source.stored_degree = 0;
+            continue;
+        }
+        const std::size_t tones = source.tone_count();
+        const auto n = static_cast<std::size_t>((degree + 1) * (degree + 1));
+        source.mode_stride = n;
+        source.modes = source.stored_modes;
+        source.mode_degree.assign(tones, 0);
+        source.mode_present.assign(conditions * tones, 0);
+        std::vector<std::complex<double>> y(n);
+        std::ostringstream residuals;
+        for (std::size_t k = 0; k < tones; k++)
+        {
+            double worst = 0.0;
+            bool any = false;
+            for (std::size_t c = 0; c < conditions; c++)
+            {
+                const auto* coef = &source.modes[(c * tones + k) * n];
+                double peak = 0.0;
+                for (std::size_t cell = 0; cell < n_cells; cell++)
+                    peak = std::max(peak,
+                            static_cast<double>(std::abs(source.amplitudes[(c * n_cells + cell) * tones + k])));
+                if (!(peak > 0.0))
+                    continue;
+                any = true;
+                source.mode_present[c * tones + k] = 1;
+                double err = 0.0, norm = 0.0;
+                for (std::size_t cell = 0; cell < n_cells; cell++)
+                {
+                    const auto a = source.amplitudes[(c * n_cells + cell) * tones + k];
+                    const std::complex<double> truth(a.real(), a.imag());
+                    if (!(std::abs(truth) >= peak * 0.0316227766))   // within 30 dB
+                        continue;
+                    spherical_harmonics(degree, shaft_polar(phis[cell / n_theta], thetas[cell % n_theta]),
+                            cell_shaft_azimuth_[cell], y.data());
+                    std::complex<double> v(0.0, 0.0);
+                    for (std::size_t j = 0; j < n; j++)
+                        v += coef[j] * y[j];
+                    err += std::norm(v - truth);
+                    norm += std::norm(truth);
+                }
+                worst = std::max(worst, std::sqrt(err / norm));
+            }
+            if (!any)
+                continue;
+            if (worst > 1e-3)
+                input_error("Database source ", source.tag, ": its stored directivity (directivity_real, "
+                        "directivity_imag) differs from its grid by ", 100.0 * worst, " % rms at shaft order ",
+                        source.harmonics[k], " (within 30 dB of the peak); the grid must be the directivity "
+                        "evaluated, in the same frame and units.");
+            source.mode_degree[k] = degree;
+            source.energy_only[k] = 0;
+            residuals << (k ? ", " : "") << source.harmonics[k] << ": " << std::setprecision(2) << 100.0 * worst
+                      << " %";
+        }
+        info("Database source ", source.tag, ": rotating modes as stored, degree ", degree,
+                " (their rms against the grid by shaft order: ", residuals.str(), ").");
+    }
+    const auto fitted_here = [&](const ToneSource& s) { return fitted_source(s) && s.stored_degree <= 0; };
+    if (l_max < 4 || std::none_of(tone_sources_.begin(), tone_sources_.end(), fitted_here))
+        return;
     const auto stride = static_cast<std::size_t>((l_max + 1) * (l_max + 1));
     std::vector<std::complex<double>> y(n_cells * stride);
     for (std::size_t cell = 0; cell < n_cells; cell++)
@@ -2740,10 +2881,11 @@ void Database::fit_tone_modes(ToneBlend blend)
     std::size_t fitted = 0, total = 0;
     for (auto& source : tone_sources_)
     {
-        if (!fitted_source(source))
+        if (!fitted_here(source))
             continue;
         const std::size_t tones = source.tone_count();
         source.mode_degree.assign(tones, 0);
+        source.mode_present.assign(conditions * tones, 1);
         source.mode_stride = stride;
         source.modes.assign(conditions * tones * stride, 0.0);
         std::ostringstream degrees_used;
@@ -2917,6 +3059,7 @@ void Database::compute_tone_near_fields(const std::string& datafile_path)
                 condition_axes_ == ConditionAxes::multirotor ? "each condition's airspeed"
                                                              : "the root's main_rotor_tip_speed_meters_per_sec",
                 ", which it lacks; it is taken as zero (D = 1), as in hover.");
+    tone_mach_ = mach;
     std::vector<GridDirection> dirs(n_cells);
     for (std::size_t m = 0; m < n_phi; m++)
         for (std::size_t n = 0; n < n_theta; n++)
@@ -2952,6 +3095,113 @@ void Database::compute_tone_near_fields(const std::string& datafile_path)
             }
         info("Database source ", source.tag, ": the first-order near-field term Lap[D A] is precomputed for its ",
                 std::count(source.energy_only.begin(), source.energy_only.end(), 0), " resolved tones.");
+    }
+}
+
+namespace {
+
+// Gauss-Legendre's n nodes and weights on [-1, 1], by Newton's iteration on
+// P_n from Chebyshev's guesses.
+void gauss_legendre(std::size_t n, std::vector<double>& nodes, std::vector<double>& weights)
+{
+    nodes.assign(n, 0.0);
+    weights.assign(n, 0.0);
+    for (std::size_t i = 0; i < n; i++)
+    {
+        double x = std::cos(pi * (static_cast<double>(i) + 0.75) / (static_cast<double>(n) + 0.5));
+        double derivative = 1.0;
+        for (int iteration = 0; iteration < 100; iteration++)
+        {
+            double p0 = 1.0, p1 = x;
+            for (std::size_t l = 2; l <= n; l++)
+            {
+                const double p2 = ((2.0 * l - 1.0) * x * p1 - (l - 1.0) * p0) / static_cast<double>(l);
+                p0 = p1;
+                p1 = p2;
+            }
+            derivative = static_cast<double>(n) * (x * p1 - p0) / (x * x - 1.0);
+            const double step = p1 / derivative;
+            x -= step;
+            if (std::fabs(step) < 1e-16)
+                break;
+        }
+        nodes[i] = x;
+        weights[i] = 2.0 / ((1.0 - x * x) * derivative * derivative);
+    }
+}
+
+} // namespace
+
+void Database::compute_mode_near_fields()
+{
+    // Lap[D A] for a tone read from its modes, D = 1 - M.n: D A is a series of
+    // degree L + 1 (n is degree 1), so projecting it onto the harmonics by a
+    // quadrature exact to degree 2 L + 2 (Gauss-Legendre in cos(polar), uniform
+    // in azimuth) and taking each degree's eigenvalue -l (l + 1) gives the term
+    // exactly, where the grid's differences carry the grid's error and are zero
+    // for a tone only the modes resolve (THEORY 4.4).
+    for (auto& source : tone_sources_)
+    {
+        if (source.mode_degree.empty() || source.near_field.empty())
+            continue;
+        const int degree = *std::max_element(source.mode_degree.begin(), source.mode_degree.end());
+        if (degree <= 0)
+            continue;
+        const int out_degree = degree + 1;
+        // A tone's coefficients sit `mode_stride` apart (a fitted source's stride is
+        // the grid's largest degree), and only its own degree's are summed: the
+        // harmonics here run to the largest chosen degree plus one.
+        const auto stride = source.mode_stride;
+        const auto n_out = static_cast<std::size_t>((out_degree + 1) * (out_degree + 1));
+        const std::size_t tones = source.tone_count(), conditions = conditions_.size();
+        std::vector<double> nodes, weights;
+        gauss_legendre(static_cast<std::size_t>(out_degree + 1), nodes, weights);
+        const std::size_t n_azimuth = static_cast<std::size_t>(2 * out_degree + 2);
+        // The harmonics at every quadrature point, to the output degree (the
+        // input's are their prefix), with each point's weight and direction.
+        const std::size_t points = nodes.size() * n_azimuth;
+        std::vector<std::complex<double>> y(points * n_out);
+        std::vector<double> w(points);
+        std::vector<std::array<double, 3>> n(points);
+        for (std::size_t i = 0; i < nodes.size(); i++)
+            for (std::size_t j = 0; j < n_azimuth; j++)
+            {
+                const std::size_t p = i * n_azimuth + j;
+                const double polar = std::acos(nodes[i]);
+                const double azimuth = 2.0 * pi * static_cast<double>(j) / static_cast<double>(n_azimuth);
+                spherical_harmonics(out_degree, polar, azimuth, &y[p * n_out]);
+                w[p] = weights[i] * 2.0 * pi / static_cast<double>(n_azimuth);
+                const double sine = std::sqrt(std::max(0.0, 1.0 - nodes[i] * nodes[i]));
+                n[p] = {sine * std::cos(azimuth), sine * std::sin(azimuth), nodes[i]};
+            }
+        source.near_stride = n_out;
+        source.near_modes.assign(conditions * tones * n_out, 0.0);
+        for (std::size_t c = 0; c < conditions; c++)
+        {
+            const auto& m = tone_mach_[c];
+            for (std::size_t k = 0; k < tones; k++)
+            {
+                if (source.mode_degree[k] <= 0)
+                    continue;
+                const auto* coef = &source.modes[(c * tones + k) * stride];
+                const auto n_in = static_cast<std::size_t>((source.mode_degree[k] + 1) * (source.mode_degree[k] + 1));
+                assert(n_in <= stride && n_in < n_out);
+                auto* out = &source.near_modes[(c * tones + k) * n_out];
+                for (std::size_t p = 0; p < points; p++)
+                {
+                    std::complex<double> a(0.0, 0.0);
+                    for (std::size_t j = 0; j < n_in; j++)
+                        a += coef[j] * y[p * n_out + j];
+                    const double d = 1.0 - (m[0] * n[p][0] + m[1] * n[p][1] + m[2] * n[p][2]);
+                    const std::complex<double> f = w[p] * d * a;
+                    for (std::size_t j = 0; j < n_out; j++)
+                        out[j] += f * std::conj(y[p * n_out + j]);
+                }
+                for (int l = 0; l <= out_degree; l++)
+                    for (int q = -l; q <= l; q++)
+                        out[static_cast<std::size_t>(l * (l + 1) + q)] *= -static_cast<double>(l * (l + 1));
+            }
+        }
     }
 }
 
@@ -3428,12 +3678,13 @@ void Database::spectrum_along(const SourceState& state, const Vec3& direction, d
 }
 
 void Database::tone_directivity(std::size_t source, const SourceState& state, const Vec3& direction,
-        ToneLookup* out) const
+        ToneLookup* out, const SphereFrame* frame) const
 {
     assert(source < tone_sources_.size());
     const ToneSource& s = tone_sources_[source];
     const std::size_t tones = s.tone_count();
-    const auto angles = lookup_angles(state.frame, direction, !upper_hemisphere_measured_);
+    const auto angles = lookup_angles(frame != nullptr ? *frame : state.frame, direction,
+            !upper_hemisphere_measured_);
     assert(std::isfinite(angles[0]) && std::isfinite(angles[1]));
     // eval_spectrum()'s cell and weights, so a tone and the bands beside it are
     // read at the same point of the sphere.
@@ -3522,6 +3773,10 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
         const double level = blend_db(corner_level, sw);
         out[k].level_db = no_energy_floor_db;
         out[k].phase = 0.0;
+        // A tone read from its modes takes its near-field term from theirs
+        // (ToneSource::near_modes), where they are.
+        bool mode_near = false;
+        std::complex<double> mode_near_sum(0.0, 0.0);
         if (level <= empty_level_db)
             ;
         else if (!s.mode_degree.empty() && s.mode_degree[k] > 0)
@@ -3531,22 +3786,41 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
             assert(mode == ToneBlend::complex);
             if (!have_harmonics)
             {
-                const int degree = *std::max_element(s.mode_degree.begin(), s.mode_degree.end());
+                const int degree = *std::max_element(s.mode_degree.begin(), s.mode_degree.end())
+                        + (s.near_modes.empty() ? 0 : 1);
                 harmonics.resize(static_cast<std::size_t>((degree + 1) * (degree + 1)));
                 spherical_harmonics(degree, shaft_polar(angles[0], angles[1]), alpha, harmonics.data());
                 have_harmonics = true;
             }
             const auto m = static_cast<std::size_t>((s.mode_degree[k] + 1) * (s.mode_degree[k] + 1));
             std::complex<double> a(0.0, 0.0);
+            double present_weight = 0.0;
             for (std::size_t c = 0; c < 4; c++)
             {
-                if (w[c] == 0.0)
+                // A condition without the tone drops out, and the rest renormalize.
+                if (w[c] == 0.0 || !s.mode_present[blend.indices[c] * tones + k])
                     continue;
+                present_weight += w[c];
                 const auto* coef = &s.modes[(blend.indices[c] * tones + k) * s.mode_stride];
                 std::complex<double> v(0.0, 0.0);
                 for (std::size_t j = 0; j < m; j++)
                     v += coef[j] * harmonics[j];
                 a += w[c] * v;
+                if (near && !s.near_modes.empty())
+                {
+                    const auto* nf = &s.near_modes[(blend.indices[c] * tones + k) * s.near_stride];
+                    const auto mn = static_cast<std::size_t>((s.mode_degree[k] + 2) * (s.mode_degree[k] + 2));
+                    std::complex<double> u(0.0, 0.0);
+                    for (std::size_t j = 0; j < mn; j++)
+                        u += nf[j] * harmonics[j];
+                    mode_near_sum += w[c] * u;
+                }
+            }
+            mode_near = near && !s.near_modes.empty();
+            if (present_weight > 0.0)
+            {
+                a /= present_weight;
+                mode_near_sum /= present_weight;
             }
             const double magnitude = std::abs(a);
             if (magnitude > 0.0)
@@ -3565,6 +3839,8 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
         }
         if (order != 0)
             near_sum *= std::polar(1.0, order * alpha);
+        if (mode_near)
+            near_sum = mode_near_sum;
         out[k].incoherent_db = no_energy_floor_db;
         if (s.has_incoherent)
         {

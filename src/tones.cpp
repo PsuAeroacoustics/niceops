@@ -7,6 +7,7 @@
 #include <set>
 #include <sstream>
 
+#include "atmosphere_profile.hpp"
 #include "util/constants.hpp"
 #include "util/csv.hpp"
 #include "util/logger.hpp"
@@ -164,6 +165,26 @@ ToneEvaluator::ToneEvaluator(const Database& database, const ToneRunOptions& opt
             all << (all.tellp() > 0 ? ", " : "") << s.tag;
         return all.str();
     };
+
+    // Sources in body axes are read in the airframe's, which --attitude gives.
+    std::ostringstream in_body;
+    for (const auto& s : sources)
+        if (s.body_frame)
+            in_body << (in_body.tellp() > 0 ? ", " : "") << s.tag;
+    if (options.attitude)
+    {
+        if (in_body.tellp() == 0)
+            input_error("--attitude turns the sources in body axes (a source's frame = body), and the database has "
+                    "none: its sources ", tags(), " are in its sphere frame, which follows the flight. Refused.");
+        if (std::isnan(options.frame_bearing_deg))
+            input_error("--attitude turns compass headings into the local frame, and needs that frame's bearing: "
+                    "give --frame_bearing, the compass bearing of +x (a WGS84 track's frame is east-north).");
+    }
+    else if (in_body.tellp() > 0)
+    {
+        warn("The database's sources ", in_body.str(), " are in body axes (frame = body), and the run gives no "
+                "--attitude: they are read in the sphere frame, as if the airframe were level along its nose.");
+    }
 
     // Each rotor at the azimuth its phases were locked to (the first sphere's),
     // which reproduces the phasing it was predicted with; zero, the stored
@@ -385,9 +406,12 @@ ToneEvaluator::StateTones ToneEvaluator::prepare(const Database::SourceState& st
     out.hubs.resize(sources.size());
     out.frequencies.assign(tone_total_, 0.0);
     out.group_rates.assign(groups_.size(), 0.0);
-    const auto& frame = state.frame;
+    if (options_.attitude)
+        out.body = options_.attitude->frame_at(time, options_.frame_bearing_deg);
     for (std::size_t s = 0; s < sources.size(); s++)
     {
+        // A source in body axes has its hub on the airframe.
+        const auto& frame = sources[s].body_frame && out.body ? *out.body : state.frame;
         const auto c = database_.tone_center(s, state.blend);
         out.hubs[s] = state.position + c[0] * frame.nose + c[1] * frame.starboard + c[2] * frame.normal;
         database_.tone_frequencies(s, state.blend, out.frequencies.data() + tone_offsets_[s]);
@@ -558,6 +582,101 @@ std::map<std::string, RotorHistory> read_rotor_history(const std::string& path)
     return out;
 }
 
+SphereFrame body_frame(double heading, double pitch, double roll, double frame_bearing_deg)
+{
+    // Forward, right and down in north-east-down (yaw, pitch, roll in turn),
+    // taken to east-north-up and turned into the local frame (CompassToLocal).
+    const double ch = std::cos(heading), sh = std::sin(heading);
+    const double cp = std::cos(pitch), sp = std::sin(pitch);
+    const double cr = std::cos(roll), sr = std::sin(roll);
+    const double forward[3] = {cp * ch, cp * sh, -sp};
+    const double right[3] = {sr * sp * ch - cr * sh, sr * sp * sh + cr * ch, sr * cp};
+    const double down[3] = {cr * sp * ch + sr * sh, cr * sp * sh - sr * ch, cr * cp};
+    const CompassToLocal to_local(frame_bearing_deg);
+    auto local = [&](const double* ned) {
+        const auto xy = to_local({ned[1], ned[0]});
+        return Vec3(xy[0], xy[1], -ned[2]);
+    };
+    SphereFrame frame;
+    frame.nose = local(forward);
+    frame.starboard = local(right);
+    frame.normal = local(down) * -1.0;
+    return frame;
+}
+
+SphereFrame AttitudeHistory::frame_at(double t, double frame_bearing_deg) const
+{
+    return body_frame(interpolate(time, heading, t), interpolate(time, pitch, t), interpolate(time, roll, t),
+            frame_bearing_deg);
+}
+
+AttitudeHistory read_attitude(const std::string& path)
+{
+    CsvReport report;
+    LabeledCsv csv;
+    try
+    {
+        csv = read_labeled_csv(path, &report);
+    }
+    catch (const std::exception& e)
+    {
+        input_error("--attitude: ", e.what());
+    }
+    if (report.dropped > 0)
+        input_error("--attitude ", path, ": line ", report.first_dropped_line, " is not numeric (text after the "
+                "data, or a damaged row).");
+    if (csv.header.empty() || csv.rows.size() < 2)
+        input_error("--attitude ", path, " needs a header and at least two rows.");
+    std::array<std::size_t, 4> column {};
+    const std::array<const char*, 4> names {"time", "heading", "pitch", "roll"};
+    for (std::size_t j = 0; j < names.size(); j++)
+    {
+        column[j] = csv.header.size();
+        for (std::size_t i = 0; i < csv.header.size(); i++)
+        {
+            std::string name = csv.header[i];
+            const auto b = name.find_first_not_of(" \t");
+            const auto e = name.find_last_not_of(" \t");
+            name = b == std::string::npos ? std::string() : name.substr(b, e - b + 1);
+            if (name == names[j])
+                column[j] = i;
+        }
+        if (column[j] == csv.header.size())
+            input_error("--attitude ", path, " has no '", names[j], "' column: it gives time (s), heading (compass "
+                    "degrees), pitch (degrees, nose up) and roll (degrees, right side down).");
+    }
+    AttitudeHistory h;
+    for (std::size_t k = 0; k < csv.rows.size(); k++)
+    {
+        const auto& row = csv.rows[k];
+        if (row.size() != csv.header.size())
+            input_error("--attitude ", path, ": row ", k + 1, " has ", row.size(), " fields, the header ",
+                    csv.header.size(), ".");
+        const double t = row[column[0]];
+        double heading = row[column[1]] * pi / 180.0, roll = row[column[3]] * pi / 180.0;
+        const double pitch = row[column[2]] * pi / 180.0;
+        if (!std::isfinite(t) || !std::isfinite(heading) || !std::isfinite(pitch) || !std::isfinite(roll))
+            input_error("--attitude ", path, ": row ", k + 1, " holds a value that is not a finite number.");
+        if (!(std::fabs(pitch) <= 0.5 * pi))
+            input_error("--attitude ", path, ": row ", k + 1, " has pitch ", row[column[2]], " degrees; pitch lies "
+                    "within +-90.");
+        if (!h.time.empty())
+        {
+            if (!(t > h.time.back()))
+                input_error("--attitude ", path, ": time does not increase at row ", k + 1, ".");
+            // Heading and roll the short way round from the last sample, so that 359
+            // to 1 degrees passes through 0, not 180.
+            heading = h.heading.back() + std::remainder(heading - h.heading.back(), 2.0 * pi);
+            roll = h.roll.back() + std::remainder(roll - h.roll.back(), 2.0 * pi);
+        }
+        h.time.push_back(t);
+        h.heading.push_back(heading);
+        h.pitch.push_back(pitch);
+        h.roll.push_back(roll);
+    }
+    return h;
+}
+
 void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTones& tones, const Vec3& observer,
         const double* absorption, const Ground* ground, double ground_plane, double* power, double* weighted,
         Counts* counts) const
@@ -685,18 +804,20 @@ void ToneEvaluator::evaluate(const Database::SourceState& state, const StateTone
         {
             const auto& src = sources[s];
             const Vec3& hub = tones.hubs[s];
+            // A source in body axes is read in the airframe's, where the run has them.
+            const SphereFrame* frame = src.body_frame && tones.body ? &*tones.body : nullptr;
             const ToneArrival d_arrival = tone_arrival(hub, tones.velocity, observer, lag, c, tones.wind);
-            database_.tone_directivity(s, state, d_arrival.direction, direct.data());
+            database_.tone_directivity(s, state, d_arrival.direction, direct.data(), frame);
             ToneArrival r_arrival, v_arrival;
             if (with_ground)
             {
                 r_arrival = tone_arrival(hub, tones.velocity, image, lag, c, tones.wind);
-                database_.tone_directivity(s, state, r_arrival.direction, reflected.data());
+                database_.tone_directivity(s, state, r_arrival.direction, reflected.data(), frame);
             }
             if (off_receiver)
             {
                 v_arrival = tone_arrival(hub, tones.velocity, receiver, lag, c, tones.wind);
-                database_.tone_directivity(s, state, v_arrival.direction, at_receiver.data());
+                database_.tone_directivity(s, state, v_arrival.direction, at_receiver.data(), frame);
             }
             for (std::size_t t = 0; t < src.tone_count(); t++)
             {

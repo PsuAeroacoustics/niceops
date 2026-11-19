@@ -601,8 +601,39 @@ the rotor-alone mode $k = \sigma m$ and the interaction modes beside it all incl
 - **Where it is fitted,** the tone is resolved whatever its steps between cells, and a tone that
   blends its conditions as complex amplitudes is read from its modes: $A = \sum_c w_c A_c(\beta,
   \alpha) / \sum_c w_c$, its level and phase that sum's.
-- **The near-field term** keeps the grid's, which is 0 for a tone only the modes resolve.
+- **A stored directivity** (`directivity_real`, `directivity_imag`: panam's fit, in its own frame
+  and units) is read as the modes in place of a fit, at its own degree. Its polar angle is measured
+  from the down axis, so its coefficients enter as $c_{lk} (-1)^{l+k} / (\sqrt{2}\, p_{\mathrm{ref}})$
+  ($Y_l^k(\pi - \beta, \alpha) = (-1)^{l+k} Y_l^k(\beta, \alpha)$, and peak pressure to rms over
+  20 µPa). It must reproduce the grid to 0.1 % rms within 30 dB of the peak.
+- **The near-field term** of a tone read from its modes is theirs, exactly. $D = 1 - \mathbf{M}\cdot
+  \mathbf{n}$ is of degree 1 in the direction, so $D A$ is a series of degree $L + 1$. It is projected
+  onto the harmonics by Gauss-Legendre quadrature in $\cos\beta$ ($L + 2$ nodes) and a uniform rule
+  in $\alpha$ ($2L + 4$ points), exact for the products of degree $2L + 2$. Each degree then takes
+  its eigenvalue:
+
+  $$
+  \nabla^2_S [D A] = -\sum_{l \le L + 1} l(l + 1) \sum_{|k| \le l} b_{lk}\, Y_l^k, \qquad
+  b_{lk} = \oint D A\, \overline{Y_l^k}\, d\Omega .
+  $$
 - `--tone_interpolation grid` keeps the grid's interpolation for every tone.
+
+**Body axes.** A source whose `frame` is `body` is read in the airframe's axes. Its direction
+$\mathbf{n}$ is taken in the body's forward, starboard and up axes, in place of the sphere
+frame's, for the grid, the modes and the incoherent part alike. Its hub offset is turned the same
+way. The axes come from the aerospace angles of `--attitude`: heading $\Psi$, pitch $\Theta$ and
+roll $\Phi$ turn north-east-down into the body's forward-right-down,
+
+$$
+\hat{\mathbf{x}}_b = (\cos\Theta\cos\Psi,\ \cos\Theta\sin\Psi,\ -\sin\Theta), \quad
+\hat{\mathbf{z}}_b = (\cos\Phi\sin\Theta\cos\Psi + \sin\Phi\sin\Psi,\
+\cos\Phi\sin\Theta\sin\Psi - \sin\Phi\cos\Psi,\ \cos\Phi\cos\Theta),
+$$
+
+with $\hat{\mathbf{y}}_b = \hat{\mathbf{z}}_b \times \hat{\mathbf{x}}_b$, the north and east
+components then turned into the local frame by `--frame_bearing` (CompassToLocal). Each angle is
+interpolated linearly in time. The near-field term's $\mathbf{M}$ stays the condition's, along the
+source frame's nose. Without `--attitude` the body axes are the sphere frame.
 
 $\psi_r$ is the rotor's azimuth (`--rotor_azimuth`, in its own sense of rotation); by default the
 azimuth its phases were locked to (the source's `azimuth`, the first sphere's), which reproduces

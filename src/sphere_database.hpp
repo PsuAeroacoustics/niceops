@@ -264,6 +264,11 @@ struct SphereFrame
 
 SphereFrame sphere_frame(const Vec3& velocity, const Vec3& normal);
 
+// Orthonormal complex spherical harmonics Y_l^k(polar, azimuth) with the
+// Condon-Shortley phase, l <= degree <= 17, into out[l (l + 1) + k] for k = -l..l
+// (a lower degree's are a prefix): the rotating modes' basis (THEORY 4.4).
+void spherical_harmonics(int degree, double polar, double azimuth, std::complex<double>* out);
+
 // The frame of a flight-path sphere (SphereFrameKind::flight_path): the nose is
 // the velocity itself, climb included, and the sphere's up (`normal`) the TPP
 // normal's part perpendicular to it.  In level flight with a level TPP that is
@@ -521,6 +526,27 @@ struct ToneSource
     std::vector<int> mode_degree;
     std::size_t mode_stride = 0;
     std::vector<std::complex<double>> modes;
+    // The rotating modes the file stores beside the grid (its optional
+    // directivity_real and directivity_imag, the fitted directivity the grid was
+    // evaluated from), converted to `modes`' convention and units, laid out as
+    // `modes` with stride (stored_degree + 1)^2; stored_degree 0 where it holds
+    // none.  Where present they are the tone's modes, in place of a fit.
+    int stored_degree = 0;
+    std::vector<std::complex<double>> stored_modes;
+    // Per condition and tone, [condition * tones + tone], whether the modes there
+    // hold the tone (its grid has it in some cell): a condition without it drops
+    // out of the blend and the rest renormalize, as an empty grid entry does.
+    std::vector<char> mode_present;
+    // With the near-field term, each mode-read tone's Lap[D A] as modes of one
+    // degree more (exact: D A is band-limited), laid out as `modes` with stride
+    // near_stride; empty otherwise.
+    std::size_t near_stride = 0;
+    std::vector<std::complex<double>> near_modes;
+    // Whether the source's grid, modes and hub are in the vehicle's body axes
+    // (the file's frame = body: forward, starboard and up fixed to the
+    // airframe), read in the body frame a run's --attitude gives at each state;
+    // otherwise in the database's sphere frame.
+    bool body_frame = false;
     // Per tone, how its conditions blend (complex, energy or db: never
     // database), resolved at load from DatabaseLoadOptions::tone_blend.
     std::vector<ToneBlend> blend;
@@ -1065,8 +1091,10 @@ public:
     // Every tone of `source` along `direction` (the unit vector leaving its hub,
     // in the run's frame), into `out` (tone_count() entries).  The cell and its
     // weights are eval_spectrum()'s at the same angles.
+    // `frame`, where given, is read in place of the state's sphere frame: the
+    // airframe's axes for a source in body axes (ToneSource::body_frame).
     void tone_directivity(std::size_t source, const SourceState& state, const Vec3& direction,
-            ToneLookup* out) const;
+            ToneLookup* out, const SphereFrame* frame = nullptr) const;
     // A source's hub (m, sphere frame: forward, starboard, up), shaft rate (rad/s,
     // signed) and emission-frame frequencies (Hz, into `frequencies`, one per tone)
     // at a blend: each the blend-weighted mean of its conditions'.
@@ -1350,8 +1378,13 @@ private:
     // condition group records (airspeed, climb_rate), NaN where it does not: the
     // near-field term's flight Mach number.
     std::vector<double> condition_airspeed_, condition_climb_;
-    // Each tone's near-field term over the grid (ToneSource::near_field).
+    // Each tone's near-field term over the grid (ToneSource::near_field), and
+    // the flight Mach vector it takes per condition (sphere frame: forward,
+    // starboard, up), kept for the modes'.
     void compute_tone_near_fields(const std::string& datafile_path);
+    std::vector<std::array<double, 3>> tone_mach_;
+    // Each mode-read tone's near-field term as modes (ToneSource::near_modes).
+    void compute_mode_near_fields();
     // The constructor's reading of a format 2 database's source subgroups.
     // `blend` is --tone_blend, database already made energy where the database's
     // conditions' phases are independent; `modes` fits rotating modes.
