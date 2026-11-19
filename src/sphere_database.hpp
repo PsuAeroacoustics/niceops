@@ -533,6 +533,10 @@ struct ToneSource
     // none.  Where present they are the tone's modes, in place of a fit.
     int stored_degree = 0;
     std::vector<std::complex<double>> stored_modes;
+    // Per condition and tone, [condition * tones + tone], whether the modes there
+    // hold the tone (its grid has it in some cell): a condition without it drops
+    // out of the blend and the rest renormalize, as an empty grid entry does.
+    std::vector<char> mode_present;
     // With the near-field term, each mode-read tone's Lap[D A] as modes of one
     // degree more (exact: D A is band-limited), laid out as `modes` with stride
     // near_stride; empty otherwise.

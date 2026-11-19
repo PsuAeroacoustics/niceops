@@ -4447,7 +4447,7 @@ ToneFixture stored_modes_fixture(int degree, int step = 10)
 // their degree) to every condition of a written tone database, `scale` times the
 // coefficients the grid was evaluated from, and the sources' frame where given.
 void add_stored_modes(const std::string& path, int degree, std::size_t tones, double scale = 1.0,
-        const std::string& frame = "")
+        const std::string& frame = "", const std::function<double(std::size_t)>& condition_scale = nullptr)
 {
     int ncid = 0;
     REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
@@ -4457,9 +4457,10 @@ void add_stored_modes(const std::string& path, int degree, std::size_t tones, do
     std::vector<int> groups(static_cast<std::size_t>(n_groups));
     REQUIRE(nc_inq_grps(ncid, &n_groups, groups.data()) == NC_NOERR);
     const auto n = static_cast<std::size_t>((degree + 1) * (degree + 1));
-    std::vector<std::array<int, 3>> vars;
-    for (const int group : groups)
+    std::vector<std::array<int, 4>> vars;
+    for (std::size_t i = 0; i < groups.size(); i++)
     {
+        const int group = groups[i];
         int n_sub = 0;
         REQUIRE(nc_inq_grps(group, &n_sub, nullptr) == NC_NOERR);
         std::vector<int> subs(static_cast<std::size_t>(n_sub));
@@ -4475,7 +4476,7 @@ void add_stored_modes(const std::string& path, int degree, std::size_t tones, do
             REQUIRE(nc_put_att_int(sid, re, "degree", NC_INT, 1, &degree) == NC_NOERR);
             if (!frame.empty())
                 REQUIRE(nc_put_att_text(sid, NC_GLOBAL, "frame", frame.size(), frame.c_str()) == NC_NOERR);
-            vars.push_back({sid, re, im});
+            vars.push_back({sid, re, im, static_cast<int>(i)});
         }
     }
     REQUIRE(nc_enddef(ncid) == NC_NOERR);
@@ -4489,15 +4490,59 @@ void add_stored_modes(const std::string& path, int degree, std::size_t tones, do
             imag[k * n + j] = scale * c[j].imag();
         }
     }
-    for (const auto& [sid, re, im] : vars)
+    for (const auto& [sid, re, im, condition] : vars)
     {
-        REQUIRE(nc_put_var_double(sid, re, real.data()) == NC_NOERR);
-        REQUIRE(nc_put_var_double(sid, im, imag.data()) == NC_NOERR);
+        const double f = condition_scale ? condition_scale(static_cast<std::size_t>(condition)) : 1.0;
+        std::vector<double> r(real), q(imag);
+        for (auto& x : r)
+            x *= f;
+        for (auto& x : q)
+            x *= f;
+        REQUIRE(nc_put_var_double(sid, re, r.data()) == NC_NOERR);
+        REQUIRE(nc_put_var_double(sid, im, q.data()) == NC_NOERR);
     }
     REQUIRE(nc_close(ncid) == NC_NOERR);
 }
 
 } // namespace
+
+TEST_CASE("the rotating modes' harmonics are the closed forms with the Condon-Shortley phase",
+        "[sphere_database][format2][tones]")
+{
+    // Independent of the recurrences: the orthonormal Y_l^k written out, the Condon-Shortley (-1)^k on k > 0, and
+    // Y_l^-k = (-1)^k conj(Y_l^k).  panam's scipy harmonics share these conventions, which the stored coefficients
+    // rely on (a sign slip at odd k would flip those modes' phases).
+    struct Case
+    {
+        int l, k;
+        std::function<std::complex<double>(double, double)> y;
+    };
+    const auto e = [](int k, double a) { return std::polar(1.0, k * a); };
+    const std::vector<Case> cases = {
+        {0, 0, [](double, double) { return std::complex<double>(0.5 / std::sqrt(pi), 0.0); }},
+        {1, 0, [](double b, double) { return std::complex<double>(std::sqrt(3.0 / (4.0 * pi)) * std::cos(b), 0.0); }},
+        {1, 1, [&](double b, double a) { return -std::sqrt(3.0 / (8.0 * pi)) * std::sin(b) * e(1, a); }},
+        {1, -1, [&](double b, double a) { return std::sqrt(3.0 / (8.0 * pi)) * std::sin(b) * e(-1, a); }},
+        {2, 1, [&](double b, double a) { return -std::sqrt(15.0 / (8.0 * pi)) * std::sin(b) * std::cos(b) * e(1, a); }},
+        {2, -2, [&](double b, double a) {
+             return 0.25 * std::sqrt(15.0 / (2.0 * pi)) * std::sin(b) * std::sin(b) * e(-2, a);
+         }},
+        {3, 3, [&](double b, double a) {
+             return -0.125 * std::sqrt(35.0 / pi) * std::pow(std::sin(b), 3) * e(3, a);
+         }},
+        {3, -2, [&](double b, double a) {
+             return 0.25 * std::sqrt(105.0 / (2.0 * pi)) * std::sin(b) * std::sin(b) * std::cos(b) * e(-2, a);
+         }},
+    };
+    std::vector<std::complex<double>> y(16);
+    for (const double b : {0.3, 1.1, 2.0, 2.9})
+        for (const double a : {-2.5, 0.4, 1.7})
+        {
+            spherical_harmonics(3, b, a, y.data());
+            for (const auto& c : cases)
+                REQUIRE(std::abs(y[static_cast<std::size_t>(c.l * (c.l + 1) + c.k)] - c.y(b, a)) < 1e-12);
+        }
+}
 
 TEST_CASE("a source's stored directivity is read as its rotating modes exactly between the nodes",
         "[sphere_database][format2][tones]")
@@ -4694,6 +4739,200 @@ TEST_CASE("an attitude's body axes when level along the nose or pitched or rolle
         REQUIRE(std::fabs(f.nose.cross(f.normal).y - f.starboard.y) < 1e-12);
         REQUIRE(std::fabs(f.nose.cross(f.normal).z - f.starboard.z) < 1e-12);
     }
+}
+
+TEST_CASE("a fitted tone's near-field term is its modes' Laplacian", "[sphere_database][format2][tones]")
+{
+    // Modes fitted to the grid sit at the source's stride, the grid's largest degree (14 on 10 deg: 225
+    // coefficients), while the tone's own degree is 4 (25): the projection must sum the tone's own and no more.  The
+    // truth is the fitted modes' own Laplacian on the sphere, the three-dimensional one at r = 1 by central
+    // differences, in hover (D = 1).  (Against the field the modes were fitted to, a polynomial of degree 3, it is off
+    // by 2 % of its peak: on a lower hemisphere the fit pins the values, not the curvature near the plane.)
+    const auto field = [](double f, double st, double up) {
+        const double r = std::sqrt(f * f + st * st + up * up);
+        f /= r;
+        st /= r;
+        up /= r;
+        const std::complex<double> i(0.0, 1.0);
+        return 2.0 + (f + i * st) * (f + i * st) + 0.6 * up * (f - i * st) + 0.3 * up;
+    };
+    ToneFixture fixture;
+    fixture.harmonics = {2, 4};
+    fixture.grid_phis.clear();
+    fixture.grid_thetas.clear();
+    for (int d = -90; d <= 90; d += 10)
+        fixture.grid_phis.push_back(d);
+    for (int d = 0; d <= 180; d += 10)
+        fixture.grid_thetas.push_back(d);
+    const auto phis = fixture.grid_phis, thetas = fixture.grid_thetas;
+    auto at = [&](double phi, double theta) {
+        const auto g = grid_direction(phi, theta);
+        return field(g.forward, g.starboard, g.up);
+    };
+    fixture.amplitude = [&](std::size_t, std::size_t m, std::size_t n, std::size_t) {
+        return 80.0 + 20.0 * std::log10(std::abs(at(phis[m], thetas[n])));
+    };
+    fixture.phase = [&](std::size_t m, std::size_t n, std::size_t) {
+        return std::arg(at(phis[m], thetas[n])) * 180.0 / pi;
+    };
+    const auto path = write_tone_test_database("niceops_tone_fitted_near.nod", fixture);
+    DatabaseLoadOptions load;
+    load.tone_near_field = true;
+    const Database database(path, load);
+    const auto& source = database.tone_sources()[0];
+    REQUIRE(source.mode_degree == std::vector<int> {4, 4});
+    REQUIRE(source.mode_stride > 25);
+    REQUIRE(!source.near_modes.empty());
+    const auto state = database.source_state(Vec3(0.0, 0.0, 100.0), Vec3(10.0, 0.0, 0.0), Vec3(0.0, 0.0, 1.0), 0.0,
+            0.0, test_ct_reference);
+    double worst = 0.0, peak = 0.0;
+    for (double phi = -83.0; phi <= 83.0; phi += 11.0)
+        for (double theta = 7.0; theta <= 173.0; theta += 13.0)
+        {
+            const auto g = grid_direction(phi, theta);
+            const Vec3 d = (state.frame.nose * g.forward + state.frame.starboard * g.starboard
+                    + state.frame.normal * g.up).normalized();
+            Database::ToneLookup a[2];
+            database.tone_directivity(0, state, d, a);
+            for (std::size_t k = 0; k < 2; k++)
+            {
+                // The fitted modes at a point x of space, taken at its direction (polar from up, azimuth from the
+                // nose toward starboard); state 0 blends condition 0 alone.
+                const auto* coef = &source.modes[k * source.mode_stride];
+                auto modes_at = [&](double f, double st, double up) {
+                    const double r = std::sqrt(f * f + st * st + up * up);
+                    std::vector<std::complex<double>> y(25);
+                    spherical_harmonics(4, std::acos(std::clamp(up / r, -1.0, 1.0)), std::atan2(st, f), y.data());
+                    std::complex<double> v(0.0, 0.0);
+                    for (std::size_t j = 0; j < 25; j++)
+                        v += coef[j] * y[j];
+                    return v;
+                };
+                constexpr double h = 1e-3;
+                std::complex<double> lap = -6.0 * modes_at(g.forward, g.starboard, g.up);
+                for (const double s : {-h, h})
+                    lap += modes_at(g.forward + s, g.starboard, g.up) + modes_at(g.forward, g.starboard + s, g.up)
+                            + modes_at(g.forward, g.starboard, g.up + s);
+                const auto truth = lap / (h * h);
+                peak = std::max(peak, std::abs(truth));
+                worst = std::max(worst, std::abs(a[k].near_field - truth));
+            }
+        }
+    REQUIRE(state.blend.weights[0] == 1.0);
+    REQUIRE(state.blend.indices[0] == 0);
+    REQUIRE(worst < 1e-5 * peak);
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("an attitude's roll passes through level the short way round", "[tones][attitude]")
+{
+    // 359 to 1 degrees of roll is two degrees through level, not a turn through inverted flight.
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_attitude_wrap.csv").string();
+    {
+        std::ofstream out(path);
+        out << "time,heading,pitch,roll\n0,0,0,359\n1,0,0,1\n";
+    }
+    const auto h = read_attitude(path);
+    const auto mid = h.frame_at(0.5, 0.0);
+    REQUIRE(mid.normal.z == Catch::Approx(1.0));
+    REQUIRE(std::fabs(mid.starboard.z) < 1e-12);
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("a stored directivity's degree is bounded before it is used", "[sphere_database][format2][tones]")
+{
+    // A degree whose (degree + 1)^2 would overflow is refused by name, before any coefficient is read.
+    const auto fixture = stored_modes_fixture(4);
+    const auto path = write_tone_test_database("niceops_tone_stored_huge_degree.nod", fixture);
+    add_stored_modes(path, 4, 2);
+    int ncid = 0, n_groups = 0;
+    REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+    REQUIRE(nc_redef(ncid) == NC_NOERR);
+    REQUIRE(nc_inq_grps(ncid, &n_groups, nullptr) == NC_NOERR);
+    std::vector<int> groups(static_cast<std::size_t>(n_groups));
+    REQUIRE(nc_inq_grps(ncid, &n_groups, groups.data()) == NC_NOERR);
+    for (const int group : groups)
+    {
+        int n_sub = 0;
+        REQUIRE(nc_inq_grps(group, &n_sub, nullptr) == NC_NOERR);
+        std::vector<int> subs(static_cast<std::size_t>(n_sub));
+        REQUIRE(nc_inq_grps(group, &n_sub, subs.data()) == NC_NOERR);
+        for (const int sid : subs)
+        {
+            int re = 0;
+            const int huge = 65536;
+            REQUIRE(nc_inq_varid(sid, "directivity_real", &re) == NC_NOERR);
+            REQUIRE(nc_put_att_int(sid, re, "degree", NC_INT, 1, &huge) == NC_NOERR);
+        }
+    }
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+    REQUIRE_THROWS_WITH(Database(path), Catch::Matchers::ContainsSubstring("an expansion's degree is at most 1000"));
+    // A degree that is not whole is refused, not truncated.
+    REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+    REQUIRE(nc_redef(ncid) == NC_NOERR);
+    for (const int group : groups)
+    {
+        int n_sub = 0;
+        REQUIRE(nc_inq_grps(group, &n_sub, nullptr) == NC_NOERR);
+        std::vector<int> subs(static_cast<std::size_t>(n_sub));
+        REQUIRE(nc_inq_grps(group, &n_sub, subs.data()) == NC_NOERR);
+        for (const int sid : subs)
+        {
+            int re = 0;
+            const double fractional = 4.5;
+            REQUIRE(nc_inq_varid(sid, "directivity_real", &re) == NC_NOERR);
+            REQUIRE(nc_del_att(sid, re, "degree") == NC_NOERR);
+            REQUIRE(nc_put_att_double(sid, re, "degree", NC_DOUBLE, 1, &fractional) == NC_NOERR);
+        }
+    }
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+    REQUIRE_THROWS_WITH(Database(path), Catch::Matchers::ContainsSubstring("a whole number from 0"));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("a condition without a stored tone drops out of the modes' blend", "[sphere_database][format2][tones]")
+{
+    // Condition 1 holds no grid entry for the tones and zero coefficients (panam's writer where a condition lacks
+    // them).  Between conditions 0 and 1 the modes renormalize over condition 0, as the grid's entries do: the tone
+    // is condition 0's field, not the weight of it.
+    constexpr int degree = 4;
+    auto fixture = stored_modes_fixture(degree);
+    const auto level = fixture.amplitude;
+    fixture.condition_amplitude = [level](std::size_t i, std::size_t s, std::size_t m, std::size_t n, std::size_t k) {
+        return i == 1 ? std::numeric_limits<double>::quiet_NaN() : level(s, m, n, k);
+    };
+    const auto path = write_tone_test_database("niceops_tone_stored_empty_condition.nod", fixture);
+    add_stored_modes(path, degree, 2, 1.0, "", [](std::size_t i) { return i == 1 ? 0.0 : 1.0; });
+    DatabaseLoadOptions load;
+    load.tone_near_field = true;
+    const Database database(path, load);
+    REQUIRE(database.tone_sources()[0].mode_degree == std::vector<int> {degree, degree});
+    const auto state = database.source_state(Vec3(0.0, 0.0, 100.0), Vec3(10.0, 0.0, 0.0), Vec3(0.0, 0.0, 1.0), 0.3,
+            0.0, test_ct_reference);
+    double on_1 = 0.0;
+    for (std::size_t c = 0; c < 4; c++)
+        if (state.blend.indices[c] == 1)
+            on_1 += state.blend.weights[c];
+    REQUIRE(on_1 > 0.1);
+    REQUIRE(on_1 < 0.9);
+    double worst = 0.0;
+    for (double phi = -83.0; phi <= 83.0; phi += 11.0)
+        for (double theta = 7.0; theta <= 173.0; theta += 13.0)
+        {
+            const auto g = grid_direction(phi, theta);
+            const Vec3 d = (state.frame.nose * g.forward + state.frame.starboard * g.starboard
+                    + state.frame.normal * g.up).normalized();
+            Database::ToneLookup a[2];
+            database.tone_directivity(0, state, d, a);
+            for (std::size_t k = 0; k < 2; k++)
+            {
+                const auto truth = panam_directivity(stored_test_coefficients(degree, k), degree, phi, theta);
+                worst = std::max(worst, std::fabs(a[k].level_db
+                                                - 20.0 * std::log10(std::abs(truth) / std::sqrt(2.0) / 20e-6)));
+            }
+        }
+    REQUIRE(worst < 1e-6);
+    std::filesystem::remove(path);
 }
 
 TEST_CASE("a source in body axes turns with the airframe's attitude", "[tones][attitude]")

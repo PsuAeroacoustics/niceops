@@ -653,8 +653,8 @@ AttitudeHistory read_attitude(const std::string& path)
             input_error("--attitude ", path, ": row ", k + 1, " has ", row.size(), " fields, the header ",
                     csv.header.size(), ".");
         const double t = row[column[0]];
-        double heading = row[column[1]] * pi / 180.0;
-        const double pitch = row[column[2]] * pi / 180.0, roll = row[column[3]] * pi / 180.0;
+        double heading = row[column[1]] * pi / 180.0, roll = row[column[3]] * pi / 180.0;
+        const double pitch = row[column[2]] * pi / 180.0;
         if (!std::isfinite(t) || !std::isfinite(heading) || !std::isfinite(pitch) || !std::isfinite(roll))
             input_error("--attitude ", path, ": row ", k + 1, " holds a value that is not a finite number.");
         if (!(std::fabs(pitch) <= 0.5 * pi))
@@ -664,8 +664,10 @@ AttitudeHistory read_attitude(const std::string& path)
         {
             if (!(t > h.time.back()))
                 input_error("--attitude ", path, ": time does not increase at row ", k + 1, ".");
-            // The short way round from the last sample.
+            // Heading and roll the short way round from the last sample, so that 359
+            // to 1 degrees passes through 0, not 180.
             heading = h.heading.back() + std::remainder(heading - h.heading.back(), 2.0 * pi);
+            roll = h.roll.back() + std::remainder(roll - h.roll.back(), 2.0 * pi);
         }
         h.time.push_back(t);
         h.heading.push_back(heading);

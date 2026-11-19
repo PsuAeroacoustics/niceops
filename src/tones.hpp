@@ -102,9 +102,10 @@ struct AttitudeHistory
 {
     // s, increasing, in the trajectory's time.
     std::vector<double> time;
-    // rad: the compass heading (unwrapped, each step the short way round), the
-    // pitch (nose up) and the roll (right side down), the aerospace yaw, pitch
-    // and roll that turn north-east-down into the body's forward-right-down.
+    // rad: the compass heading and the roll (right side down), each unwrapped
+    // (every step the short way round), and the pitch (nose up): the aerospace
+    // yaw, pitch and roll that turn north-east-down into the body's
+    // forward-right-down.
     std::vector<double> heading, pitch, roll;
     // The body's axes at t (linear in the angles between samples; t must lie
     // within the history) in the local frame whose +x lies along the compass

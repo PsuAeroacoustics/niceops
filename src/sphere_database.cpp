@@ -2616,10 +2616,18 @@ void Database::load_tone_sources(int file_ncid, const std::vector<int>& group_id
                         "stores its fitted directivity at every condition or at none.");
             if (stored)
             {
-                int degree = -1;
-                if (netcdf::single_value(sid, stored_id, "degree", degree) != netcdf::Single::ok || degree < 0)
+                // Read as a number, whole and bounded before any arithmetic on it; a
+                // degree past what the run evaluates (max_mode_degree) is read, and
+                // falls back to a fit.
+                double degree_value = std::numeric_limits<double>::quiet_NaN();
+                if (netcdf::single_value(sid, stored_id, "degree", degree_value) != netcdf::Single::ok
+                        || !(degree_value >= 0.0) || degree_value != std::floor(degree_value))
                     input_error(what, ": directivity_real needs its expansion's degree (an attribute degree, a "
-                            "whole number from 0).");
+                            "whole number from 0), and has ", degree_value, ".");
+                if (degree_value > 1000.0)
+                    input_error(what, ": directivity_real has degree ", degree_value, "; an expansion's degree is at "
+                            "most 1000.");
+                const int degree = static_cast<int>(degree_value);
                 if (source.stored_degree > 0 && degree != source.stored_degree)
                     input_error(what, ": directivity_real has degree ", degree, ", unlike sphere 0's ",
                             source.stored_degree, "; a source's fitted directivity keeps its degree.");
@@ -2796,6 +2804,7 @@ void Database::fit_tone_modes(ToneBlend blend)
         source.mode_stride = n;
         source.modes = source.stored_modes;
         source.mode_degree.assign(tones, 0);
+        source.mode_present.assign(conditions * tones, 0);
         std::vector<std::complex<double>> y(n);
         std::ostringstream residuals;
         for (std::size_t k = 0; k < tones; k++)
@@ -2812,6 +2821,7 @@ void Database::fit_tone_modes(ToneBlend blend)
                 if (!(peak > 0.0))
                     continue;
                 any = true;
+                source.mode_present[c * tones + k] = 1;
                 double err = 0.0, norm = 0.0;
                 for (std::size_t cell = 0; cell < n_cells; cell++)
                 {
@@ -2875,6 +2885,7 @@ void Database::fit_tone_modes(ToneBlend blend)
             continue;
         const std::size_t tones = source.tone_count();
         source.mode_degree.assign(tones, 0);
+        source.mode_present.assign(conditions * tones, 1);
         source.mode_stride = stride;
         source.modes.assign(conditions * tones * stride, 0.0);
         std::ostringstream degrees_used;
@@ -3137,7 +3148,10 @@ void Database::compute_mode_near_fields()
         if (degree <= 0)
             continue;
         const int out_degree = degree + 1;
-        const auto n_in = source.mode_stride;
+        // A tone's coefficients sit `mode_stride` apart (a fitted source's stride is
+        // the grid's largest degree), and only its own degree's are summed: the
+        // harmonics here run to the largest chosen degree plus one.
+        const auto stride = source.mode_stride;
         const auto n_out = static_cast<std::size_t>((out_degree + 1) * (out_degree + 1));
         const std::size_t tones = source.tone_count(), conditions = conditions_.size();
         std::vector<double> nodes, weights;
@@ -3169,7 +3183,9 @@ void Database::compute_mode_near_fields()
             {
                 if (source.mode_degree[k] <= 0)
                     continue;
-                const auto* coef = &source.modes[(c * tones + k) * n_in];
+                const auto* coef = &source.modes[(c * tones + k) * stride];
+                const auto n_in = static_cast<std::size_t>((source.mode_degree[k] + 1) * (source.mode_degree[k] + 1));
+                assert(n_in <= stride && n_in < n_out);
                 auto* out = &source.near_modes[(c * tones + k) * n_out];
                 for (std::size_t p = 0; p < points; p++)
                 {
@@ -3778,10 +3794,13 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
             }
             const auto m = static_cast<std::size_t>((s.mode_degree[k] + 1) * (s.mode_degree[k] + 1));
             std::complex<double> a(0.0, 0.0);
+            double present_weight = 0.0;
             for (std::size_t c = 0; c < 4; c++)
             {
-                if (w[c] == 0.0)
+                // A condition without the tone drops out, and the rest renormalize.
+                if (w[c] == 0.0 || !s.mode_present[blend.indices[c] * tones + k])
                     continue;
+                present_weight += w[c];
                 const auto* coef = &s.modes[(blend.indices[c] * tones + k) * s.mode_stride];
                 std::complex<double> v(0.0, 0.0);
                 for (std::size_t j = 0; j < m; j++)
@@ -3798,6 +3817,11 @@ void Database::tone_directivity(std::size_t source, const SourceState& state, co
                 }
             }
             mode_near = near && !s.near_modes.empty();
+            if (present_weight > 0.0)
+            {
+                a /= present_weight;
+                mode_near_sum /= present_weight;
+            }
             const double magnitude = std::abs(a);
             if (magnitude > 0.0)
             {

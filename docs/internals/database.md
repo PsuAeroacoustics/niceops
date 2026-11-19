@@ -299,12 +299,27 @@ the sources only in format 2. Things to keep:
     stopped at 4, the first even degree within 1 % (0.6-0.9 %). Over a hover's held-out segments
     the two differ by 0.011 dB rms, up to 1 dB in the nulls. A degree past `max_mode_degree` falls
     back to the fit with a warning.
+  - **A condition whose grid lacks the tone drops out of the modes' blend** (`mode_present`), and
+    the rest renormalize, amplitude and near-field term alike, as empty grid entries do; summing
+    the weights without it read a tone 3 dB low between a full and an empty condition. A fitted
+    tone holds every condition (the fit needs them all).
+  - **The degree attribute is read as a number**, whole and at most 1000, before any arithmetic on
+    it: `(degree + 1)^2` overflowed an int, and an int read truncated 4.5 to 4.
   - Tested by `a source's stored directivity is read as its rotating modes exactly between the
     nodes`: degree 10 on a 15° grid, beyond the 9 the grid carries, read between the nodes to
-    1e-6 dB; and 1 % louder coefficients refused.
+    1e-6 dB; and 1 % louder coefficients refused. `a condition without a stored tone drops out of
+    the modes' blend`, `a stored directivity's degree is bounded before it is used` and `the
+    rotating modes' harmonics are the closed forms with the Condon-Shortley phase` (the conventions
+    panam's coefficients rely on, independent of the recurrences) go with it.
 - **A mode-read tone's near-field term is its modes'** (`ToneSource::near_modes`,
   `compute_mode_near_fields`). D A is projected exactly to degree L + 1 and scaled by -l (l + 1),
-  so `spherical_harmonics` runs to `max_mode_degree + 1`. The grid's differences, which the term
+  so `spherical_harmonics` runs to `max_mode_degree + 1`. Each tone sums its own (L + 1)^2
+  coefficients, never the source's stride: a fitted source's stride is the grid's largest degree
+  (225 coefficients on 10°), past the harmonics tabulated, and the reads beyond them, though
+  multiplied by zeros, were out of bounds (no value test sees that; the assert does). `a fitted
+  tone's near-field term is its modes' Laplacian` holds the fitted case to 1e-5 of the peak; its
+  modes' Laplacian is 2 % of the peak off the field's they were fitted to (a lower hemisphere pins
+  the values, not the curvature near the plane). The grid's differences, which the term
   was read from before, depend on which form they unwind (shaft order 2 or 4 on the same field
   disagreed by 6 % of the peak), and are zero for a tone only the modes resolve. Tested by `a
   mode-read tone's near-field term is its modes' Laplacian exactly`: in hover against -l (l + 1)
@@ -320,7 +335,8 @@ the sources only in format 2. Things to keep:
   attitude to 1e-9; pitched 12° and rolled -20°, the power at each observer equals the level
   airframe's at the observer turned back about the vehicle, to 1e-9; and the refusals (no body
   source, no frame bearing). `an attitude's body axes when level along the nose or pitched or
-  rolled` pins the angle conventions.
+  rolled` pins the angle conventions. The roll is unwrapped as the heading is (`an attitude's roll
+  passes through level the short way round`): 359 to 1 degrees otherwise turned through inverted.
 - **Multirotor axes share the helicopter's three slots** (`ConditionAxes`, THEORY 2.1):
   `condition(i)` is (x, z, M_h) there, `blend_at` takes the multirotor axes in its own branch, and the
   helicopter code is untouched, branch for branch, so its blends are the old ones to the bit.
